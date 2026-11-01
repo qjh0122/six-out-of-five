@@ -947,6 +947,12 @@
      */
     if (Ach && typeof Ach.accumulate === 'function') {
       room.achRun = Ach.accumulate(room.achRun || null, round, results);
+      /* 整把级成就（你咋这幸 / 我咋这霉 / 一夜暴富）只能在第二轮结算之后算：
+       * 那时这一把全场的分数才定下来。放在同一个 if 里，是因为它依赖
+       * 上面刚建好的桶 —— 一轮就结算时分数还没定型，算了也是假的。 */
+      if (round === 2 && typeof Ach.accumulateHand === 'function') {
+        room.achRun = Ach.accumulateHand(room.achRun, room.players);
+      }
     }
 
     room.results['round' + round] = results;

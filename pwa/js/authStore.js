@@ -13,32 +13,30 @@
 (function (global) {
   'use strict';
 
-  var LS_KEY = 'lxw_session_v1';
+  var ST = (typeof LXW !== 'undefined' && LXW.Store) ? LXW.Store : null;
+  if (!ST && typeof require === 'function') {
+    try { ST = require('./storage.js'); } catch (e) { ST = null; }
+  }
+  var LS_KEY = ST ? ST.KEYS.SESSION : 'lxw_session_v1';
   var cache = null;
   var lastError = '';
 
   function readSession() {
     if (cache) return cache;
-    try {
-      var raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      var s = JSON.parse(raw);
-      if (!s || !s.token || !s.playerId) return null;
-      cache = s;
-      return cache;
-    } catch (e) {
-      return null;
-    }
+    var s = ST ? ST.readJson(LS_KEY, null) : null;
+    if (!s || !s.token || !s.playerId) return null;
+    cache = s;
+    return cache;
   }
 
   function writeSession(s) {
     cache = s;
-    try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) { /* 隐私模式写不进去 */ }
+    if (ST) ST.writeJson(LS_KEY, s); // 隐私模式写不进去也不影响本次会话
   }
 
   function clearSession() {
     cache = null;
-    try { localStorage.removeItem(LS_KEY); } catch (e) { /* 忽略 */ }
+    if (ST) ST.remove(LS_KEY);
   }
 
   /** 拼 API 地址：把页面 URL 上的 sharecode 带过去，否则网关 403 */

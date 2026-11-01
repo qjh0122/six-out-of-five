@@ -25,24 +25,30 @@
 
   var audioPool = {};   // name -> Audio（null 表示加载失败，走合成回退）
   var bgm = null;
-  var SOUND_KEY = 'lxw_sound_v1';       // 新键：声音总开关
-  var LEGACY_BGM_KEY = 'lxw_bgm_v1';    // 老键：当时只管背景音乐，值要迁移过来
+  var ST = (global.LXW && global.LXW.Store) || null;
+  /* Node 测试里没有 window.LXW，就 require 同一份实现（跑的是同一段代码，
+   * 只是 backing 由测试塞进来）—— 不是再造一个假存储。 */
+  if (!ST && typeof require === 'function') {
+    try { ST = require('./storage.js'); } catch (e) { ST = null; }
+  }
+  var SOUND_KEY = ST ? ST.KEYS.SOUND : 'lxw_sound_v1';              // 新键：声音总开关
+  var LEGACY_BGM_KEY = ST ? ST.KEYS.BGM_LEGACY : 'lxw_bgm_v1';      // 老键：当时只管背景音乐，值要迁移
 
   /* 记住开关：默认开着，关过一次以后每次进来都别再吵人。
    * 只有明确的 '0' 才算关——存储里是脏值（老版本、手改过）时按默认走，不要静默变哑。 */
   function readSoundPref() {
-    try {
-      var v = global.localStorage.getItem(SOUND_KEY);
-      if (v === '0') return false;
-      if (v === '1') return true;
-      /* 没有新键 → 沿用老版本的 BGM 开关。
-       * 当时玩家点「关」的本意就是「别再响了」，升级后不该突然又开始响；
-       * 反过来如果按默认开处理，等于把人家关过的声音又打开一遍。 */
-      return global.localStorage.getItem(LEGACY_BGM_KEY) !== '0';
-    } catch (e) { return true; }
+    var v = ST ? ST.read(SOUND_KEY, '') : '';
+    if (v === '0') return false;
+    if (v === '1') return true;
+    /* 没有新键 → 沿用老版本的 BGM 开关（storage.js 的 migrate 会搬，
+     * 这里保留一条读老路径：迁移失败时也不该突然开始响）。
+     * 当时玩家点「关」的本意就是「别再响了」，升级后不该突然又开始响；
+     * 反过来如果按默认开处理，等于把人家关过的声音又打开一遍。 */
+    var old = ST ? ST.read(LEGACY_BGM_KEY, '') : '';
+    return old !== '0';
   }
   function writeSoundPref(on) {
-    try { global.localStorage.setItem(SOUND_KEY, on ? '1' : '0'); } catch (e) {}
+    if (ST) ST.write(SOUND_KEY, on ? '1' : '0');
   }
 
   var soundEnabled = readSoundPref();

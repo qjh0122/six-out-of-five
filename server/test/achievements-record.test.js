@@ -107,7 +107,9 @@ eq(ps.achOf('p4').r7 || 0, 0, '连败期间还没触发翻身农奴');
 
 /* 第 4 把赢 +12（新高），带一个空的成就桶 */
 rec('p4', '玩家D', 12, { playerCount: 3, endReason: 'handLimit', ach: { t: {}, n: {} } });
-eq(ps.achOf('p4').r7, 1, '★ 连败 3 把后打出新高 → 翻身农奴 +1');
+/* v112 改口径：门槛从「连败 3 把 + 刷新单场最高」改成「连败 5 把之后赢一把」。
+ * 所以这里 3 连败赢一把**不再**触发 —— 见下面第五节补的 5 连败用例。 */
+eq(ps.achOf('p4').r7 || 0, 0, '★ 连败 3 把后赢一把还不够（门槛是 5）');
 eq(ps.get('p4').bestNet, 12, '最高分同时被更新（顺序对了才会两个都对）');
 
 /* 反向：没连败时打出新高，不该触发 */
@@ -123,13 +125,12 @@ rec('p6', '玩家F', -4, { playerCount: 3, endReason: 'handLimit', ach: { t: {},
 eq(ps.achOf('p6').r7 || 0, 0, '★ 连败后仍是负分 → 不算「单场最高」');
 
 /* ================================================================
- * 六、R8 人间清醒：只认「真的打满 30 把」
+ * 六、R8 人间清醒：v112 已删除（不再是成就）
  * ================================================================ */
 rec('p7', '玩家G', 1, { playerCount: 3, endReason: 'handLimit', handLimit: 30, ach: { t: {}, n: {} } });
-eq(ps.achOf('p7').r8, 1, '30 把打满 → 人间清醒 +1');
-
-rec('p8', '玩家H', 1, { playerCount: 3, endReason: 'handLimit', handLimit: 10, ach: { t: {}, n: {} } });
-eq(ps.achOf('p8').r8 || 0, 0, '10 把的局不算（门槛是 30）');
+eq(ps.achOf('p7').r8 || 0, 0, '★ 打满 30 把也不再记人间清醒（该成就已删除）');
+ok(Ach.evaluate(ps.achOf('p7'), ps.get('p7')).list.every(function (x) { return x.name !== '人间清醒'; }),
+  '★ 成就目录里已经没有「人间清醒」');
 
 rec('p9', '玩家I', 1, { playerCount: 3, endReason: 'dissolve', handLimit: 30, ach: { t: {}, n: {} } });
 eq(ps.achOf('p9').r8 || 0, 0, '★ 选了 30 把但中途解散 → 不算打满');

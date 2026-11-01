@@ -47,8 +47,14 @@
 
   /* ============================ 本地实现（BroadcastChannel + localStorage） ============================ */
   function createLocalStore(StateMachine) {
-    var LS_ROOMS = 'weile_rooms';
-    var LS_TOUCH = 'weile_touch';
+    /* 物理键与降级逻辑都在 js/storage.js；这里只拿名字（下面有兜底常量，
+     * 万一 storage.js 没加载也只是退化成旧行为，不至于整页白）。 */
+    var ST = (typeof LXW !== 'undefined' && LXW.Store) ? LXW.Store : null;
+    if (!ST && typeof require === 'function') {
+      try { ST = require('./storage.js'); } catch (e) { ST = null; }
+    }
+    var LS_ROOMS = ST ? ST.KEYS.ROOMS : 'lxw_rooms_v1';
+    var LS_TOUCH = ST ? ST.KEYS.ROOMS_TOUCH : 'lxw_rooms_touch_v1';
     var ROOM_TTL = 2 * 60 * 60 * 1000;
     var subs = {};
     var lastTouch = {};
@@ -60,16 +66,15 @@
 
     function safeParse(s) { try { return JSON.parse(s); } catch (e) { return null; } }
     function loadRooms() {
-      var raw = null;
-      try { raw = localStorage.getItem(LS_ROOMS); } catch (e) { return {}; }
+      var raw = ST ? ST.read(LS_ROOMS, '') : '';
       var map = safeParse(raw) || {};
       var now = Date.now();
       for (var k in map) if (map[k] && now - (map[k].updatedAt || 0) > ROOM_TTL) delete map[k];
       return map;
     }
-    function saveRooms(map) { try { localStorage.setItem(LS_ROOMS, JSON.stringify(map)); } catch (e) {} }
+    function saveRooms(map) { if (ST) ST.writeJson(LS_ROOMS, map); }
     function getRoom(roomId) { if (!roomId) return null; return loadRooms()[roomId] || null; }
-    function touch(roomId, ts) { try { localStorage.setItem(LS_TOUCH, JSON.stringify({ roomId: roomId, ts: ts })); } catch (e) {} }
+    function touch(roomId, ts) { if (ST) ST.writeJson(LS_TOUCH, { roomId: roomId, ts: ts }); }
     function emit(roomId, room) {
       var list = subs[roomId] || [];
       for (var i = 0; i < list.length; i++) { try { list[i](room); } catch (e) {} }
@@ -116,9 +121,7 @@
 
     try {
       setInterval(function () {
-        var raw = null;
-        try { raw = localStorage.getItem(LS_TOUCH); } catch (e) { return; }
-        var tsInfo = safeParse(raw);
+        var tsInfo = ST ? ST.readJson(LS_TOUCH, null) : null;
         if (!tsInfo || !tsInfo.roomId) return;
         if (lastTouch[tsInfo.roomId] !== tsInfo.ts) {
           lastTouch[tsInfo.roomId] = tsInfo.ts;
@@ -314,18 +317,22 @@
     /* 座位恢复令牌：服务端签发，只下发给本人。
      * 重连/刷新回座时带上它——只靠 roomId + playerId 不够，
      * 那两项都会出现在房间广播里，同房间的人能拿去接管别人的座位。 */
-    var RESUME_KEY = 'lxw_resume_v1';
+    var ST2 = (typeof LXW !== 'undefined' && LXW.Store) ? LXW.Store : null;
+    if (!ST2 && typeof require === 'function') {
+      try { ST2 = require('./storage.js'); } catch (e) { ST2 = null; }
+    }
+    var RESUME_KEY = ST2 ? ST2.KEYS.RESUME : 'lxw_resume_v1';
 
     function loadResume() {
-      try { return JSON.parse(localStorage.getItem(RESUME_KEY) || 'null'); } catch (e) { return null; }
+      return ST2 ? ST2.readJson(RESUME_KEY, null) : null;
     }
     function saveResume(roomId, playerId, token) {
       if (!token || !roomId || !playerId) return;
-      try {
-        localStorage.setItem(RESUME_KEY, JSON.stringify({
+      if (ST2) {
+        ST2.writeJson(RESUME_KEY, {
           roomId: String(roomId), playerId: String(playerId), token: String(token)
-        }));
-      } catch (e) {}
+        });
+      }
     }
     function resumeTokenFor(roomId, playerId) {
       var r = loadResume();
@@ -338,7 +345,7 @@
       if (!r) return;
       if (roomId && String(r.roomId) !== String(roomId)) return;
       if (playerId && String(r.playerId) !== String(playerId)) return;
-      try { localStorage.removeItem(RESUME_KEY); } catch (e) {}
+      if (ST2) ST2.remove(RESUME_KEY);
     }
 
     function wsUrl() {

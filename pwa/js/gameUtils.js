@@ -114,5 +114,8 @@
 
   global.LXW = global.LXW || {};
   global.LXW.utils = api;
+  /* v111 起 esc 只有这一份实现，其它模块（avatar / achievementsView）在浏览器里
+   * 取 LXW.utils，在 Node 测试里 require 本文件 —— 所以这里要能被 require。 */
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
 })(typeof self !== 'undefined' ? self : this);

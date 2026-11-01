@@ -22,11 +22,14 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  /* 唯一实现在 js/gameUtils.js（v111 去重）。浏览器里 gameUtils 是第一个脚本，
+   * Node 测试里 require 同一份；两处都拿不到就返回空串 —— 宁可少一行字，
+   * 也不在这里再抄一份转义表（那正是「三个页面三种转义」的开头）。 */
+  var U = (typeof LXW !== 'undefined' && LXW.utils) || null;
+  if (!U && typeof require === 'function') {
+    try { U = require('./gameUtils.js'); } catch (e) { U = null; }
   }
+  function esc(s) { return U ? U.esc(s) : ''; }
 
   /** 概率：分母为 0 时显示「—」而不是 0%。
    * 「还没打过」和「打过但一次没拿到」是两件事，用 0% 会把它们混成一件。
@@ -51,17 +54,44 @@
   }
   function seriesHint(key) {
     return {
-      type: '拿到某种大牌型的次数。概率的分母是「参与该组的次数」，不是打了多少把',
-      vs: '你也拿着大牌、对手也拿着大牌，才叫对撞。吃掉一手普通牌不算',
+      type: '每种牌型拿到过几次、占参与的几分之几。分母是「参与该组的次数」，不是打了多少把。大牌小牌都记',
+      vs: '大牌撞大牌算对撞；一桌人全是小牌（爆点 / 散牌 / 没牛）也算，两种分开记',
       sweep: '一轮里所有组都赢下来。第二轮只有两组，所以「双杀」比「一巡清场」容易',
-      record: '场次、连胜、单场最高——这些从有战绩那天就在算了'
+      record: '场次与连胜看还差多少，其余成就记的是次数——玩得越久数字越大'
     }[key] || '';
   }
 
+  /**
+   * 一张成就卡。
+   *
+   * ★ 数字部分分两种（v112 用户裁定）：
+   *   · `mode === 'progress'` → 进度条 + 「7 / 10」。这类成就的语义是「还差多少」，
+   *     只有 6 条：常客 / 老油条 / 势不可挡 / 十连胜 / 背到极点 / 衰神附体。
+   *   · 其余 → 只写「37 次」。
+   *     为什么不是都画进度条：牌桌屠夫那种「撞赢 20 次」，玩得久的人早就顶满了，
+   *     之后那个 20 再也不会动 —— 玩家看到停在 20/20 的数字，会以为系统不记了。
+   *     次数可以一直涨，才配得上「我玩得久」这件事。
+   *
+   * 牌型成就还会带上出现率（同一条分母，见 achievements.js 的 TYPE_MODE）。
+   */
   function cardHtml(it) {
     /* 未解锁的卡片**照样显示名字与描述**（用户裁定）：
      * 熟人不玩猜谜，让他知道有这回事才会去够。用 ??? 只会让人觉得系统在藏东西。 */
+    var isProgress = it.mode === 'progress';
     var pct = it.need > 1 ? Math.min(100, Math.round(it.cur / it.need * 100)) : (it.ok ? 100 : 0);
+    var foot;
+    if (isProgress) {
+      foot = '<div class="ach-bar"><i style="width:' + pct + '%"></i></div>'
+        + '<span class="ach-progress">' + it.cur + ' / ' + it.need + '</span>';
+    } else if (it.rate != null) {
+      /* 牌型：次数 + 出现率。分母为 0 时 rateText 会给「—」，
+       * 意思是「还没打过这个牌组」，不是「一次没拿到」。 */
+      foot = '<span class="ach-progress">' + it.raw + ' 次 · ' + rateText(it.rate) + '</span>';
+    } else {
+      foot = it.ok
+        ? '<span class="ach-progress">' + it.raw + ' 次</span>'
+        : '<span class="ach-progress">' + (it.raw > 0 ? it.raw + ' 次' : '未达成') + '</span>';
+    }
     return '<li class="ach-card' + (it.ok ? ' is-ok' : '') + '" data-rarity="' + esc(it.rarity) + '">'
       + '<div class="ach-card-top">'
       + '<span class="ach-badge" aria-hidden="true">' + (it.ok ? '★' : '☆') + '</span>'
@@ -69,10 +99,7 @@
       + '</div>'
       + '<b class="ach-name">' + esc(it.name) + '</b>'
       + '<p class="ach-desc">' + esc(it.desc) + '</p>'
-      + (it.need > 1
-        ? '<div class="ach-bar"><i style="width:' + pct + '%"></i></div>'
-          + '<span class="ach-progress">' + it.cur + ' / ' + it.need + '</span>'
-        : (it.ok ? '' : '<span class="ach-progress">未达成</span>'))
+      + foot
       + '</li>';
   }
 
@@ -114,7 +141,7 @@
         + '</section>';
     } else {
       html += '<section class="ach-types">'
-        + '<h2>牌型 <em>' + have + ' / ' + st.types.length + ' 种拿到过</em></h2>'
+        + '<h2>牌型 <em>' + have + ' / ' + st.types.length + ' 种出现过</em></h2>'
         + '<ul class="ach-type-list">';
       st.types.forEach(function (t) {
         html += '<li data-rarity="' + esc(t.rarity) + '"' + (t.hit ? '' : ' class="is-zero"') + '>'

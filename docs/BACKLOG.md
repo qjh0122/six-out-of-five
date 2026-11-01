@@ -1,6 +1,6 @@
 # 已知问题清单（BACKLOG）
 
-> 最后更新：2026-11-01（v108：`game.js` 跨文件拆分完成，C1 关闭）
+> 最后更新：2026-11-02（v111：结构债 C2 / C4 / C5 关闭；v112：成就改版）
 > 线上版本：**v108 / `20261101a` / sw `v108`**（提交 `b064af6`，线上冒烟 15/15、
 > 浏览器实测 `20261101a`、直接抓线上 `sw.js` 确认 `CACHE_NAME = 'weile-liuxuanwu-v108'`）；
 > v108 关闭：**C1**（`game.js` 8168 行 → 4710 行 + 8 个模块；零行为变化，数值与功能均未动）
@@ -159,8 +159,17 @@ v79 已经做过一半（`bindEvents` 按屏拆成 11 个嵌套函数），定�
 - `js/roomStore.js:537` 的 `catch (e) {}` 仍然吞异常。改成「只在开发态上报」是独立的一小步。
 - 想真正减体积，需要把 proto 页与开发面板从 `game.js` 里分出去（不是本轮目标）。
 
-### C2 双份统计：`profile.js`（服务端权威）与 `records.js`（本机兜底）
-<!-- STATUS: open | P2-4 重复实现收口 -->
+### C2 双份统计：`profile.js`（服务端权威）与 `records.js`（本机兜底） —— **已完成（v111）**
+<!-- STATUS: closed | v111：抽成 pwa/js/stats.js 双端共用 -->
+
+**状态**：v111 已关闭。新增 `pwa/js/stats.js`（`blank` / `apply` / `fromNets` / `rate`），
+服务端 `profile.record` 逐把 `apply`、前端 `records.stats` 整表 `fold` —— **同一段代码**，
+口径不可能再分岔。验收 `pwa/test/stats.test.js`（26 项）：手算期望值 + 200 条随机序列
+与独立实现对拍。
+
+**收口时抓到的真分岔（这条债的实证）**：本机那份算的是「连胜计数」（输了返回 0），
+云端档案算的是**带符号**值（连败为负）。战绩卡渲染里明明有 `streak < -1 → N 连败` 那一支，
+也就是说**本地兜底路径从来没显示过连败**。两处都对得上测试，因为测试各自只测自己那份。
 
 **现象**：场次 / 胜负平 / 胜率 / 连胜 / 最长连胜 / 最佳单场，两套实现。
 现在口径一致（有测试对齐），但改规则必须改两处。
@@ -191,8 +200,14 @@ v79 已经做过一半（`bindEvents` 按屏拆成 11 个嵌套函数），定�
 
 **怎么验**：`?diag=1` 打开后操作一遍全流程，控制台应当只在真出问题时才有输出。
 
-### C4 `state` 全局对象字段膨胀
-<!-- STATUS: open | P2-5 state 字段分组 -->
+### C4 `state` 全局对象字段膨胀 —— **已完成（v111）**
+<!-- STATUS: closed | v111：清单化 + 三个具名重置 -->
+
+**状态**：v111 已关闭，做法与原建议不同：18 个字段全部写进字面量（三个隐式字段补进声明），
+新增 `STATE_DEFAULT` 与 `resetSplitState` / `resetRoomState` / `resetSessionState`，
+退房 / 换手 / 清空重分三处统一调用。没有改成 `state.session/room/split` 嵌套 ——
+那要改 250 处调用点，而这条债的成因是「没人负责清」而不是「字段没分组」。
+守卫：`pwa/test/state-reset.test.js`（16 项，含「不许出现清单外字段」）。
 
 **现象**：`state` 上堆了 `resultSeqShown` / `absorbSig` / `settleCelebrated` / `recordKey` /
 `justDealt` / `reviseRound` / `activeGroup` 等十几个字段，生命周期各不相同。
@@ -204,8 +219,12 @@ v79 已经做过一半（`bindEvents` 按屏拆成 11 个嵌套函数），定�
 **建议做法**：分成三组 `state.session`（本次打开）/ `state.room`（当前房间）/ `state.split`（当前分牌），
 进房、退房、开局三个时机分别整体重置。
 
-### C5 `el()` / `esc()` / `colorFor()` / `short()` 在 `game.js` 与 `records.js` 各有一份
-<!-- STATUS: open | P2-4（esc/el 双份） -->
+### C5 `el()` / `esc()` / `colorFor()` / `short()` 在 `game.js` 与 `records.js` 各有一份 —— **已完成（v111）**
+<!-- STATUS: closed | v111：转义表收口到 gameUtils -->
+
+**状态**：v108 拆分已把 `el/esc/colorFor/short` 收进 `gameUtils.js`，v111 把剩下的两份
+（`achievementsView.js`、`avatar.js` 各有一个 `esc`）也改成复用同一份。
+守卫：`pwa/test/stats.test.js` 第 [4] 节「转义表只剩 gameUtils 一份」。
 
 **影响**：改一处忘另一处会出现"两个页面同一个东西显示不一样"。
 **为什么现在不做**：收益小（每个函数 3-5 行），但改动面涉及两个 5000 行级的文件。

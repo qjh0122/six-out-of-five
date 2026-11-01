@@ -145,11 +145,13 @@
       + ' draggable="false" loading="lazy" decoding="async">';
   }
 
-  /* 给属性值用：这里只处理 & < > " ' 五个字符，够用了 */
-  function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  /* 转义只留一份：js/gameUtils.js（v111 去重）。这里不再自己处理
+   * & < > " ' 五个字符 —— 抄一份的后果是改一处忘一处，两个页面显示不一样。 */
+  var U = (typeof LXW !== 'undefined' && LXW.utils) || null;
+  if (!U && typeof require === 'function') {
+    try { U = require('./gameUtils.js'); } catch (e) { U = null; }
   }
+  function esc(s) { return U ? U.esc(s) : ''; }
 
   /**
    * 把一张原图裁成正方形并缩到 size（P1b 的客户端压缩）。

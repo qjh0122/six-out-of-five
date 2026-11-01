@@ -32,7 +32,7 @@
 | [`release-progress.md`](./release-progress.md) | 每次发布的完整记录：版本号、改动清单、验收数字。**版本现状的唯一权威** | 2026-11-01 / v108 |
 | [`compat.md`](./compat.md) | 兼容性矩阵与降级说明：哪些现代 CSS 特性丢了会怎样、老内核能用到什么程度 | 2026-11-01 / v106 |
 | [`device-support.md`](./device-support.md) | 机型支持矩阵。「支持」的四条硬指标（组槽不溢出 / 牌面 ≥39 CSS px / 表情入口 ≥44 / 昵称 ≥10.4），三族 23 档实测 | 2026-11-01 / v105 |
-| [`HISTORY.md`](./HISTORY.md) | 迭代史 v0.2 → v108，十四段。**每段都保留当时的判断失误** | 2026-11-01 / v108 |
+| [`HISTORY.md`](./HISTORY.md) | 迭代史 v0.2 → v112，十五段。**每段都保留当时的判断失误** | 2026-11-02 / v112 |
 | [`repo-public-plan.md`](./repo-public-plan.md) | 仓库公开化治理方案：敏感数据清单、密钥轮换、`.gitignore`、历史清洗两条路线、合规补件 | 2026-11-01 |
 | [`../COMMITS.md`](../COMMITS.md) | 提交信息规范（这个仓库曾经 14 条里 11 条叫 `update`） | 2026-10-30 |
 
@@ -49,7 +49,7 @@
 | [`deletion-spec.md`](./deletion-spec.md) | 删号后的数据级联删除 | ⚠️ **三个方案只做了两个**：方案 1+3 已上线（v80），方案 2（对局账本级联删除）**明确没做**，因为选了「只抹身份、不动分数」 |
 | [`pattern-fx-audit.md`](./pattern-fx-audit.md) | 牌型特效在哪个阶段可见 | ✅ 已落地（v92–v98）。**本文有两轮，第二轮推翻了第一轮的一个结论** |
 | [`circle-table-analysis.md`](./circle-table-analysis.md) | 圆桌化改造的需求分析 | 📌 **快照性质**：设计依据，基线 v81。实际落地状态看归档的 `circle-table-rollout-status` |
-| [`achievements-plan.md`](./achievements-plan.md) | 成就系统：数据可行性、22 个成就定义、页面布局、五步实施拆解 | ⏳ **待确认**：需求分析完成，代码未动。文末有 5 个待拍板问题 |
+| [`achievements-plan.md`](./achievements-plan.md) | 成就系统：**34 条成就的现行规格**（名称/门槛/计数来源/展示口径）、计数桶结构、v110→v112 变更单 | ✅ **现行**：已实现并上线过一版；以本文为准，旧版 26 条已作废 |
 
 ---
 
@@ -79,6 +79,9 @@
 | [`review/code-analysis-v109.md`](./review/code-analysis-v109.md) | v108 基线 | 本轮新增。工程域全量分析 + 技术债 21 条 |
 | [`review/qa-maturity-v109.md`](./review/qa-maturity-v109.md) | v108 基线 | 本轮新增。质量域 14 域盘点 + 9 条盲区 |
 | [`review/probe-triage-2026-11-01.md`](./review/probe-triage-2026-11-01.md) | v109 → v110 | **8 个红探针全部查清：都是脚本过期，不是功能坏**（根因 = v103 建房改两步）。§六 是 v110 补的两条结论（`reset-stats` 是断言早于请求、两个「3」是合法并列） |
+| [`review/next-hand-design-2026-11-02.md`](./review/next-hand-design-2026-11-02.md) | v110 | 本轮新增。整局结束后继续玩的**体验**评审：场景矩阵 + 3 个递进方向 + 8 条不建议改 |
+| [`review/next-hand-qa-2026-11-02.md`](./review/next-hand-qa-2026-11-02.md) | v110 | 本轮新增。同一段的**状态流**审计：15 条风险（2 P0 / 5 P1）、6 条静默失败、手动复现步骤 |
+| [`review/next-hand-summary-2026-11-02.md`](./review/next-hand-summary-2026-11-02.md) | v110 | 本轮新增。**先看这一份**：两个域合并成一页 + 制作人口径的建议（先做 A、只改一条就改 R1） |
 | [`best-line-spec.md`](./best-line-spec.md) | v110 已实施 | 「理论最高 vs 实际」的需求分析与口径。**顶部有实施结果表**：三处与方案不同，其中一处是实施时才发现的真 bug |
 
 **读旧 review 的四个坑**（详见 [`REVIEW.md`](./REVIEW.md) §5.1）：

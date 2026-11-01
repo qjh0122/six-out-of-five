@@ -36,7 +36,11 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var KEY = 'lxw_sessions_v1';
+  var ST = (typeof LXW !== 'undefined' && LXW.Store) || null;
+  if (!ST && typeof require === 'function') {
+    try { ST = require('./storage.js'); } catch (e) { ST = null; }
+  }
+  var KEY = ST ? ST.KEYS.SESSIONS : 'lxw_sessions_v1';
   var SESSIONS_MAX = 4;    // 留最近 4 场（一场 = 一个人坐下来打到散的那一局）
   var PACKS_MAX = 24;      // 每场最多 24 把
   var ROUNDS_MAX = 4;      // 每把最多 4 轮（现在配置是 2 轮，留余量但不放任）
@@ -52,13 +56,6 @@
    * 这个数字是**量出来的**，不是拍的：session-log.test.js 第 8 节会把四个结构上限
    * 全部拉满，断言削峰之后仍然落在预算内。 */
   var BYTES_MAX = 400 * 1024;
-
-  function store() {
-    try {
-      if (typeof localStorage === 'undefined' || !localStorage) return null;
-      return localStorage;
-    } catch (e) { return null; }
-  }
 
   function num(v, dflt) {
     var n = Number(v);
@@ -80,10 +77,8 @@
   }
 
   function readAll() {
-    var ls = store();
-    if (!ls) return [];
-    var raw = null;
-    try { raw = ls.getItem(KEY); } catch (e) { return []; }
+    if (!ST) return [];
+    var raw = ST.read(KEY, '');
     if (!raw) return [];
     var parsed = null;
     try { parsed = JSON.parse(raw); } catch (e) { return []; }
@@ -111,11 +106,10 @@
   }
 
   function writeAll(list) {
-    var ls = store();
-    if (!ls) return false;
+    if (!ST) return false;
     var payload = trimToBudget(list);
     if (!payload) return false;
-    try { ls.setItem(KEY, payload); return true; } catch (e) { return false; }
+    return ST.write(KEY, payload);
   }
 
   /* 外部传进来的结构一律重新裁一遍：这是一份会被写进 localStorage 的数据，
@@ -256,9 +250,8 @@
   }
 
   function clear() {
-    var ls = store();
-    if (!ls) return false;
-    try { ls.removeItem(KEY); return true; } catch (e) { return false; }
+    if (!ST) return false;
+    return ST.remove(KEY);
   }
 
   /** 排查 / 测试用：直接看库存里有几场、各几把。 */

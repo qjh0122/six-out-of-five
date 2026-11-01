@@ -47,7 +47,19 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  var KEY = 'lxw_records_v1';
+  /* 物理键与降级逻辑统一在 js/storage.js。浏览器里取全局 Store；
+   * Node 测试里没有全局，就 require 同一份实现（**不是**再造一个假存储）。 */
+  var ST = (typeof LXW !== 'undefined' && LXW.Store) || null;
+  if (!ST && typeof require === 'function') {
+    try { ST = require('./storage.js'); } catch (e) { ST = null; }
+  }
+  /* 统计口径的唯一实现（与 server/profile.js 共用，见 js/stats.js 顶部）。
+   * 这里不再自己算一遍胜负与连胜 —— 那正是「两个页面两个数」的来源。 */
+  var Stats = (typeof LXW !== 'undefined' && LXW.Stats) || null;
+  if (!Stats && typeof require === 'function') {
+    try { Stats = require('./stats.js'); } catch (e) { Stats = null; }
+  }
+  var KEY = ST ? ST.KEYS.RECORDS : 'lxw_records_v1';
   var LIMIT = 200;
   /* 同房间「同一把」的时间窗：结算页停留 / 重连 / 别人操作都会让 updatedAt 漂移，
    * 同一把被写两次时 endedAt 会有秒级差异，故同局次 + 窗口内一律视为重复。 */
@@ -57,37 +69,13 @@
   var LEGACY_DUP_WINDOW_MS = 60 * 1000;
   /* v2：判重引入局次，必须用新逻辑重跑一次存量迁移
    * （v1 只看 10 分钟窗口，会把同一房间连打的真实记录误删）。 */
-  var DEDUPE_FLAG = 'lxw_records_deduped_v2';
+  var DEDUPE_FLAG = ST ? ST.KEYS.RECORDS_DEDUPE : 'lxw_records_deduped_v2';
 
   /* ---------------------------- 存储访问（全部容错） ---------------------------- */
-  function store() {
-    try {
-      // 每次调用都重新取，便于测试注入 mock / 运行期被禁用时及时降级
-      if (typeof localStorage === 'undefined' || !localStorage) return null;
-      return localStorage;
-    } catch (e) {
-      return null;
-    }
-  }
+  /* available：探一次写。隐私模式 / 配额满 / 被策略禁用都算不可用。 */
+  function available() { return ST ? ST.available() : false; }
 
-  function available() {
-    var ls = store();
-    if (!ls) return false;
-    try {
-      var probe = '__lxw_probe__';
-      ls.setItem(probe, '1');
-      ls.removeItem(probe);
-      return true;
-    } catch (e) {
-      return false; // 隐私模式 / 配额满 / 被策略禁用
-    }
-  }
-
-  function rawRead() {
-    var ls = store();
-    if (!ls) return null;
-    try { return ls.getItem(KEY); } catch (e) { return null; }
-  }
+  function rawRead() { return ST ? ST.read(KEY, null) : null; }
 
   /* 写入磁盘。返回值是**三态**，不是布尔：
    *   'ok'      —— 完整写入
@@ -101,12 +89,15 @@
    * 两段降级（一半 → 10 条）足够应付「同一个 key 撑爆 5MB」这个场景，
    * 因为单条记录不含回放时只有几百字节，10 条之后还没空间说明是别的 key 占的，再砍也没用。 */
   function rawWrite(list) {
-    var ls = store();
-    if (!ls) return false;
-    try {
-      ls.setItem(KEY, JSON.stringify(list));
-      return 'ok';
-    } catch (e) {
+    if (!ST) return false;
+    var put = function (arr) {
+      var s = JSON.stringify(arr);
+      return s ? ST.write(KEY, s) : false;
+    };
+    if (put(list)) return 'ok';
+    /* 写不进（配额满）时的两段降级 —— 语义与旧版 try/catch 完全一致，只是
+     * 失败信号从「抛异常」变成 Store.write 返回 false。 */
+    {
       /* 降级时把回放一起丢掉：回放是体积大头（一轮明细几十张牌），
        * 而它只是「可以再看一遍」，战绩本身才是不能丢的。 */
       var lean = function (arr) {
@@ -122,10 +113,7 @@
         lean(list.slice(0, 10))
       ];
       for (var i = 0; i < tries.length; i++) {
-        try {
-          ls.setItem(KEY, JSON.stringify(tries[i]));
-          return 'trimmed';
-        } catch (e2) { /* 继续下一档 */ }
+        if (put(tries[i])) return 'trimmed';
       }
       return false;
     }
@@ -309,12 +297,9 @@
    * + 时间窗）归并，并额外要求 myNet 相同，避免误删同一房间里的真实连续对局。
    * 注意：即便是 v2 迁移，也无法恢复早期被静默丢弃的局次——那些记录从未落盘。 */
   function dedupe(force) {
-    var ls = store();
-    if (!ls) return { ran: false, removed: 0 };
+    if (!ST) return { ran: false, removed: 0 };
     if (!force) {
-      try {
-        if (ls.getItem(DEDUPE_FLAG)) return { ran: false, removed: 0 }; // 已经跑过，不重复扫
-      } catch (e) { return { ran: false, removed: 0 }; }
+      if (ST.read(DEDUPE_FLAG, '')) return { ran: false, removed: 0 }; // 已经跑过，不重复扫
     }
 
     var asc = readAll().sort(function (a, b) { return a.endedAt - b.endedAt; }); // 升序 → 先到先留
@@ -335,7 +320,7 @@
       if (kept.length > LIMIT) kept.length = LIMIT;
       rawWrite(kept);
     }
-    try { ls.setItem(DEDUPE_FLAG, '1'); } catch (e) {}
+    ST.write(DEDUPE_FLAG, '1');
     return { ran: true, removed: removed };
   }
 
@@ -388,42 +373,12 @@
      * 它们在列表里照样显示，只是带 is-ai 标记。 */
     var list = all(playerId).filter(function (r) { return !r.ai; });
     var n = list.length;
-    var wins = 0, losses = 0, flats = 0, totalNet = 0, bestNet = 0;
 
-    for (var i = 0; i < n; i++) {
-      var net = list[i].myNet;
-      if (net > 0) wins++;
-      else if (net < 0) losses++;
-      else flats++;
-      totalNet += net;
-      if (i === 0 || net > bestNet) bestNet = net;
-    }
-
-    // 当前连胜：从最新一局往回数，遇到 负 / 平 立即断
-    var currentStreak = 0;
-    for (var j = 0; j < n; j++) {
-      if (list[j].myNet > 0) currentStreak++;
-      else break;
-    }
-
-    // 最长连胜 / 最长连败：按时间正序（旧 → 新）扫一遍。
-    // 口径：只看净胜正负；**平局把连胜和连败都打断**（与 currentStreak 一致）。
-    var longestStreak = 0, longestLoseStreak = 0, winRun = 0, loseRun = 0;
-    for (var k = n - 1; k >= 0; k--) {
-      var v = list[k].myNet;
-      if (v > 0) {
-        winRun++;
-        loseRun = 0;
-        if (winRun > longestStreak) longestStreak = winRun;
-      } else if (v < 0) {
-        loseRun++;
-        winRun = 0;
-        if (loseRun > longestLoseStreak) longestLoseStreak = loseRun;
-      } else {
-        winRun = 0;
-        loseRun = 0;
-      }
-    }
+    /* 列表是「新 → 旧」，口径函数要「旧 → 新」，所以倒着喂。
+     * 数胜平负、两个连胜、单场最高全在 js/stats.js 里，这里一个字都不重算。 */
+    var nets = [];
+    for (var i = n - 1; i >= 0; i--) nets.push(list[i].myNet);
+    var s = Stats.fromNets(nets);
 
     // 最近 10 场：取倒序前 10 条，再反转成正序（左旧右新，可直接渲染趋势条）
     var recent = [];
@@ -434,16 +389,16 @@
     }
 
     return {
-      games: n,
-      wins: wins,
-      losses: losses,
-      flats: flats,
-      winRate: n ? Math.round(wins / n * 100) : 0,
-      totalNet: totalNet,
-      bestNet: n ? bestNet : 0,
-      currentStreak: currentStreak,
-      longestStreak: longestStreak,
-      longestLoseStreak: longestLoseStreak,
+      games: s.games,
+      wins: s.wins,
+      losses: s.losses,
+      flats: s.flats,
+      winRate: Stats.rate(s),
+      totalNet: s.totalNet,
+      bestNet: s.bestNet,
+      currentStreak: s.currentStreak,
+      longestStreak: s.longestStreak,
+      longestLoseStreak: s.longestLoseStreak,
       recent: recent
     };
   }
@@ -458,27 +413,24 @@
    * v50 之前删本机不动云端，才会出现「删了战绩排行榜还在」。
    */
   function clear(playerId) {
-    var ls = store();
-    if (!ls) return false;
-    try {
-      if (playerId === undefined || playerId === null) {
-        ls.removeItem(KEY);
-        ls.removeItem(DEDUPE_FLAG); // 一并清掉迁移标记，下次重新累积时仍能正常判重
-        return true;
-      }
-      var pid = String(playerId);
-      var keep = [];
-      var src = readAll();
-      for (var i = 0; i < src.length; i++) {
-        if (!ownedBy(src[i], pid)) keep.push(src[i]);
-      }
-      if (!keep.length) {
-        // 清完一条不剩：直接删 key，别留一个 "[]" 占着位置
-        ls.removeItem(KEY);
-        return true;
-      }
-      return !!rawWrite(keep);
-    } catch (e) { return false; }
+    if (!ST) return false;
+    if (playerId === undefined || playerId === null) {
+      ST.remove(KEY);
+      ST.remove(DEDUPE_FLAG); // 一并清掉迁移标记，下次重新累积时仍能正常判重
+      return true;
+    }
+    var pid = String(playerId);
+    var keep = [];
+    var src = readAll();
+    for (var i = 0; i < src.length; i++) {
+      if (!ownedBy(src[i], pid)) keep.push(src[i]);
+    }
+    if (!keep.length) {
+      // 清完一条不剩：直接删 key，别留一个 "[]" 占着位置
+      ST.remove(KEY);
+      return true;
+    }
+    return !!rawWrite(keep);
   }
 
   /* ==================== 已注销玩家的身份抹除（replay 部分） ====================

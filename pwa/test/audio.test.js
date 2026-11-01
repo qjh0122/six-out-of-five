@@ -23,6 +23,10 @@ const path = require('path');
 const vm = require('vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'sfx.js'), 'utf8');
+/* v111 起 sfx 不再直接碰 localStorage，改走 js/storage.js（物理键的唯一定义处）。
+ * 所以沙箱里也要先把 storage.js 跑起来 —— 否则 Sfx 拿不到 Store，
+ * 读写的都是空实现，测试会「通过得毫无判别力」（写了不报错，但什么都没存）。 */
+const STORAGE_SRC = fs.readFileSync(path.join(__dirname, '..', 'js', 'storage.js'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -80,7 +84,8 @@ function boot(store) {
   };
   sandbox.self = sandbox;   // sfx.js 结尾用的是 `typeof self !== 'undefined' ? self : this`
   vm.createContext(sandbox);
-  vm.runInContext(SRC, sandbox);
+  vm.runInContext(STORAGE_SRC, sandbox, { filename: 'storage.js' });
+  vm.runInContext(SRC, sandbox, { filename: 'sfx.js' });
   return {
     Sfx: sandbox.Sfx,
     log: al.log,
@@ -216,7 +221,11 @@ store = makeStore({ lxw_bgm_v1: '0' });
 app = boot(store);
 app.Sfx.setSoundEnabled(true);
 eq(store.data['lxw_sound_v1'], '1', '切换后只写新键');
-eq(store.data['lxw_bgm_v1'], '0', '老键不再改动（留着做兼容，不回写）');
+/* v111 起老键由 storage.js 的 migrate **消费掉**（搬进新键后删除），
+ * 因为「两套键并存」正是这次要清掉的债；上一版只读不改的做法会让旧键永远躺着。
+ * 这里换成的判据是同一件事的更强版本：切换之后**只有**新键，且值是对的。 */
+eq(store.data['lxw_bgm_v1'], undefined, '★ 老键已被迁移消费（不再两套键并存）');
+eq(store.data['lxw_sound_v1'], '1', '切换后的值只存在新键里');
 
 console.log('\n[旧 API 名字还在，别让老调用方静默失效]');
 

@@ -164,8 +164,8 @@ function mk(id, nick) {
 
   const pub = profiles.get(A.playerId);
   eq(pub.ach, undefined, '★ 对外档案不带明细');
-  eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 26 靠它）');
-  eq(pub.achTotal, 26, '总数 26');
+  eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 34 靠它）');
+  eq(pub.achTotal, 34, '总数 34（v112 扩了小牌型 / 小牌对撞 / 连败 / 整把成就）');
 
   const pubB = profiles.get(B.playerId);
   eq(pubB.achCount < self.achCount, true, '乙的解锁数确实比甲少（两个人的桶没串）');

@@ -118,6 +118,21 @@
 
 回放里显示的是**你在场期间**的每一把——中途加入、或换了设备，之前那几把本来就没发给你。
 
+### 成就：34 条，记的是「次数」
+
+| 系列 | 条数 | 记什么 |
+|---|---:|---|
+| 牌型 | 13 | 5 种大牌型（五花牛 / 同花顺 / 豹子 / 牛牛 / 十点半）+ 3 种小牌型（爆点 / 散牌 / 没牛），每条都给**次数 + 出现率**；分母是「参与该组的次数」，不是打了多少把 |
+| 对撞 | 6 | 大牌撞大牌（虎口夺食 / 豹落平阳 / 牌桌屠夫 / 强者运强）+ 小牌撞小牌（矮子里拔将军 / 一窝比惨，条件是**全场都是小牌**） |
+| 通吃 | 4 | 一轮三组全赢 / 一轮两组全赢 / 一把五组全赢 / 通吃十次 |
+| 战绩 | 11 | 场次、连胜、连败、单把分走全场（一夜暴富）、全场唯一正分（你咋这幸）、全场唯一负分（我咋这霉）、连败后赢一把（翻身农奴） |
+
+**数字怎么显示**：只有六条画进度条（常客 10 场 / 老油条 100 场 / 势不可挡 5 连胜 / 十连胜 /
+背到极点 5 连败 / 衰神附体 10 连败）——它们的语义是「还差多少」。其余全部写「37 次」这样的累计数，
+玩得越久数字越大，不会顶在 20/20 上不动。
+
+成就**从本功能上线那天开始记**：历史对局没有存牌型，回不去。换设备不影响（服务端档案里）。
+
 ---
 
 ## 跑起来
@@ -126,7 +141,7 @@
 
 ```bash
 npm start                              # 本地起服务，默认 3000 端口
-npm test                               # 全量回归：109 个文件 / 4502 条断言，约 90 秒
+npm test                               # 全量回归：123 个文件 / 4775 条断言，约 90 秒
 node scripts/journey.js                # 真实浏览器走一遍完整用户路径
 node scripts/probe-devices.js --assert # 机型支持：三族 23 档，不达标退出码非 0
 node scripts/probe-ui-flow.js          # 全流程 UI 巡检：12 视口 × 13 屏，约 22 分钟
@@ -140,9 +155,10 @@ node scripts/probe-online-smoke.js     # 发布后核对线上（15 条硬断言
 ```
 pwa/                前端（纯静态，直接 <script> 加载，无打包）
   index.html        入口 + 约 176 行内联 boot 脚本（sharecode 自愈、预缩放、SW 注册）
-  js/               25 个模块：game.js 主控 + engine/stateMachine 纯逻辑 + 各 View
+  js/               30 个模块：game.js 主控 + engine/stateMachine 纯逻辑 + 各 View
+                    （storage 唯一物理键、stats 唯一统计口径、achievements 双端同源）
   css/              4 个样式文件（style.css 单文件 5138 行）
-  test/             67 个测试文件
+  test/             78 个测试文件
   sw.js             Service Worker（版本号与 CACHE_NAME 必须同步 bump）
 server/             服务端（零依赖 Node）
   index.js          HTTP 入口：约 20 个 /api/* + 静态资源 + gzip
@@ -151,7 +167,7 @@ server/             服务端（零依赖 Node）
   stateMachine.js → 实际在 pwa/js/，前后端共用同一份纯逻辑
   profile.js        profiles.json 单文件持久化（去抖 500ms + 原子 rename）
   data/             结构样例（真实数据不入库，见「数据与隐私」）
-scripts/            57 个脚本：探针 / 模拟 / 构建 / 审计
+scripts/            58 个脚本：探针 / 模拟 / 构建 / 审计
 docs/               文档，入口见 docs/INDEX.md
 ```
 
@@ -168,7 +184,7 @@ docs/               文档，入口见 docs/INDEX.md
 |---|---|
 | **这个项目现在到什么程度、够不够优秀** | [`docs/REVIEW.md`](docs/REVIEW.md) —— 开头就是多维评分表 |
 | 现在是什么规则 | 本文件 |
-| 某个决定为什么是这样 | [`docs/HISTORY.md`](docs/HISTORY.md)（v0.2 → v108 十四段迭代） |
+| 某个决定为什么是这样 | [`docs/HISTORY.md`](docs/HISTORY.md)（v0.2 → v112 十五段迭代） |
 | 每把发版改了什么 | [`docs/release-progress.md`](docs/release-progress.md) |
 | 已知问题、为什么当时不修 | [`docs/BACKLOG.md`](docs/BACKLOG.md) |
 | 接下来做什么 | [`docs/PLAN.md`](docs/PLAN.md) |
