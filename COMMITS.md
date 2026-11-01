@@ -77,3 +77,32 @@
 - `74cde18` 写着「v46 牌桌遮挡修复 + P1 四条」，实际只改了牌桌探针脚本；
   真正的 v46 代码在 `d897028`。**标题和内容不符比没有标题更糟**
 - `c7ffb24` 叫 `fix game rules`，实际是 v48~v52 五个版本 + Review 体系 + CI
+
+---
+
+## 发布流程（2026-11-02 起固定为五步，顺序不许换）
+
+任何一次改动要上线，都走这条固定链路：
+
+| # | 步骤 | 判据 / 命令 |
+|---|---|---|
+| 0 | **文档检查**：把 `docs/` 过一遍，该改的改、不需要的跳过 | 见下表「哪些文档会因为什么变」 |
+| 1 | 全量验收 | `npm test` + `node scripts/journey.js`（UI 有改动再加 `probe-ui-flow` 单档） |
+| 2 | 提交 + **推私库** | `git push origin main`，然后 `git ls-remote origin main` 比对 HEAD —— 光看 `git status -sb` 不够 |
+| 3 | **推公库** | `bash scripts/publish-public.sh`（`git archive` 导出 + 敏感检查 + LF 归一） |
+| 4 | **发布上线** | `workbuddy_sites_deploy` → 再跑 `probe-online-smoke`（关键是「页面版本号 == 本地版本」）→ **直抓线上 `sw.js`** 确认 `CACHE_NAME` 已 bump |
+| 5 | 回填文档里的版本事实 | 部署成功后把「待发布」改成线上事实（**先部署、再写已发布**） |
+
+### 哪些文档会因为什么变
+
+| 改了什么 | 必须检查的文档 |
+|---|---|
+| 任何发布 | `docs/release-progress.md`（加一节 + 顶部「当前线上」）、`pwa/index.html` 版本号、`pwa/sw.js` 的 `CACHE_NAME` |
+| 玩法 / 规则 / 数值 | `README.md`（怎么玩、容易算错的地方）、`docs/HISTORY.md`（为什么这么定） |
+| 成就 / 战绩 / 统计口径 | `docs/achievements-plan.md`（唯一规格）、`README.md` 成就一节、`docs/review/*` 只在结论被推翻时才动 |
+| 结构债 / 架构 | `docs/PLAN.md`（状态）、`docs/BACKLOG.md`（STATUS 行）、`docs/REVIEW.md`（评分表 + 变化列） |
+| 测试规模变化 | `README.md` 的数字、`docs/REVIEW.md` 的「可测试性」「回归防护力」 |
+| 新文档 / 新评审 | `docs/INDEX.md`、`docs/REVIEW.md` §五档案表 |
+
+**跳过也是结论，不是遗漏**：文档没变要在提交说明里写一句「文档无需改，原因是什么」，
+否则下一个人无法区分「检查过」和「忘了看」。
