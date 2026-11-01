@@ -4,7 +4,7 @@
  * 生效条件：<html> 上有 .no-flex-gap（由 index.html 里的检测脚本挂上）。
  * 现代浏览器永远不会有这个 class，所以本文件对它们是**完全惰性**的。
  *
- * 108 条规则，另有 22 处刻意不处理，原因见 docs/compat.md。
+ * 111 条规则，另有 22 处刻意不处理，原因见 docs/compat.md。
  * ------------------------------------------------------------------------- */
 
 html.no-flex-gap .dev-panel-btns > * + * {
@@ -164,6 +164,15 @@ html.no-flex-gap .pat-cards > * + * {
   margin-left: 12px;
 }
 html.no-flex-gap .settle-recheck > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .settle-hl > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .shl-opts > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .ls .settle-hl > * + * {
   margin-left: 10px;
 }
 html.no-flex-gap .compact-v:not(.wide-stage) .game-bottom > * + * {

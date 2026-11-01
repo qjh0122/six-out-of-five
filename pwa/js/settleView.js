@@ -646,6 +646,39 @@
     return box;
   }
 
+  /* 候场期改把数（C-3 / v117）。
+   *
+   * 为什么这块在结算页而不是房间页：结算是**所有人都会停下来的那一刻**，
+   * 也是唯一一个「这一场已经收尾、下一场还没发牌」的窗口。
+   * 以前想换档位只能退房重建（房号还换一个），一桌人得重新集合。
+   *
+   * 只给房主可点：把数是整桌的规则，需要一个人负责。房主走了身份会自动转移
+   * （ensureLiveOwner），所以不会出现「没人能改」。其他人看到的是同一份读数，
+   * 只是按钮点不动 —— 他们仍然要看得到「下一局打几把」这件事。
+   */
+  function handLimitBlock(room) {
+    var box = el('div', 'settle-hl');
+    var opts = StateMachine.handLimitOptions();
+    var cur = StateMachine.handLimitOf(room);
+    var iAmOwner = !!(state && state.myId && room.ownerId === state.myId);
+
+    box.appendChild(el('p', 'shl-k', '下一局打几把'));
+
+    var row = el('div', 'shl-opts');
+    opts.forEach(function (n) {
+      var b = el('button', 'shl-opt' + (n === cur ? ' is-on' : ''), String(n));
+      b.type = 'button';
+      /* 点击走 game.js 的事件委托（与「不等他」同一套做法）：
+       * 这里是纯渲染，不绑事件 —— 否则每次重绘都要重新绑，漏一次就成了死按钮。 */
+      b.setAttribute('data-hand-limit', String(n));
+      if (!iAmOwner) b.disabled = true;
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+
+    return box;
+  }
+
   function settleListEl(room) {
     var rows = settleRank(room.players);
     /* 并列冠军要单独说一句「并列」：两颗皇冠并排，看着像「两个人并列」，
@@ -862,6 +895,11 @@
     if (room.endReason === 'handLimit') {
       inner.appendChild(el('p', 'settle-reset-note', '下一把分数从 0 分重新开始'));
     }
+    /* ★ v117（C-3）：候场期改把数。放在最后一块 —— 它属于「下一局怎么打」，
+     * 不属于「这一局打成了什么样」，排在成绩后面才不会抢戏。
+     * 但人数不够 2 人时不给：那时下一局根本开不起来，摆一堆按不动的档位只是噪音。 */
+    var canStillPlay = room.players.filter(function (p) { return !p.left; }).length >= CONFIG.MIN_PLAYERS;
+    if (canStillPlay) inner.appendChild(handLimitBlock(room));
     body.appendChild(inner);
     /* 结算列表在横屏是滚动的（.ls #screen-settle .settle-body 有 max-height + overflow-y:auto），
      * 而移动端滚动条是隐藏的 —— 不挂底部渐隐的话，第 5 行会被硬切成半行（844×390 实测），
@@ -936,6 +974,7 @@
       /* 导出只为测试：这是纯「一段 DOM」，没有副作用，也没有外部状态。
        * 不导出的话「并列冠军不写分差」这条分支只能靠源码 grep 守，等于没守。 */
       crownBlock: crownBlock,
+      handLimitBlock: handLimitBlock,
       settleListEl: settleListEl,
       settleReasonText: settleReasonText,
       settleTipText: settleTipText,

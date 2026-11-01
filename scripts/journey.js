@@ -1198,6 +1198,29 @@ async function main() {
   if (SHOTS) console.log('    截图：' + (await shot('settle')));
 
   /* ---------------------------------------------------------------- */
+  /* ★ C-3（v117）：候场期改把数。
+   *
+   * 判据不能用「按钮亮起来了」—— 那可能只是前端自己改了样式。
+   * 要看服务端有没有把新档位广播回来：这块是整块重画的，
+   * 重画之后仍是 15，说明房间上的 handLimit 真的变了。 */
+  console.log('\n[7c] 候场期改把数：点档位 → 服务端广播 → 那块重画');
+  const hlBefore = await evaluate('(function(){var b=document.querySelector("#settle-body [data-hand-limit].is-on");return b?b.getAttribute("data-hand-limit"):"";})()');
+  console.log('    当前档位：' + hlBefore);
+  await evaluate('document.querySelector(\'#settle-body [data-hand-limit="15"]\').click()');
+  const hlOk = await waitFor(
+    'document.querySelector(\'#settle-body [data-hand-limit="15"]\').classList.contains("is-on")',
+    6000, '改了把数那块没重画');
+  ok(hlOk, '★ 点档位 15 → 结算页那块重画成 15（说明服务端收下并广播了）', hlBefore + ' → 15');
+  /* 顺带确认这块没有把结算页撑宽 —— 它比名次列表还宽就会横向溢出 */
+  const hlFit = await evaluate(`(function(){
+    var d = document.documentElement;
+    var row = document.querySelector('#settle-body .shl-opts');
+    return { docOver: d.scrollWidth - d.clientWidth,
+             rowW: row ? Math.round(row.getBoundingClientRect().width) : 0,
+             rowWrap: row ? Math.round(row.getBoundingClientRect().height) : 0 };
+  })()`);
+  ok(hlFit && hlFit.docOver <= 0, '★ 加了这块之后结算页仍然没有横向溢出', JSON.stringify(hlFit));
+
   /* ★ C-2（v116）：结算后点「开始下一局」是一步到位 —— 报名即就位，
    * 人数够的话服务端在这一次广播里就发牌，中间不再有「回房间页再点一次准备」那一屏。
    *

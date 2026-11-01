@@ -184,6 +184,15 @@
         if (StateMachine.autoStartIfReady(room)) publish(roomId, room);
         return res;
       },
+      /* 候场期改把数（C-3 / v117）。本地模式没有服务端广播，改完 publish 一次即可。
+       * 不碰 autoStartIfReady：改把数不会让任何人更接近开局。 */
+      setHandLimit: function (roomId, playerId, handLimit) {
+        var room = getRoom(roomId);
+        var res = StateMachine.setHandLimit(room, playerId, handLimit);
+        if (!res.ok) return res;
+        publish(roomId, room);
+        return res;
+      },
       wantNext: function (roomId, playerId) {
         var room = getRoom(roomId);
         var res = StateMachine.wantNext(room, playerId);
@@ -719,6 +728,11 @@
           .then(function () { return { ok: true }; })
           .catch(function (e) { return { ok: false, error: e.message }; });
       },
+      setHandLimit: function (roomId, handLimit) {
+        return request({ type: 'setHandLimit', payload: { handLimit: handLimit } })
+          .then(function (r) { return { ok: true, handLimit: (r && r.handLimit) }; })
+          .catch(function (e) { return { ok: false, error: e.message }; });
+      },
       dropNext: function (roomId, playerId, targetId) {
         return request({ type: 'dropNext', targetId: targetId })
           .then(function () { return { ok: true }; })
@@ -921,6 +935,12 @@
     /* 结算页「开始下一局」：登记进下一局，回房间页。 */
     wantNext: function (roomId, playerId) {
       return MODE === 'local' ? Promise.resolve(local.wantNext(roomId, playerId)) : ws.wantNext(roomId, playerId);
+    },
+    /* 候场期改把数：只改「下一场打几把」，服务端会校验「结算期 + 房主」。 */
+    setHandLimit: function (roomId, playerId, handLimit) {
+      return MODE === 'local'
+        ? Promise.resolve(local.setHandLimit(roomId, playerId, handLimit))
+        : ws.setHandLimit(roomId, handLimit);
     },
     /* 就位态「回结算页」：撤回报名。 */
     unWantNext: function (roomId, playerId) {

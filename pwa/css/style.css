@@ -3185,6 +3185,56 @@ body.is-dragging { cursor: grabbing; }
 }
 .settle-wait { font-size: 24px; color: var(--gray-aux); }
 
+/* ---------- 候场期改把数（v117 / C-3）----------
+ * 一行排完：左边一句「下一局打几把」，右边五个档位。
+ *
+ * ★ 尺寸是按**实际触控高度**倒推的，不是按好看排的：
+ *   整页在 750 设计空间里整体缩放，390 宽的竖屏 scale≈0.52，
+ *   所以 44 CSS px 的触控底线 ≈ 84 设计 px。第一版按「视觉合适」写了
+ *   22px 字号 + 8px 内边距，实测热区只有 37×24，被 ui-flow 当场拦下。
+ * 也因此没有第二行说明文字 —— 那一行会把结算页再挤掉一截，
+ * 而「改了从下一局算」这件事，点下去的成功 toast 已经说清楚了。 */
+.settle-hl {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 2px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+.shl-k { flex: 0 0 auto; margin: 0; font-size: 20px; color: var(--gray-aux); }
+.shl-opts { display: flex; flex: 1 1 auto; gap: 10px; justify-content: flex-end; }
+.shl-opt {
+  flex: 0 0 auto;
+  min-width: 88px; min-height: 88px;
+  padding: 0 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: var(--text-main);
+  font-size: 24px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.shl-opt.is-on {
+  background: rgba(18, 160, 127, 0.22);
+  border-color: var(--brand-green);
+  color: var(--brand-green);
+  font-weight: 700;
+}
+.shl-opt[disabled] { opacity: 0.5; cursor: default; }
+/* 非房主也要看清「现在打几把」——当前档位不跟着一起变淡 */
+.shl-opt[disabled].is-on { opacity: 1; }
+
+/* 横屏只有 390 高，结算列表本身就在滚动，这块再占满就没法看了。
+ * 横屏的缩放基准是高度，84 设计 px 在这里远大于 44 实际，所以可以压回来一档。 */
+.ls .settle-hl { margin: 8px 0 2px; padding: 8px 12px; gap: 10px; }
+.ls .shl-k { font-size: 16px; }
+/* 横屏的 scale 同样是 ~0.52（按高度算），所以 44 实际也≈88 设计 —— 不能压小。 */
+.ls .shl-opt { min-width: 88px; min-height: 88px; font-size: 20px; }
+
 /* ---------- toast ---------- */
 .toast {
   position: absolute;
