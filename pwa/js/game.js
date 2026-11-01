@@ -861,6 +861,26 @@
       + '</button>';
   }
 
+  /* 候场期改把数（C-3 / v117）：只改「下一场打几把」。
+   * 服务端会再校验一遍「结算期 + 房主 + 合法档位」——
+   * 前端不重复判权限（房主已经换了的时候，本地 state 可能是旧的），
+   * 只挡掉连点：连发五条请求最后落在哪个档位完全看网络顺序。 */
+  async function onSetHandLimit(n) {
+    if (blockedOffline()) return;
+    if (!isFinite(n)) return;
+    if (!state.room) return;
+    if (state.room.ownerId !== state.myId) { flash('只有房主能改把数'); return; }
+    try {
+      var res = await RoomStore.setHandLimit(state.roomId, state.myId, n);
+      if (!res || !res.ok) { flash((res && res.error) || '改不了，稍后再试'); return; }
+      /* 不手工重绘：改完服务端会广播，订阅回调把结算页整块重画。
+       * 手工再画一遍只会和广播抢，画出两份不一样的按钮状态。 */
+      flash('下一局打 ' + n + ' 把');
+    } catch (e) {
+      flash('网络不太稳，再试一次');
+    }
+  }
+
   /* 发起「不等他」。要确认一次：这一下会把对方退回结算页，
    * 虽然人还在房间、名次还在，但他会错过这一把。 */
   function onSkipStale(targetId) {
@@ -4206,6 +4226,17 @@
       });
     }
     $('#btn-add-bot').addEventListener('click', onAddBot);
+    /* 候场期改把数（v117 / C-3）：和「不等他」一样是渲染出来的按钮，走委托。
+     * 绑在 #settle-body 上而不是 document：这块只存在于结算页，
+     * 挂在 document 上等于给每一次点击（包括牌桌上的）都加一道 closest 查询。 */
+    var settleBody = $('#settle-body');
+    if (settleBody) {
+      settleBody.addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest('[data-hand-limit]') : null;
+        if (!btn || btn.disabled) return;
+        onSetHandLimit(Number(btn.getAttribute('data-hand-limit')));
+      });
+    }
     $('#btn-dissolve').addEventListener('click', onProposeDissolve);
     $('#btn-dissolve-agree').addEventListener('click', function () { onVoteDissolve(true); });
     $('#btn-dissolve-reject').addEventListener('click', function () { onVoteDissolve(false); });

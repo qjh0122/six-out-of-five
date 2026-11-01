@@ -359,6 +359,7 @@ class Hub {
       case 'restart': return this.restart(client, reqId);
       case 'wantNext': return this.wantNext(client, reqId);
       case 'unWantNext': return this.unWantNext(client, reqId);
+      case 'setHandLimit': return this.setHandLimit(client, payload, reqId);
       case 'dropNext': return this.dropNext(client, payload, reqId);
       case 'proposeDissolve': return this.proposeDissolve(client, reqId);
       case 'voteDissolve': return this.voteDissolve(client, payload, reqId);
@@ -597,6 +598,17 @@ class Hub {
     const res = SM.unWantNext(found.room, found.playerId);
     if (!res.ok) return this._fail(client, reqId, res.error);
     this._ok(client, reqId, {});
+    this._broadcast(found.roomId);
+  }
+
+  /* 候场期改把数（C-3 / v117）：只改「下一场打几把」，不碰已经打完的结果。
+   * 不调 _maybeAutoStart —— 改把数不会让任何人更接近开局。 */
+  setHandLimit(client, payload, reqId) {
+    const found = this._requireRoom(client, reqId);
+    if (!found) return;
+    const res = SM.setHandLimit(found.room, found.playerId, payload && payload.handLimit);
+    if (!res.ok) return this._fail(client, reqId, res.error);
+    this._ok(client, reqId, { handLimit: res.handLimit });
     this._broadcast(found.roomId);
   }
 

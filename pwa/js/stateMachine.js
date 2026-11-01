@@ -1141,6 +1141,41 @@
     return { ok: true, room: room };
   }
 
+  /* 候场期改把数（C-3 / v117）。
+   *
+   * 把数在建房时定死、开打之后不能改 —— 打到一半把 10 改成 3，等于用新规则
+   * 去结算已经按旧规则打过的把。但**结算期（SETTLED）**是一个干净窗口：
+   * 这一场已经收尾、下一场还没发牌，改的是「下一场打几把」，不碰任何既成事实。
+   * 以前想换档位只能退房重建（房号也变），朋友就得重新集合 —— 这才是真痛点。
+   *
+   * 权限给房主：把数是整桌的规则，需要一个人负责。房主身份会自动转移
+   * （ensureLiveOwner），所以房主走了不会出现「没人能改」。
+   *
+   * 已经报名、停在就位态的人在这里也能改 —— 他还没开打，改了就是大家一起按新把数打。
+   */
+  function setHandLimit(room, actorId, next) {
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.phase !== PHASE.SETTLED) {
+      return { ok: false, error: '这一局已经开打了，把数要等它打完才能改', code: 'NOT_SETTLED' };
+    }
+    var actor = findPlayer(room, actorId);
+    if (!actor) return { ok: false, error: '你不在该房间' };
+    if (actor.left) return { ok: false, error: '你已经离开这一局了' };
+    if (room.ownerId !== actorId) return { ok: false, error: '只有房主能改把数' };
+
+    /* 这里刻意**不用** normalizeHandLimit：它会把脏值悄悄收敛成默认档，
+     * 于是「我选了 7」变成「按 10 打」。建房时可以容忍脏值（不能因为一个下拉框
+     * 把人挡在门外），改契约时必须明说拒绝。 */
+    var n = Number(next);
+    if (!isFinite(n) || Math.floor(n) !== n || handLimitOptions().indexOf(n) < 0) {
+      return { ok: false, error: '把数只能是 ' + handLimitOptions().join(' / ') + ' 把' };
+    }
+    if (handLimitOf(room) === n) return { ok: true, room: room, handLimit: n };   // 幂等
+    room.handLimit = n;
+    room.updatedAt = Date.now();
+    return { ok: true, room: room, handLimit: n };
+  }
+
   /* 撤回「开始下一局」：误点之后能退回结算页。
    *
    * 以前这个动作没有出口 —— wantNext 一旦置真，除了开局和离开房间没人能改回来。
@@ -1572,6 +1607,7 @@
     activePlayers: activePlayers,
     capOf: capOf,
     handLimitOf: handLimitOf,
+    setHandLimit: setHandLimit,
     normalizeHandLimit: normalizeHandLimit,
     handLimitOptions: handLimitOptions,
     roomSeats: roomSeats,
