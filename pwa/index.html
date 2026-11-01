@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- 禁止页面缩放：牌桌自己按 750 设计空间整体缩放，再叠一层浏览器缩放会让牌小到看不清，
+     拖牌时也容易点偏。user-scalable=no / maximum-scale 只对 Android Chrome 有效，
+     iOS Safari 从 iOS 10 起**故意忽略**它（无障碍考虑），所以真正的锁在 game.js 的 lockPageZoom()。 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#16382F">
+<meta name="app-version" content="20261101a">
+<title>六选五</title>
+<!-- PWA
+     manifest / 图标的 <link> **不写在这里**，由下面那段脚本注入 —— 它们必须带
+     ?sharecode=，而码要等脚本从 URL / localStorage 取到才知道。原因写在脚本里。 -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="六选五">
+<script>
+/* 访问凭据（sharecode）的记忆与自愈。
+ *
+ * 背景：部署网关要求每个请求都带 ?sharecode=，以前 manifest 的 start_url
+ * 把这个码**硬编码**进去了。问题是它被固化进安装包 —— 哪天轮换，
+ * 所有已安装到桌面的图标会立刻 403，而失败页写的是「请让房主重发链接」，
+ * 已经装到桌面的人根本没有入口去拿新链接，只会觉得「这应用坏了」然后删掉。
+ *
+ * 现在 start_url 是 "/"，靠这段补：最后用过的码存在 localStorage，
+ * 打开时如果没有就 replaceState 补上。凭据轮换后只要用新链接成功打开过一次，
+ * 桌面图标就自愈了。
+ *
+ * 必须放在 defer 脚本之前（它们都读 location.search）；
+ * 用 replaceState 而不是 pushState —— 不能在用户的历史里塞一条无关记录。 */
+(function () {
+  var KEY = 'lxw_sharecode_v1';
+
+  /* 第一步：把码补进 URL（没有就走自愈）。 */
+  try {
+    var cur = new URLSearchParams(location.search || '').get('sharecode');
+    if (cur) {
+      localStorage.setItem(KEY, cur);
+    } else {
+      var last = localStorage.getItem(KEY);
+      if (last) {
+        var u = new URL(location.href);
+        u.searchParams.set('sharecode', last);
+        history.replaceState(null, '', u.toString());
+      }
+    }
+  } catch (e) { /* 隐私模式禁用 storage 时就算了，正常从链接进也能用 */ }
+
+  /* 第二步：用**已经补好的**码注入 manifest / 图标。
+   *
+   * 为什么必须注入、不能写死在 HTML 里：
+   * 部署网关要求每个请求都带 ?sharecode=，而 manifest 与图标是**浏览器内部**抓的
+   * —— 它们不经过 Service Worker（SW 只拦页面发起的 fetch），SW 里那套 withShare()
+   * 对它们完全无效。写死的裸路径一律 403，后果不是「少个图标」：
+   *   · 安卓 Chrome 拿不到 manifest → 装不出 WebAPK，桌面图标只是个带地址栏的快捷方式；
+   *   · iOS 拿不到 apple-touch-icon → 加到桌面后图标是页面截图。
+   * 也就是说 v76 做的那整套图标（含两张 maskable、安全圆实测 0 越界）在线上一直
+   * 没被用上 —— 本地探针全绿，因为本地没有网关这一层。
+   *
+   * 为什么用 createElement 而不是「先写死再改 href」：浏览器解析到
+   * <link rel="manifest"> 的那一刻就会发起抓取，等脚本跑起来再改，第一发已经 403 了。
+   * 动态创建能保证它第一次出现在 DOM 里时 href 就是对的。
+   *
+   * 拿不到码时（本地开发 / 无网关环境）照样注入裸路径：本地裸路径是 200，
+   * 这样开发时也能测安装，不必先手工拼一个假码。 */
+  try {
+    var code = '';
+    try { code = new URLSearchParams(location.search || '').get('sharecode') || ''; } catch (e2) { code = ''; }
+    if (!code) { try { code = localStorage.getItem(KEY) || ''; } catch (e3) { code = ''; } }
+    var q = code ? ('?sharecode=' + encodeURIComponent(code)) : '';
+
+    function addLink(rel, href, attrs) {
+      var l = document.createElement('link');
+      l.rel = rel;
+      l.href = href;
+      if (attrs) { for (var k in attrs) { l.setAttribute(k, attrs[k]); } }
+      document.head.appendChild(l);
+    }
+
+    addLink('manifest', '/manifest.webmanifest' + q);
+    addLink('apple-touch-icon', '/icons/apple-touch-icon.png' + q);
+    /* favicon：以前完全没声明 <link rel="icon">，浏览器就去请求 /favicon.ico ——
+     * 那个文件不存在（本地 404，线上带网关是 403）。用 192 那张当 favicon
+     * 比再造一份 32×32 更省事，也不用改图标生成脚本。 */
+    addLink('icon', '/icons/icon-192.png' + q, { type: 'image/png' });
+  } catch (e4) { /* 注入失败就退回「装不了」，不影响对局 */ }
+})();
+</script>
+<script>
+/* 安装引导的**事件捕获点**。
+ *
+ * beforeinstallprompt 只会来一次，而且必须在它触发之前就 addEventListener；
+ * 等游戏脚本（defer，要等 HTML 解析完）跑起来再挂，很可能已经错过 ——
+ * 错过就再也拿不到那个 prompt()，安卓上「安装」按钮会永远不出现。
+ * 所以这里只做一件事：接住它、阻止 Chrome 自带的迷你信息条（那个太弱），
+ * 存到 window 上给 game.js 用。 */
+window.__lxwInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', function (e) {
+  e.preventDefault();
+  window.__lxwInstallPrompt = e;
+  try { window.dispatchEvent(new Event('lxw:installable')); } catch (err) { /* 老内核不支持自定义事件 */ }
+});
+</script>
+<script>
+/* 首屏预缩放：把「750 设计空间 → 屏幕」这一步提前到 <head> 里。
+ *
+ * 问题比想象的大：整套版式是按 750 设计像素画的，靠 #stage 的
+ * `transform: scale(var(--pt-scale))` 收到屏幕上。而 --pt-scale 原本只在 game.js 里写，
+ * 默认值是 1 —— 也就是说 boot 之前，750 宽的设计稿是 **1:1 铺在 390 宽的屏幕上**。
+ * 用户先看到的是一屏放大到溢出、只剩左上角的内容，等 game.js 跑完才"啪"一下缩回到正确大小。
+ *
+ * 这不只是"闪一下"，是"闪一下错的版式"。而且冷启动时 game.js 要等整个文档解析完
+ * 才开始下载，那段时间足够让人看清这屏错位的内容。
+ *
+ * 为什么能在 <head> 里做成：--pt-scale 是通过 CSS 变量继承的
+ * （#stage { transform: scale(var(--pt-scale, 1)) }），变量可以设在 <html> 上，
+ * 让 #stage 从祖先继承下来 —— 不需要 #stage 这个元素此刻已经存在。
+ * game.js 之后会把精确值写到 #stage 自身，内联样式优先级更高，自然接管。
+ *
+ * 竖屏的 scale 只由宽度决定（availW / 750，左右安全区在竖屏下恒为 0），
+ * 所以这里算出来的值与 game.js 完全一致，接管时不会有任何跳变。
+ *
+ * 横屏故意不处理：横屏要切 .ls 版式，而 .ls 是加在 #stage 上的 ——
+ * 那个元素此刻还没被解析出来，改 CSS 变量也无法表达。横屏首帧的缩放跳变
+ * 记在 docs/BACKLOG.md 里，等以后把版式判定也搬到 CSS 媒体查询时一起解决。
+ */
+(function () {
+  try {
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    if (!(vw > 0) || !(vh > 0)) return;
+    if (vw >= vh) return;                       // 横屏交给 game.js
+    var scale = vw / 750;                       // 与 CONFIG.DESIGN_WIDTH 一致
+    if (!isFinite(scale) || scale <= 0) return;
+    var root = document.documentElement;
+    root.style.setProperty('--pt-scale', scale);
+    /* iOS 26 standalone 的第一帧：innerHeight 比整屏矮一个状态栏（WebKit bug 313800），
+     * 用 100vh 兜住高度，否则 boot 完成前舞台先矮一截、底部闪一下纯色带。
+     * 浏览器里不写 —— 那里 100vh 是「工具栏收起后的高」，会把底部留白裁掉。
+     * 注意 --vp-h 是写进 <html> 的：html / body / #viewport / #stage 四层都读它，
+     * 少一层都会被 body 的 overflow:hidden 裁掉（见 css/style.css 顶部的说明）。 */
+    var sa = (window.navigator.standalone === true) ||
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    if (sa) root.style.setProperty('--vp-h', '100vh');
+  } catch (e) { /* 读不到视口就什么都不做，等同原来的行为（会闪，但不坏） */ }
+})();
+</script>
+<script>
+/* 首屏防闪：在 CSS 应用之前，先把「这个人登没登录」判出来。
+ *
+ * 为什么必须在 <head> 里同步跑完：HTML 里 #screen-home 默认可见、#screen-auth 带 hidden。
+ * 这两行一旦被样式表应用，用户看到的就是首页；而真正知道"该不该显示首页"的 boot
+ * 在 game.js 里（defer，要等整个文档解析完）。中间这段时间就是那一下闪烁。
+ * 在 head 里读一次 localStorage 只要不到 1ms，却能把这一帧抹掉。
+ *
+ * 只做一件事：没有有效会话就给 <html> 挂 .no-session，让 style.css 里那两条
+ * !important 规则把首页压住、把登录页放出来。有会话就什么都不做 ——
+ * 保持原来的默认（首页可见），已登录用户直接进首页，boot 之后按真实状态修正。
+ *
+ * 读失败（隐私模式、数据损坏）按「已登录」处理：不加 class，走原路径，
+ * 最坏是闪一下，而不是把所有人挡在白屏上。
+ */
+(function () {
+  try {
+    var raw = localStorage.getItem('lxw_session_v1');
+    var s = raw ? JSON.parse(raw) : null;
+    if (s && s.token && s.playerId) return;      // 有会话：不动，直接首页
+    document.documentElement.className += ' no-session';
+  } catch (e) { /* 存储不可用就当作已登录，让 boot 自己判 */ }
+})();
+</script>
+<link rel="stylesheet" href="./css/style.css?v=20261101a">
+<link rel="stylesheet" href="./css/records.css?v=20261101a">
+<link rel="stylesheet" href="./css/emoji.css?v=20261101a">
+<script>
+/* flex gap 检测 + 兼容层按需加载。
+ *
+ * 背景：全套布局用了 76 处 flex 容器的 gap，而 flex gap 是 Chrome 84 / Safari 14.1
+ * 才有的。更老的 WebView（国产浏览器的老内核、没升级的旧安卓机）会把它当未知属性忽略，
+ * 于是所有 flex 子元素**紧贴在一起** —— 不是"间距小了点"，是"按钮连成一片"。
+ *
+ * 为什么不直接把这 76 处改成 margin：
+ *   1. 有 9 个容器同时用 `justify-content: space-*`，那种情况下 margin 和 gap
+ *      语义不等价（margin 会先吃掉空间，第二个元素被往里推），改了就错位；
+ *   2. 76 处散在 4 个媒体查询里，改错一处只是"某个尺寸下偏移几像素"，
+ *      单测抓不到，只能靠人眼比截图 —— 拿现代浏览器的正确布局去赌老内核的观感，不值。
+ *
+ * 所以：现代浏览器**永远不加这个 class**，flex-gap-fallback.css 里的规则一条都不生效，
+ * 布局与改动前逐像素相同；只有真的不支持 flex gap 的内核才挂 class 并下载那份 CSS。
+ *
+ * 检测方法：造一个 column flex 容器 + 两个零高度子元素 + row-gap:2px。
+ * 支持则高度为 2，不支持则为 0。这是社区通行做法，不依赖 UA 判断
+ * （UA 判断在国产浏览器上完全不可信）。
+ *
+ * 异常时**不加 class**：宁可老内核没有间距，也不要现代浏览器被误判后
+ * gap 与 margin 双重生效 —— 后者会把布局撑坏，前者只是难看一点。
+ */
+(function () {
+  try {
+    var probe = document.createElement('div');
+    probe.style.cssText = 'display:flex;flex-direction:column;row-gap:2px;' +
+      'position:absolute;top:0;left:0;width:0;height:auto;visibility:hidden;pointer-events:none';
+    var a = document.createElement('div');
+    var b = document.createElement('div');
+    a.style.height = '0';
+    b.style.height = '0';
+    probe.appendChild(a);
+    probe.appendChild(b);
+    document.documentElement.appendChild(probe);
+    var h = probe.getBoundingClientRect().height;
+    document.documentElement.removeChild(probe);
+    if (h >= 2) return;                       // 支持，什么都不做
+
+    document.documentElement.className += ' no-flex-gap';
+    /* 版本号跟着 app-version 走，免得升级时要多改一处（漏改就等于老内核永远拿旧缓存） */
+    var ver = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = './css/flex-gap-fallback.css' + (ver ? '?v=' + ver : '');
+    document.head.appendChild(link);
+  } catch (e) { /* 检测跑不动就按「支持」处理，理由见上 */ }
+})();
+</script>
+<!-- 首屏最大的两块：style.css 41KB(gzip)、game.js 86KB(gzip)。
+     defer 脚本要等 HTML 解析到那一行才开始下载，而它们在 <body> 末尾 ——
+     这里提前声明，让下载和解析并行。URL 必须和下面的 src/href **完全一致**
+     （带同样的 ?v=），否则等于下两份。 -->
+<link rel="preload" href="./css/style.css?v=20261101a" as="style">
+<link rel="preload" href="./js/game.js?v=20261101a" as="script">
+</head>
+<body>
+<!-- 断网提示：以前断网后界面上没有任何变化，玩家只能靠"点了没反应"猜 -->
+<div id="net-banner" class="net-banner hidden" role="status" aria-live="polite">网络已断开 · 恢复后会自动继续</div>
+<div id="viewport">
+  <div id="stage">
+
+    <!-- 登录 / 注册（未登录时是首屏；视觉与首页同属一套：深绿玻璃 + 金色描边） -->
+    <section id="screen-auth" class="screen hidden">
+      <div class="auth-glow glow-a"></div>
+      <div class="auth-glow glow-b"></div>
+      <div class="auth-inner">
+        <div class="auth-brand">
+          <div class="auth-logo">
+            <svg viewBox="0 0 96 96" role="img" aria-label="六选五" xmlns="http://www.w3.org/2000/svg">
+              <rect width="96" height="96" fill="#16382F"/>
+              <rect x="5" y="5" width="86" height="86" rx="13" fill="#D8C88A"/>
+              <rect x="8" y="8" width="80" height="80" rx="9" fill="#1E5A44"/>
+              <rect x="21" y="14" width="54" height="69" rx="5" fill="#FFFFFF"/>
+              <g stroke="#D02828" stroke-width="6.2" stroke-linecap="round" fill="none">
+                <line x1="48.4" y1="24.4" x2="47.6" y2="29.3"/>
+                <line x1="31.3" y1="38.5" x2="64.7" y2="38.5"/>
+                <line x1="41.8" y1="50.9" x2="31.3" y2="70.2"/>
+                <line x1="54.2" y1="50.9" x2="64.7" y2="70.2"/>
+              </g>
+            </svg>
+          </div>
+          <h1 class="auth-title">六选五</h1>
+          <p class="auth-sub">好友房 · 六张牌两轮分牌</p>
+        </div>
+
+        <div class="auth-card">
+          <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+            <button class="auth-tab is-on" type="button" data-auth-tab="login" role="tab" aria-selected="true">登录</button>
+            <button class="auth-tab" type="button" data-auth-tab="register" role="tab" aria-selected="false">注册</button>
+          </div>
+
+          <div class="auth-field">
+            <label for="auth-name">账号名</label>
+            <input id="auth-name" maxlength="16" autocomplete="username" autocapitalize="off"
+                   autocorrect="off" spellcheck="false" placeholder="中文、字母或数字">
+          </div>
+
+          <div class="auth-field">
+            <label for="auth-pass">密码</label>
+            <input id="auth-pass" type="password" maxlength="64" autocomplete="current-password"
+                   placeholder="请输入密码">
+          </div>
+
+          <div class="auth-field hidden" id="auth-nick-field">
+            <label for="auth-nick">昵称<span class="auth-opt">选填，牌桌上显示</span></label>
+            <input id="auth-nick" maxlength="8" placeholder="不填就用账号名">
+          </div>
+
+          <p id="auth-err" class="auth-err hidden" role="alert"></p>
+
+          <button id="btn-auth-submit" class="btn btn-primary btn-lg">登录</button>
+
+          <p class="auth-hint" id="auth-hint">
+            还没有账号？<button class="auth-link" type="button" data-auth-tab="register">立即注册</button>
+          </p>
+
+          <!-- 忘记密码：不弹窗，就地展开一段说明。
+               为什么要写这一条 —— 这个游戏**不绑手机号、没有邮箱、没有自助找回**，
+               而登录页原先一个字都没提。玩家忘了密码只会反复试、以为号废了，
+               实际上管理员在后台一键就能重置，战绩一分不丢。 -->
+          <button class="auth-forgot" type="button" id="btn-forgot">忘记密码怎么办？</button>
+          <p class="auth-forgot-note hidden" id="auth-forgot-note">
+            这里不绑手机号，所以没法自助找回。请找房主或管理员在后台给你重置一个新密码，
+            重新登录后战绩和积分都还在。
+          </p>
+        </div>
+
+        <p class="auth-note" id="auth-note">账号只用来保存战绩，不绑手机号</p>
+      </div>
+    </section>
+
+    <!-- 首页 -->
+    <section id="screen-home" class="screen">
+      <div class="home-deco deco-a"></div>
+      <div class="home-deco deco-b"></div>
+      <!-- 声音总开关（BGM + 音效）：首页角落里一个图标，不占布局 -->
+      <button class="audio-toggle js-audio" type="button" data-audio-toggle
+              aria-label="声音" aria-pressed="true">
+        <svg class="au-on" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+          <path d="M4 10.2h3.5L13 5.5v15l-5.5-4.7H4v-5.6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M16.6 9.3a5.2 5.2 0 0 1 0 7.4M19.4 6.8a8.8 8.8 0 0 1 0 12.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+        <svg class="au-off hidden" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+          <path d="M4 10.2h3.5L13 5.5v15l-5.5-4.7H4v-5.6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M17.2 10.2l5.2 5.2M22.4 10.2l-5.2 5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <div class="home-inner">
+        <div class="logo">
+          <svg viewBox="0 0 96 96" role="img" aria-label="六选五" xmlns="http://www.w3.org/2000/svg">
+            <rect width="96" height="96" fill="#16382F"/>
+            <rect x="5" y="5" width="86" height="86" rx="13" fill="#D8C88A"/>
+            <rect x="8" y="8" width="80" height="80" rx="9" fill="#1E5A44"/>
+            <rect x="21" y="14" width="54" height="69" rx="5" fill="#FFFFFF"/>
+            <g stroke="#D02828" stroke-width="6.2" stroke-linecap="round" fill="none">
+              <line x1="48.4" y1="24.4" x2="47.6" y2="29.3"/>
+              <line x1="31.3" y1="38.5" x2="64.7" y2="38.5"/>
+              <line x1="41.8" y1="50.9" x2="31.3" y2="70.2"/>
+              <line x1="54.2" y1="50.9" x2="64.7" y2="70.2"/>
+            </g>
+          </svg>
+        </div>
+        <h1 class="title">六选五</h1>
+        <p class="subtitle">好友房 · 六张牌两轮分牌</p>
+        <div class="field">
+          <label for="nickname-input">昵称</label>
+          <input id="nickname-input" maxlength="8" placeholder="输入昵称">
+        </div>
+        <button id="btn-create" class="btn btn-primary btn-lg">创建房间</button>
+        <div class="join-row">
+          <input id="room-input" maxlength="6" inputmode="numeric" placeholder="6位房间号" aria-label="6 位房间号">
+          <button id="btn-join" class="btn btn-quiet btn-lg">加入房间</button>
+        </div>
+        <div class="entry-links">
+          <button id="btn-rules" class="entry-link" type="button">
+            <svg viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <path d="M4 5.5h7.2c1.3 0 2 .8 2 2v13c0-1.2-.8-2-2-2H4v-13Z" stroke="#B8C0CC" stroke-width="1.7" stroke-linejoin="round"/>
+              <path d="M22 5.5h-7.2c-1.3 0-2 .8-2 2v13c0-1.2.8-2 2-2H22v-13Z" stroke="#B8C0CC" stroke-width="1.7" stroke-linejoin="round"/>
+            </svg>
+            <span class="entry-label">玩法规则</span>
+          </button>
+          <button id="btn-records-home" class="entry-link is-new" type="button">
+            <svg viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <path d="M13 4.2 15.6 10l6.2.7-4.6 4.2 1.2 6.1L13 18.2 7.6 21l1.2-6.1L4.2 10.7 10.4 10 13 4.2Z" stroke="#F5C15C" stroke-width="1.7" stroke-linejoin="round"/>
+            </svg>
+            <span class="entry-label">我的战绩</span>
+          </button>
+          <button id="btn-rank-home" class="entry-link" type="button">
+            <svg viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <path d="M6 20.5V13M13 20.5V7M20 20.5v-5.5" stroke="#9BE1C4" stroke-width="1.9" stroke-linecap="round"/>
+              <path d="M4.5 22.5h17" stroke="#9BE1C4" stroke-width="1.5" stroke-linecap="round" opacity=".5"/>
+            </svg>
+            <span class="entry-label">排行榜</span>
+          </button>
+          <button id="btn-account" class="entry-link" type="button"
+                  aria-label="我的账号" title="我的账号">
+            <svg viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <circle cx="13" cy="9.4" r="4.2" stroke="#B8C0CC" stroke-width="1.7"/>
+              <path d="M4.9 21.6c.9-4.2 4.3-6.3 8.1-6.3s7.2 2.1 8.1 6.3" stroke="#B8C0CC" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+            <span class="entry-label">我的账号</span>
+          </button>
+        </div>
+
+        <!-- 安装引导（PWA）。
+             默认 hidden：只有「真的能装」时才由 game.js 显示 ——
+               · Chrome/Edge 收到 beforeinstallprompt → 显示「安装」按钮，点了直接弹系统安装框；
+               · iOS Safari 没有这个事件，改显示「分享 → 添加到主屏幕」的图文步骤；
+               · 已经是独立窗口（装过了）、微信内置浏览器、或用过「不再提示」→ 一直不显示。
+             以前完全没有这一块：页面明明能装成 App，却没有任何入口，玩家永远只会用它当网页。 -->
+        <div class="install-bar hidden" id="install-bar">
+          <button class="install-main" type="button" id="btn-install">
+            <svg class="install-ico" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <rect x="6" y="2.6" width="14" height="20.8" rx="3.2" stroke="#F5C15C" stroke-width="1.7"/>
+              <path d="M13 8.4v7.2M10.2 12.9 13 15.8l2.8-2.9" stroke="#F5C15C" stroke-width="1.7"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="install-text" id="install-text">添加到桌面，下次一点就开</span>
+            <span class="install-go" id="install-go">安装</span>
+          </button>
+          <button class="install-x" type="button" id="btn-install-x" aria-label="不再提示">×</button>
+          <p class="install-steps hidden" id="install-steps"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 房间页 -->
+    <section id="screen-room" class="screen hidden">
+      <div class="room-top">
+        <div class="room-code-box">房间号 <b id="room-code">------</b></div>
+        <div class="room-top-right">
+          <button class="audio-toggle audio-toggle--sm js-audio" type="button" data-audio-toggle
+                  aria-label="声音" aria-pressed="true">
+            <svg class="au-on" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <path d="M4 10.2h3.5L13 5.5v15l-5.5-4.7H4v-5.6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+              <path d="M16.6 9.3a5.2 5.2 0 0 1 0 7.4M19.4 6.8a8.8 8.8 0 0 1 0 12.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+            <svg class="au-off hidden" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <path d="M4 10.2h3.5L13 5.5v15l-5.5-4.7H4v-5.6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+              <path d="M17.2 10.2l5.2 5.2M22.4 10.2l-5.2 5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="btn-copy" class="btn btn-secondary btn-mini">邀请好友</button>
+        </div>
+      </div>
+      <div id="room-players" class="room-grid"></div>
+      <p id="room-hint" class="room-hint">等待玩家加入…</p>
+      <!-- 只在「就位态」出现：点了「开始下一局」之后结算页连同它的回放入口一起消失。
+           两颗胶囊并排，都不抢「准备」的位置：
+             · 看上一局过程 —— 逐轮怎么走的
+             · 上一局结算   —— 谁第几名、净胜多少（只读弹窗）
+           结算为什么要单独开一个只读弹窗：就位态座位表上的分数显示的是「—」，
+           想看自己上局拿了几分，原先唯一的办法是点「回结算页」，可那个按钮会真的
+           撤回报名（unWantNext）—— 一看就把全员准备打回，另外几个人得重新等。
+           看一眼数据不该有代价。 -->
+      <div class="room-prev-row">
+        <button id="btn-prev-replay" class="btn btn-ghost btn-mini room-prev hidden" type="button">看上一局过程</button>
+        <button id="btn-prev-result" class="btn btn-ghost btn-mini room-prev hidden" type="button">上一局结算</button>
+      </div>
+      <div class="room-actions">
+        <button id="btn-ready" class="btn btn-secondary btn-lg">准备</button>
+        <!-- 开局按钮已移除：改成「全员准备即自动开局」。
+             留一个永远点不到的房主按钮（因为别人一准备完就自动开了）
+             比删掉更容易让人困惑：他只会看到一个一直灰着的「开始游戏」。 -->
+        <div class="ghost-row">
+          <button id="btn-add-bot" class="btn btn-ghost hidden">补 AI 队友</button>
+          <!-- 「结束本局」而不是「解散」：它不会把房间散掉，只是这一局作废进结算，
+               房间号还在、大家还能开下一局。叫「解散」会让人以为点完就散伙了。 -->
+          <button id="btn-dissolve" class="btn btn-ghost">结束本局</button>
+          <!-- 就位态专有：撤回「开始下一局」，退回结算页看回放/战绩。
+               以前这里只有一个永远会报错的「结束本局」，等于没有出口。 -->
+          <button id="btn-next-back" class="btn btn-ghost hidden">回结算页</button>
+          <button id="btn-leave" class="btn btn-ghost">离开房间</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 对局页 -->
+    <section id="screen-game" class="screen hidden">
+      <div id="game-top" class="game-top"></div>
+      <!-- 准备态（v82）：不是另一个页面，就是这张牌桌。
+           顶栏座位（#game-top）原样复用 —— 它本来就把每个人的「已准备 / 未准备」
+           画在头像角标上了；中间换成房间信息卡，底部换成准备动作条。
+           节点是**搬**进来的不是复制（见 game.js 的 mountTableReady）：事件绑在元素上，
+           cloneNode 出来的是点不动的假按钮。
+           关掉 CONFIG.TABLE_READY 时这里永远空着，一切回到 #screen-room。 -->
+      <div id="table-ready" class="table-ready hidden">
+        <div class="tr-head" id="tr-head"></div>
+        <div class="tr-body" id="tr-body">
+          <div class="tr-card" id="tr-card"></div>
+        </div>
+      </div>
+      <div id="slots" class="slots"></div>
+      <div class="game-bottom">
+        <!-- 当前组标签条：点标签选组，点手牌直接落进去（都在拇指区，不用够屏幕上方） -->
+        <div id="group-chips" class="group-chips hidden"></div>
+        <div id="hand" class="hand"></div>
+        <div class="game-actions">
+          <button id="btn-submit" class="btn btn-primary btn-submit" disabled>再选 6 张牌</button>
+          <button id="btn-revise" class="btn btn-ghost on-light btn-mini hidden">改一次</button>
+          <button id="btn-dissolve-game" class="btn btn-danger btn-mini">结束本局</button>
+          <button id="btn-leave-game" class="btn btn-ghost btn-mini">离开房间</button>
+        </div>
+      </div>
+      <!-- 准备态的动作条：搬入 .room-prev-row 与 .room-actions（含 #btn-ready 与 ghost-row）。
+           搬整个 .room-actions 而不是里面的按钮 —— .ghost-row 的换行/等分规则挂在
+           `.room-actions .ghost-row` 上，拆开搬等于把那条规则留在原地、按钮散架。 -->
+      <div id="ready-acts" class="ready-acts hidden"></div>
+    </section>
+
+    <!-- 结束页 -->
+    <section id="screen-settle" class="screen hidden">
+      <h1 class="title ribbon-title">本局结束</h1>
+      <div id="settle-body" class="settle-body"></div>
+      <p id="settle-wait" class="settle-wait"></p>
+      <div class="room-actions">
+        <!-- 每个人都有一个，不再只给房主：结算页不该是房主一个人的闸门。
+             点一下 = 登记进下一局 + 回到房间页（房间号不变），
+             没点的人继续留在结算页看回放，互不影响。 -->
+        <button id="btn-next" class="btn btn-primary btn-lg">开始下一局</button>
+        <!-- 生成战绩图（分享）与本局过程（回放）并排：两个都是「看一眼」的事，
+             不是主操作。以前它们各占一行全宽，加上下面那一行，
+             一个结算页堆了 5 个按钮三种样子，重心全散了。 -->
+        <div class="settle-actions-row">
+          <button id="btn-share" class="btn btn-lg">生成战绩图</button>
+          <button id="btn-replay" class="btn btn-lg">本局过程</button>
+        </div>
+        <div class="settle-actions-row">
+          <button id="btn-records" class="btn">查看战绩</button>
+          <button id="btn-back-room" class="btn btn-ghost">离开房间</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 本局过程（回放）
+         12 个 .modal 统一补了对话框语义：role 标成 dialog、标成模态、可访问名指向弹窗自身标题。
+         读屏软件靠这层语义念出「这是一个对话框 / 它叫什么」；没有它，整块内容只是一堆 div。
+         标题一律用 id 指过去，不手写无标题文案 —— 以后改标题，读屏念的名字会跟着改。 -->
+    <div id="replay-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="replay-title">
+      <div class="modal-card replay-card">
+        <!-- 关闭键从「引导页的跳过文字」换成和玩家档案卡同一套圆形 X。
+             原因：那套 guide-skip 是给引导流程用的 26px 浅灰小字（rgba(58,29,0,.45)），
+             压在暖白纸上几乎看不见，而且它是全站内容型弹窗里唯一用这套样式的。
+             移动端「关闭」这类高频操作必须是可识别的大热区，不能是一行小字。 -->
+        <button id="btn-replay-close" class="modal-x" type="button" aria-label="关闭">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M9 9l16 16M25 9L9 25" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div class="replay-head">
+          <h2 id="replay-title">本场过程</h2>
+          <span id="replay-sub" class="replay-sub hidden"></span>
+        </div>
+        <div id="replay-body" class="replay-body"></div>
+      </div>
+    </div>
+
+    <!-- 上一局结算（就位态的只读回看）
+         内容用的是结算页同一套 .settle-list / .settle-row，所以两处看到的
+         排名、净胜、冠军行、「我」胶囊完全一致，不会各画一套慢慢跑偏。
+         ★ 但**底色不同**：结算页是墨绿底，这里是 .modal-card 的暖白纸感卡片，
+           所以 style.css 里给 .prev-result-body 单独重上了一遍浅底色阶
+           （行底 / 昵称 / 分数 / 净胜三态 / 尾注）。不重上的话，深底那套
+           「浅灰行 + 暖白字」落到白卡上就是整屏看不清 —— 实拍过，见第 36 章。
+         容器不能复用 .settle-body —— 那个在 .modal-open 时会被锁住滚动
+         （见 style.css 的 #stage.modal-open .settle-body），弹窗内容套进去就滚不动。 -->
+    <div id="prev-result-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="prev-result-title">
+      <div class="modal-card prev-result-card">
+        <button id="btn-prev-result-close" class="modal-x" type="button" aria-label="关闭">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M9 9l16 16M25 9L9 25" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div class="replay-head">
+          <h2 id="prev-result-title">上一局结算</h2>
+        </div>
+        <div id="prev-result-body" class="prev-result-body"></div>
+      </div>
+    </div>
+
+    <!-- 战绩分享图预览 -->
+    <div id="share-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="share-title">
+      <div class="modal-box share-box">
+        <!-- 这一屏视觉上只有一张图和两个按钮，没有标题。但对话框必须有可访问名，
+             否则读屏只会念「图」和「按钮」。用内联样式做「看不见但读屏能读到」（clip-path 收成 0 面积，
+             不影响布局、不新增 CSS 类），比拿 aria-label 糊一个文案更容易跟着改。 -->
+        <h2 id="share-title"
+            style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0">战绩图预览</h2>
+        <img id="share-img" class="share-img" alt="本局战绩图">
+        <p class="share-tip">长按图片可保存到相册</p>
+        <div class="modal-actions">
+          <button id="btn-share-save" class="btn btn-primary">保存图片</button>
+          <button id="btn-share-close" class="btn btn-ghost on-light">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 战绩页。数据以服务端档案为准（/api/me/records，与排行榜同一份）；
+         本机 localStorage 只在读不到账号数据时兜底，并负责存回放。 -->
+    <section id="screen-records" class="screen hidden">
+      <header class="rp-nav">
+        <button id="btn-records-back" class="rp-back" type="button" aria-label="返回">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M21.5 6.5 11 17l10.5 10.5" stroke="#FFF7E8" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <h1 class="rp-title">我的战绩</h1>
+      </header>
+
+      <main id="records-scroll" class="rp-scroll hidden">
+        <div id="records-data">
+          <!-- 汇总列（横屏左栏用）。加这层包裹是为了让横屏能把「数字」和「流水」分成两个
+               各自滚动的列：四块合计 546 设计像素，而横屏滚动区只有 426，单栏无论怎么排
+               都要整页滚 —— 那样流水就永远看不到。竖屏这层是透明容器（display:contents
+               都不用，它本身没有样式），不影响原有单列布局。 -->
+          <div class="rp-sumcol">
+          <section id="rp-sum" class="rp-sum up">
+            <span class="rp-sum-label">累计净胜</span>
+            <div class="rp-sum-value"><span id="rp-net">0</span><span class="rp-unit">分</span></div>
+            <div class="rp-sum-meta">
+              <span class="rp-meta-item"><b id="rp-games">0</b> 场</span>
+              <i class="rp-vsep" aria-hidden="true"></i>
+              <span class="rp-meta-item">胜率 <b id="rp-winrate">0%</b></span>
+            </div>
+          </section>
+
+          <!-- 中段：胜/负/平 三卡 + 纪录条。
+               这里原本右边还挂着一张「牌风」五维雷达；雷达撤掉之后这一块恢复成
+               单列，三卡与纪录条各占整行 —— 390 宽下每张卡 207 设计像素，
+               横屏 612 的栏宽下是 193，两朝向的卡几乎一样大，不用为朝向另调。 -->
+          <div class="rp-kpi">
+          <div class="rp-grid">
+            <div class="rp-gcard win">
+              <span class="rp-glabel"><i class="rp-gdot"></i>胜</span>
+              <b id="rp-wins" class="rp-gnum">0</b>
+            </div>
+            <div class="rp-gcard lose">
+              <span class="rp-glabel"><i class="rp-gdot"></i>负</span>
+              <b id="rp-losses" class="rp-gnum">0</b>
+            </div>
+            <div class="rp-gcard flat">
+              <span class="rp-glabel"><i class="rp-gdot"></i>平</span>
+              <b id="rp-flats" class="rp-gnum">0</b>
+            </div>
+          </div>
+
+          <!-- 纪录条：单场最高 / 最长连胜 / 最长连败（三项都是「历史最好」，语气比上面的场次统计更轻） -->
+          <section id="rp-bests" class="rp-bests" aria-label="纪录">
+            <div class="rp-best">
+              <span class="rp-best-k">单场最高</span>
+              <span id="rp-best-net-wrap" class="rp-best-v"><b id="rp-best-net">0</b><i>分</i></span>
+            </div>
+            <div class="rp-best">
+              <span class="rp-best-k">最长连胜</span>
+              <span class="rp-best-v up"><b id="rp-best-win">0</b><i>场</i></span>
+            </div>
+            <div class="rp-best">
+              <span class="rp-best-k">最长连败</span>
+              <span class="rp-best-v down"><b id="rp-best-lose">0</b><i>场</i></span>
+            </div>
+          </section>
+          </div><!-- /rp-kpi -->
+
+          <section class="rp-trend">
+            <div class="rp-trend-head">
+              <span class="rp-trend-title">最近 10 局</span>
+              <span class="rp-legend">
+                <span><i class="rp-lg rp-lg-win"></i>赢</span>
+                <span><i class="rp-lg rp-lg-lose"></i>输</span>
+                <span><i class="rp-lg rp-lg-flat"></i>平</span>
+              </span>
+            </div>
+            <div id="rp-trend-bar" class="rp-trend-bar" role="img" aria-label="最近 10 局"></div>
+            <div class="rp-trend-axis"><span>更早</span><span>最新</span></div>
+          </section>
+          </div><!-- /rp-sumcol -->
+
+          <div class="rp-listcol">
+          <div class="rp-list-head">
+            <h2>最近对局</h2>
+            <span id="rp-list-count" class="rp-list-count">共 0 局</span>
+          </div>
+          <!-- 人机局说明：只在真的有「含人机」的场次时出现（js 控制 hidden）。
+               位置放在列表标题下面而不是页脚，因为它解释的是**下面这几行**：
+               列表里带「含人机」徽标的那些，就是这里说的场次。 -->
+          <p id="rp-ai-note" class="rp-ai-note hidden">
+            <span class="rp-ai-chip">含人机</span>
+            <span id="rp-ai-note-text">人机对局不计入战绩与排行榜</span>
+          </p>
+          <ul id="records-list" class="rp-list"></ul>
+          </div><!-- /rp-listcol -->
+        </div>
+      </main>
+
+      <!-- 空态：标题栏以下整块居中（不显示趋势 / 列表 / 页脚） -->
+      <div id="records-empty" class="rp-empty hidden">
+        <svg class="rp-empty-art" viewBox="0 0 188 188" fill="none" role="img" aria-label="还没有战绩">
+          <circle cx="94" cy="94" r="84" fill="rgba(0,0,0,.20)"/>
+          <circle cx="94" cy="94" r="84" fill="none"
+                  stroke="rgba(245,193,92,.50)" stroke-width="2.5" stroke-dasharray="13 12" stroke-linecap="round"/>
+          <g transform="rotate(12 94 94)">
+            <rect x="58" y="40" width="72" height="104" rx="12"
+                  fill="rgba(255,255,255,.06)" stroke="rgba(245,193,92,.40)" stroke-width="2.4"/>
+          </g>
+          <g transform="rotate(-7 94 94)">
+            <rect x="57" y="42" width="74" height="106" rx="13" fill="#10362A" stroke="#F5C15C" stroke-width="3"/>
+            <text x="94" y="112" text-anchor="middle"
+                  font-family="-apple-system,PingFang SC,sans-serif"
+                  font-size="48" font-weight="800" fill="rgba(245,193,92,.88)">0</text>
+            <rect x="74" y="123" width="40" height="5" rx="2.5" fill="rgba(255,247,232,.20)"/>
+          </g>
+        </svg>
+        <p id="records-empty-title" class="rp-empty-title">还没有战绩，去开一局吧</p>
+        <p id="records-empty-sub" class="rp-empty-sub">打完一局自动记下</p>
+        <button id="btn-records-create" class="btn btn-primary rp-empty-cta" type="button">创建房间</button>
+      </div>
+
+      <!-- 页脚固定在屏底：只让列表滚动，清除入口始终可达 -->
+      <footer id="records-foot" class="rp-foot">
+        <p class="rp-note">
+          <svg viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="8.6" stroke="#B8C0CC" stroke-width="1.6" opacity=".8"/>
+            <path d="M11 6.6v.2M11 10v5" stroke="#B8C0CC" stroke-width="1.8" stroke-linecap="round" opacity=".8"/>
+          </svg>
+          <span id="records-source">已保存到账号 · 换设备也在</span>
+        </p>
+        <button id="btn-records-clear" class="rp-clear" type="button">清除记录</button>
+      </footer>
+    </section>
+
+    <!-- 排行榜（服务端聚合的云端数据） -->
+    <section id="screen-rank" class="screen hidden">
+      <header class="rp-nav">
+        <button id="btn-rank-back" class="rp-back" type="button" aria-label="返回">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M21.5 6.5 11 17l10.5 10.5" stroke="#FFF7E8" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <h1 class="rp-title">排行榜</h1>
+      </header>
+
+      <main id="rank-scroll" class="rp-scroll">
+        <div id="rank-body">
+          <p id="rank-loading" class="rank-tip">正在加载…</p>
+          <ul id="rank-list" class="rank-list hidden"></ul>
+          <p id="rank-empty" class="rank-tip hidden">还没有人上榜，打完一局就会出现在这里</p>
+        </div>
+      </main>
+
+      <footer class="rp-foot">
+        <p class="rp-note">
+          <svg viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="8.6" stroke="#B8C0CC" stroke-width="1.6" opacity=".8"/>
+            <path d="M11 6.6v.2M11 10v5" stroke="#B8C0CC" stroke-width="1.8" stroke-linecap="round" opacity=".8"/>
+          </svg>
+          按累计净胜排序 · 不含人机对局
+        </p>
+      </footer>
+    </section>
+
+    <!-- 清除战绩确认弹窗 -->
+    <div id="records-clear-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="records-clear-title">
+      <div class="modal-box rp-clear-box">
+        <h3 id="records-clear-title">清除全部战绩？</h3>
+        <p>清除后无法恢复。</p>
+        <div class="rp-warn">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3.6 21.2 20H2.8L12 3.6Z" stroke="#A81C1C" stroke-width="1.8" stroke-linejoin="round"/>
+            <path d="M12 9.4v4.6M12 16.8v.2" stroke="#A81C1C" stroke-width="1.9" stroke-linecap="round"/>
+          </svg>
+          <span id="records-clear-count">当前 0 场记录将被删除</span>
+        </div>
+        <!-- 云端与云端必须一起清：只删本机不动服务器，就是「删了战绩排行榜还在」的成因 -->
+        <label id="records-clear-cloud-wrap" class="rp-opt">
+          <input id="records-clear-cloud" type="checkbox" checked>
+          <span class="rp-opt-box" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none">
+              <path d="M4.6 10.4 8 13.6l7.4-7.4" stroke="#0C2A22" stroke-width="2.6"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="rp-opt-text">同时清除账号里的战绩（排行榜会一起归零）</span>
+        </label>
+        <div class="modal-actions">
+          <button id="btn-records-clear-ok" class="btn btn-primary" type="button">确定清除</button>
+          <button id="btn-records-clear-cancel" class="btn btn-ghost on-light" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 开局倒计时（?countdown=1 演示模式，默认不出现）
+         不是 .modal，也不进 MODAL_ORDER：它没有焦点陷阱、不参与 Esc 链，
+         只是一层「盖住刚发下来的牌」的遮罩，点一下或跑完 4 拍就消失。 -->
+    <div id="countdown" class="countdown hidden" aria-hidden="true">
+      <b id="cd-num">3</b>
+    </div>
+
+    <!-- 牌型特写幕（v98）：豹子 / 牛牛 / 五花牛 / 10.5 结算**之前**的一整幕。
+         不是 .modal —— 它没有焦点陷阱、不进 MODAL_ORDER、不参与 Esc 链，
+         只是一层盖住牌桌的舞台光，点一下跳过。
+         内容由 game.js 的 buildPatternFx() 每次现拼（牌面 + 粒子角度都是数据驱动的）。 -->
+    <div id="pattern-fx" class="pat-fx hidden" aria-hidden="true"></div>
+
+    <!-- 结算弹窗 -->
+    <!-- 逐组结算（v89 §13.1）：一次结算里有 2~3 组，**一幕一组**自动推进。
+         所以这里只有一个 #result-groups —— 内容是每次重画的单组卡，
+         不是一次铺满三张。脚注那行说清楚「还有几组、几秒后走」。 -->
+    <div id="result-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="result-title">
+      <div class="modal-card">
+        <h2 id="result-title">结算</h2>
+        <div id="result-groups" class="result-groups"></div>
+        <!-- 进度条：纯装饰（自动推进的可视化），读屏跳过；时长由 --hold 决定 -->
+        <div class="result-seq-bar" aria-hidden="true"><i></i></div>
+        <div class="result-foot">
+          <span id="result-next" class="result-next"></span>
+          <button id="btn-result-close" class="btn btn-primary btn-lg">继续游戏</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 轮次交替卡（v89 §13.2）：第一轮打完、真的进第二轮时插一张。
+         它盖住整张牌桌是**故意的** —— 第二轮牌这时候已经发到手里了，
+         卡上再出手牌或组托盘，会和「手里已经 6 张新牌」自相矛盾。 -->
+    <div id="round-break-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="rb-title">
+      <div class="modal-card rb-card">
+        <h2 id="rb-title">第一轮结束</h2>
+        <p id="rb-sub" class="rb-sub">本轮各家净得</p>
+        <div id="rb-body" class="rb-body"></div>
+        <p id="rb-next" class="rb-next"></p>
+        <button id="btn-rb-close" class="btn btn-primary btn-lg">进入第二轮</button>
+      </div>
+    </div>
+
+    <!-- 新手分步引导（P3-8）
+         原来的「玩法规则」是一整屏密集文字：写法没问题，但新玩家第一次上手
+         读不下去 —— 而四种玩法里十点半的口径和王的三重身份，恰恰是最需要
+         有人一句一句讲清的地方。这里拆成 4 屏，每屏一句主文案 + 一张示意图，
+         完整规则仍然保留在后面的 rules-modal 里，从最后一屏可以跳过去。 -->
+    <div id="guide-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="guide-title">
+      <div class="modal-card guide-card">
+        <!-- 引导有 4 屏、每屏自己的 h2 会随步骤藏起来，所以标题不能挂在某一屏的 h2 上
+             （指向被 hidden 的元素 = 可访问名算不出来）。给它一个固定的隐藏标题。 -->
+        <h2 id="guide-title"
+            style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0">新手引导</h2>
+        <div class="guide-head">
+          <span class="guide-dots" id="guide-dots"></span>
+          <button id="guide-skip" class="guide-skip" type="button">跳过</button>
+        </div>
+
+        <div class="guide-body" id="guide-body">
+          <div class="guide-step" data-step="0">
+            <div class="guide-art guide-art-deal">
+              <div class="gset">
+                <span class="gcard"><b>A</b><i>♠</i></span>
+                <em>1 张</em>
+              </div>
+              <div class="gset">
+                <span class="gcard red"><b>7</b><i>♥</i></span>
+                <span class="gcard"><b>K</b><i>♣</i></span>
+                <em>2 张</em>
+              </div>
+              <div class="gset">
+                <span class="gcard red"><b>3</b><i>♦</i></span>
+                <span class="gcard"><b>9</b><i>♠</i></span>
+                <span class="gcard red"><b>J</b><i>♥</i></span>
+                <em>3 张</em>
+              </div>
+            </div>
+            <h2>六张牌，两轮分</h2>
+            <p>每人发 <b>6 张</b>牌。第一轮拆成 <b>1 / 2 / 3</b> 张比，第二轮用<b>同一手牌</b>再拆成 <b>1 / 5</b> 张比。</p>
+            <p class="guide-tip">每一组都跟同桌其他人同组的比，赢了收分、输了付分。</p>
+          </div>
+
+          <div class="guide-step" data-step="1" hidden>
+            <div class="guide-art">
+              <div class="gtile"><b>1 张</b><span>比大小</span></div>
+              <div class="gtile"><b>2 张</b><span>十点半</span></div>
+              <div class="gtile"><b>3 张</b><span>飘三叶</span></div>
+            </div>
+            <h2>第一轮：三种玩法</h2>
+            <p><b>比大小</b>大王最大、<b>十点半</b>凑到 10.5 最强（超了算爆）、<b>飘三叶</b>豹子最大。</p>
+            <p class="guide-tip">同一轮里这三组各比各的，各算各的分。</p>
+          </div>
+
+          <div class="guide-step" data-step="2" hidden>
+            <div class="guide-art">
+              <div class="gtile"><b>1 张</b><span>再比大小</span></div>
+              <div class="gtile"><b>5 张</b><span>斗牛</span></div>
+            </div>
+            <h2>第二轮：斗牛</h2>
+            <p><b>1 张</b>再比一次大小，<b>5 张</b>凑斗牛：三张凑成 10 的倍数，剩下两张的个位就是牛几。</p>
+            <p class="guide-tip">五花牛最大、没牛最小。没牛撞上别人有牛，还要多赔 5 分。</p>
+          </div>
+
+          <div class="guide-step" data-step="3" hidden>
+            <div class="guide-art">
+              <span class="gcard gcard-joker"><b>王</b><i>JOKER</i></span>
+            </div>
+            <h2>大王很特别</h2>
+            <ul class="guide-facts">
+              <li><b>比大小</b>最大的牌</li>
+              <li><b>飘三叶</b>万能牌</li>
+              <li><b>十点半</b>万能，能当 10，比真 10 大</li>
+              <li><b>斗牛</b>能凑十，也能凑牛牛</li>
+            </ul>
+            <p class="guide-tip">打满建房时选的局数才收手；分数可以输成负数，人继续打。</p>
+          </div>
+        </div>
+
+        <div class="guide-nav">
+          <button id="guide-prev" class="btn btn-ghost on-light" type="button">上一步</button>
+          <button id="guide-next" class="btn btn-primary" type="button">下一步</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 玩法规则弹窗（文案与 README §一 的规则表 / pwa/js/config.js 的计分数值保持一致，改数值时请同步）。
+         ★ v106 修：这里原本写着「分数输到 0，本局就结束」和「有人分数 ≤0 立即结束本局」，
+         那是 v103 就已经删掉的「见底出局」。起始分改成 0 之后这两句自相矛盾（开局即结束），
+         规则页在教一条不存在的规则 —— 这类文案漏改比代码 bug 更难被发现，
+         因为没有任何测试会去读它。现在写的是真正的终局条件：打满选定局数 / 人数不足 / 全员解散。 -->
+    <div id="rules-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="rules-title">
+      <div class="modal-card rules-card">
+        <h2 id="rules-title">玩法规则</h2>
+        <div class="rules-body">
+          <p class="rules-lead">每人 6 张牌，分两轮拆开跟别人比，赢了收分，<b>打满建房时选的局数才收手</b>。</p>
+          <div class="rules-step"><b>第一轮</b>拆成 1 / 2 / 3 张 → 比大小 · 十点半 · 飘三叶</div>
+          <div class="rules-step"><b>第二轮</b>同一手再拆 1 / 5 张 → 比大小 · 斗牛</div>
+          <dl class="rules-list">
+            <dt>比大小（1张）</dt>
+            <dd>大王 &gt; K &gt; Q &gt; J &gt; 10 &gt; … &gt; 2 &gt; A；同点比花色 ♠&gt;♥&gt;♣&gt;♦<br>赢家收每个对手 1 分</dd>
+            <dt>十点半（2张）</dt>
+            <dd>A=1、2~10 面值、J/Q/K=0.5；<b>大王完全万能</b>（0.5 / A / 2~10 都能当，自动凑成最大点数）<br>按点数比大小，10.5 最大、超 10.5 爆牌输<br><b>点数相同</b>比「把点数做大的那张」：都是 10.5 就比那张 <b>10</b> 的花色（♠&gt;♥&gt;♣&gt;♦），J/Q/K 只是半点、牌面不比大小<br><b>王比 10 大</b>：王当的那张 10 压过任何真 10；王只是当半点时，花色也按最大算<br><b>第一轮优先不爆</b>：能凑出不爆的组合时，别把两张会爆的放进十点半组；能凑 10.5 就先凑 10.5。放牌时会当场提醒，但不拦你<br>10.5 收每人 2 分，否则每人 1 分</dd>
+            <dt>飘三叶（3张）</dt>
+            <dd>豹子 &gt; 同花顺 &gt; 同花 &gt; 顺子 &gt; 对子 &gt; 散牌，A 最大<br>豹子赢 → 每人付「1 + 场上豹子数」（场上 3 个豹子即每人 4 分）；其它牌型每人 1 分</dd>
+            <dt>斗牛（5张）</dt>
+            <dd>三张凑 10 的倍数，剩两张个位 = 牛几；五花牛最大，没牛最小<br><b>同牛型比五张里最大的那张</b>（K&gt;Q&gt;J&gt;10&gt;…&gt;2&gt;A，A 只算 1；一样再比花色 ♠&gt;♥&gt;♣&gt;♦）<br><b>大王两处都能补</b>：既能去凑那三张，也能留在剩下的两张里 —— 三张真牌自己就是 10 的倍数时，王补进那两张必成<b>牛牛</b>；有大王的手牌比大小时<b>王不参与</b>，取除王以外最大的那张；有大王不算五花牛（王 + 四张花牌算牛牛）<br>五花牛 4 分 / 牛牛 3 分 / 牛8·牛9 2 分 / 牛1~牛7 1 分<br><b>没牛的代价</b>：赢家有牛而你没牛时，你在该档之外再多付 5 分（两人局牛牛打没牛 = 输家 -8）；双方都没牛不额外扣分</dd>
+          </dl>
+          <p class="rules-joker"><b>大王</b>在三种玩法里各不同：单张比大小 → 本身就是最大的一张牌；飘三叶 → 万能牌，自动凑出最优牌型；十点半 → 完全万能，<b>能当 10 且比真 10 大</b>（王 + K 也是十点半）；斗牛 → 三张真牌自己成十时，王补进剩下两张必成牛牛；否则王去凑「三张成 10」，同牛型比大小时王不参与（取除王以外最大的那张）。</p>
+          <p class="rules-end">打满选定局数本局结束；或有人提请结束本局、全员同意也结束（打过的分照记，一分没打则不计入战绩）。<b>分数可以输成负数，人不下场</b> —— v103 起「见底出局」这条规则已经删掉了。</p>
+        </div>
+        <button id="btn-rules-close" class="btn btn-primary btn-lg">知道了</button>
+      </div>
+    </div>
+
+    <!-- 玩家战绩卡（点座位卡 / 排行榜 / 结束页的玩家行打开）。
+         数据来自服务端档案 getProfile —— 与「我的战绩」是**同一份** profiles 记录，
+         区别只在取数通道（WS 只读查询）和流水条数（别人只给最近 5 条，见
+         profile.js 里 _public 的 recentLimit 说明）。 -->
+    <div id="profile-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="profile-title">
+      <div class="modal-box profile-box">
+        <!-- 卡片上最显眼的是玩家昵称，但那不是「弹窗叫什么」；给它一个固定的隐藏标题。 -->
+        <h2 id="profile-title"
+            style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0">玩家战绩</h2>
+        <button id="btn-profile-close" class="profile-close" type="button" aria-label="关闭">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M9 9l16 16M25 9L9 25" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div class="pf-head">
+          <div id="profile-avatar" class="pf-avatar" aria-hidden="true">?</div>
+          <div class="pf-name-wrap">
+            <div id="profile-name" class="pf-name">玩家</div>
+            <div id="profile-source" class="pf-source">已保存到账号</div>
+          </div>
+        </div>
+        <div id="profile-body" class="profile-body">
+          <p class="pf-loading">加载中…</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 建房弹窗：先选「本局打几把」再开房。
+         产品口径（2026-10-31，v103 修订）：
+           · 档位固定 3 / 5 / 10 / 15 / 30，**不选就是 10**；
+           · 一把 = 两轮，所以 10 局 = 20 轮；
+           · 结束条件 = **打满选定局数**。分数可以跌破 0（输得比本金多），
+             但不会因此提前结束 —— 这条规则 v103 已删。
+         档位按钮由 game.js 按 CONFIG.HAND_LIMITS 现场生成，HTML 里不写死一份 ——
+         写死就会出现「配置改了、界面没改」这种最难发现的错位。
+         说明文案要当面讲清「中途不会提前结束」：玩家的旧经验是「分没了就散」，
+         不讲清楚，负分的人会以为自己已经出局了。 -->
+    <div id="create-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <div class="modal-box create-box">
+        <h3 id="create-title">本局打几局？</h3>
+        <p class="create-desc">一局两轮，打满选定局数收手，中途不提前结束。</p>
+        <div class="hand-limit-row" id="hand-limit-row" role="radiogroup" aria-label="本局局数"></div>
+        <div class="modal-actions">
+          <button id="btn-create-confirm" class="btn btn-primary" data-autofocus>开始建房</button>
+          <button id="btn-create-cancel" class="btn btn-ghost on-light">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结束本局投票弹窗。
+         文案要回答玩家点「同意」之前最关心的两件事：我这一局算不算数、房间会不会没。
+         而且**必须分两种情形说**（见 game.js 里按 played 分支）：
+           已经打过分 → 按当前分数结账、照常计入战绩；一分没打 → 不计入战绩。
+         统一说成「本局作废」是错的 —— 会让人以为赢来的分被抹了。
+         房间一律保留，只是这一局结束。 -->
+    <div id="dissolve-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="dissolve-title">
+      <div class="modal-box">
+        <h3 id="dissolve-title">有人提请结束本局</h3>
+        <p id="dissolve-desc"></p>
+        <div class="modal-actions">
+          <button id="btn-dissolve-agree" class="btn btn-primary">同意结束</button>
+          <button id="btn-dissolve-reject" class="btn btn-ghost on-light">拒绝</button>
+          <button id="btn-dissolve-cancel" class="btn btn-ghost on-light hidden">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 爆点拦截：十点半这一组爆了，手里却还有不爆的打法 —— 不许提交。
+         只有一个「去改」按钮，刻意不留「就这样提交」的后路：
+         用户 2026-10-30 口径是「应该阻止提交」，而「能不爆就不许爆」是规则不是建议，
+         留个后路等于把规则降级成提示。整手怎么配都爆的局面**不会**弹这个框
+         （那种时候换也换不出更好的，说一句只剩「你运气差」）。 -->
+    <div id="bust-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="bust-title">
+      <div class="modal-box bust-box">
+        <h3 id="bust-title">十点半爆了，先改一下</h3>
+        <p id="bust-desc"></p>
+        <div class="modal-actions">
+          <button id="btn-bust-fix" class="btn btn-primary" data-autofocus>去改</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 通用确认弹窗 -->
+    <div id="confirm-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="modal-box">
+        <h3 id="confirm-title">确认</h3>
+        <p id="confirm-desc">确定离开房间？</p>
+        <!-- 敏感操作（删号）要求当场输密码，默认隐藏 -->
+        <input id="confirm-secret" class="hidden" type="password" autocomplete="current-password" placeholder="请输入登录密码" />
+        <div class="modal-actions">
+          <button id="btn-confirm-ok" class="btn btn-primary">确定</button>
+          <!-- 默认焦点给「取消」而不是「确定」：这个框也用于删号/清战绩这类不可撤销的操作，
+               焦点落在确定上时，一个回车就把数据删了。想要反向的可以用 data-autofocus 覆盖。 -->
+          <button id="btn-confirm-cancel" class="btn btn-ghost on-light" data-autofocus>取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 房内改昵称 -->
+    <div id="rename-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="rename-title">
+      <div class="modal-box">
+        <h3 id="rename-title">改昵称</h3>
+        <div class="field">
+          <input id="rename-input" maxlength="8" placeholder="输入新昵称（最多 8 字）">
+        </div>
+        <div class="modal-actions">
+          <button id="btn-rename-ok" class="btn btn-primary">确定</button>
+          <button id="btn-rename-cancel" class="btn btn-ghost on-light">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 我的账号 -->
+    <div id="account-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="account-title">
+      <div class="modal-box">
+        <h3 id="account-title">我的账号</h3>
+        <div class="acc-info">
+          <div class="acc-row"><span>账号名</span><b id="acc-name">—</b></div>
+          <div class="acc-row"><span>昵称</span><b id="acc-nick">—</b></div>
+          <div class="acc-row"><span>加入时间</span><b id="acc-since">—</b></div>
+        </div>
+        <div class="acc-actions">
+          <button id="btn-acc-avatar" class="btn btn-secondary">换头像</button>
+          <button id="btn-acc-pwd" class="btn btn-secondary">修改密码</button>
+          <button id="btn-acc-logout" class="btn btn-ghost on-light">退出登录</button>
+          <button id="btn-acc-delete" class="btn btn-danger on-light">删除账号与战绩</button>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-acc-close" class="btn btn-ghost on-light">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 换头像（v89 §9.2 P1a）
+         只有预设、没有上传：上传要配举报入口、审核与处置流程，三样都没有之前
+         开放上传等于把风险直接放给全桌（§9.3 自己也这么写）。P1b 的上传入口
+         在 CONFIG 里另有一档开关，默认关着。
+         48 款 = 8 形状 × 6 调色板，全是内联 SVG（见 js/avatar.js），不占预缓存。 -->
+    <div id="avatar-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="avatar-title">
+      <div class="modal-box av-box">
+        <h3 id="avatar-title">换头像</h3>
+        <div class="av-now">
+          <span id="av-current" class="pf-avatar">?</span>
+          <p class="av-hint">点一个就换，牌桌上的人都能看到。<br>头像只存在你的账号上。</p>
+        </div>
+        <div id="av-grid" class="av-grid" role="listbox" aria-label="头像列表"></div>
+        <!-- 上传照片（P1b）。整行由 CONFIG.AVATAR_UPLOAD 控制显隐，默认 false = 不渲染。
+             打开它的前提不是改开关，而是先有「有人看的举报日志 + 处置流程」——
+             见 config.js 里 AVATAR_UPLOAD 上面那一整段。 -->
+        <div id="av-photo-row" class="av-photo-row hidden">
+          <input id="av-file" type="file" accept="image/jpeg,image/png" class="av-file">
+          <button id="btn-av-upload" class="btn btn-secondary" type="button">上传照片</button>
+          <button id="btn-av-drop" class="btn btn-ghost on-light hidden" type="button">换回预设</button>
+          <span class="av-photo-hint">会裁成正方形，只存在你的账号上</span>
+        </div>
+        <p id="av-err" class="auth-err hidden" role="alert"></p>
+        <div class="modal-actions">
+          <button id="btn-av-random" class="btn btn-secondary">随机一个</button>
+          <button id="btn-av-close" class="btn btn-ghost on-light">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 修改密码 -->
+    <div id="pwd-modal" class="modal hidden"
+         role="dialog" aria-modal="true" aria-labelledby="pwd-title">
+      <div class="modal-box">
+        <h3 id="pwd-title">修改密码</h3>
+        <div class="field">
+          <input id="pwd-old" type="password" maxlength="64" placeholder="当前密码" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <input id="pwd-new" type="password" maxlength="64" placeholder="新密码（至少 8 位）" autocomplete="new-password">
+        </div>
+        <p id="pwd-err" class="auth-err hidden" role="alert"></p>
+        <div class="modal-actions">
+          <button id="btn-pwd-ok" class="btn btn-primary">确定</button>
+          <button id="btn-pwd-cancel" class="btn btn-ghost on-light">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 表情 / 短语面板（v82 R4）
+         **只转发不落库**：这里选中的东西不会进战绩、不会进回放、不会进云同步。
+         目标行在面板顶部而不是「先点对方头像」：头像点击已经是「看档案」，
+         再让它兼职选表情，会让同一个手势有两套含义。
+         短语是固定清单、没有输入框 —— 一旦允许打字就要配敏感词与举报，
+         而这一栏本来就是「懒得打字时的一键嘴替」。 -->
+    <!-- 统一浮层面板（v89 · 设计稿 §6.1）
+         点对手头像 / 点自己 / 点桌面上的表情钮，弹的都是这一张，区别只在「对着谁」：
+           · 对手 → 表情 / 短语 / 信息 三档，落点贴着他（右→左→下→上）
+           · 自己 → 只有信息档
+           · 表情钮 → 对着「全场」，只有表情/短语两档
+         早先是两个互不相干的入口（底部表情 sheet + 战绩弹窗），同一件事要玩家自己记住
+         从哪儿进，而表情面板永远不知道该发给谁。
+         表情区沿用原来的 #emoji-grid / #emoji-phr / #emoji-to 三个 id —— 样式与探针都不用重写。 -->
+    <div id="seat-sheet-bd" class="seat-sheet-bd hidden"></div>
+    <div id="seat-sheet" class="seat-sheet hidden" role="dialog" aria-label="玩家面板">
+      <div class="ss-head">
+        <span id="ss-avatar" class="ss-av">?</span>
+        <span class="ss-id">
+          <b id="ss-name">玩家</b>
+          <i id="ss-sub">—</i>
+        </span>
+        <button id="btn-ss-close" class="ss-close" type="button" aria-label="关闭">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M9 9l16 16M25 9L9 25" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div id="ss-tabs" class="ss-tabs" role="tablist" aria-label="面板分档"></div>
+      <div class="ss-body">
+        <div id="emoji-to" class="emoji-to" role="group" aria-label="发给谁"></div>
+        <div id="emoji-grid" class="emoji-grid" role="tabpanel"></div>
+        <div id="emoji-phr" class="emoji-phr hidden" role="tabpanel"></div>
+        <div id="ss-info" class="ss-info hidden" role="tabpanel"></div>
+      </div>
+    </div>
+
+    <!-- toast -->
+    <div id="toast" class="toast hidden"></div>
+
+  </div>
+</div>
+
+<!-- 表情飞行动画层。
+     ★ 刻意放在 #stage **外面**：#stage 上有 transform: scale()，
+       放进去的话 getBoundingClientRect 拿到的是缩放后的视口坐标，
+       要往回收一次 scale 才能定位；放在外面直接就是视口坐标，不必换算。
+       它只活 1.6 秒，pointer-events: none，不参与任何命中测试。 -->
+<div id="emoji-layer" class="emoji-layer" aria-hidden="true"></div>
+
+<!-- 错误上报必须最先加载：game.js 里的启动异常也要能报到服务端。
+     它不依赖任何其他模块，自己装 window.onerror / unhandledrejection。 -->
+<script src="./js/errorReport.js?v=20261101a" defer></script>
+<script src="./js/engine.js?v=20261101a" defer></script>
+<script src="./js/card.js?v=20261101a" defer></script>
+<script src="./js/config.js?v=20261101a" defer></script>
+<!-- 表情/短语清单：前端与服务端共用同一个文件（服务端 require 它做白名单）。
+     必须早于 roomStore.js —— 传输层的 sendEmoji 会用它校验 id。 -->
+<script src="./js/emoji.js?v=20261101a" defer></script>
+<script src="./js/stateMachine.js?v=20261101a" defer></script>
+<script src="./js/authStore.js?v=20261101a" defer></script>
+<script src="./js/roomStore.js?v=20261101a" defer></script>
+<script src="./js/records.js?v=20261101a" defer></script>
+<script src="./js/sessionLog.js?v=20261101a" defer></script>
+<script src="./js/sfx.js?v=20261101a" defer></script>
+<script src="./js/slotLayout.js?v=20261101a" defer></script>
+<!-- 头像预设（纯函数 + 48 款 SVG data URI）。必须早于 game.js：
+     game.js 渲染座位时同步调 Avatar.img，晚一步就是 ReferenceError。 -->
+<script src="./js/avatar.js?v=20261101a" defer></script>
+<!-- 圆桌闸门（纯函数）：这台机器上不上桌、按哪一档几何。
+     必须在 game.js 之前：seatRingFlag() 渲染顶栏时同步调用全局 RingGate。 -->
+<script src="./js/ringGate.js?v=20261101a" defer></script>
+<!-- 座位环几何（纯函数）。同样必须在 game.js 之前：game.js 是同步 IIFE，
+     渲染顶栏时直接读全局 SeatRing，晚一步就是 ReferenceError。 -->
+<script src="./js/seatRing.js?v=20261101a" defer></script>
+<!-- ★ 拆分出来的模块（v108）。顺序有意义，别重排：
+     前三个是**立即执行**的（挂 window.LXW.utils / .cardView / .modalKit），
+     后五个是**工厂**（挂 window.LXW.xxx = create），由 game.js 在自己合适的
+     位置调用 create(deps) —— 因为它们的注入项里有 var 定义的常量，
+     var 不提升值，创建太早会拿到 undefined。
+
+     gameUtils 必须第一个：其余七个都从 window.LXW.utils 取 $ / el / esc。 -->
+<script src="./js/gameUtils.js?v=20261101a" defer></script>
+<script src="./js/cardView.js?v=20261101a" defer></script>
+<script src="./js/modalKit.js?v=20261101a" defer></script>
+<script src="./js/historyKit.js?v=20261101a" defer></script>
+<script src="./js/accountView.js?v=20261101a" defer></script>
+<script src="./js/settleView.js?v=20261101a" defer></script>
+<script src="./js/seatSheetView.js?v=20261101a" defer></script>
+<script src="./js/recordsView.js?v=20261101a" defer></script>
+<script src="./js/game.js?v=20261101a" defer></script>
+<!-- PWA Service Worker 注册（失败静默忽略，不影响正常游戏；PWA 需经 http(s) 服务，file:// 下不生效） -->
+<script>
+  (function () {
+    if (!('serviceWorker' in navigator)) return;
+
+    window.addEventListener('load', function () {
+      // SW 脚本地址带上当前页面的查询串：生产网关要求每个请求都带 ?sharecode=xxx，
+      // 不带的话 /sw.js 本身就 403；而且 SW 内部预缓存也必须带着它（见 sw.js 顶部的说明）。
+      var swUrl = '/sw.js' + (location.search || '');
+      navigator.serviceWorker.register(swUrl).catch(function () { /* 离线缓存不可用，忽略 */ });
+      // 版本一致性自检：连续版本升级的 SW 新旧混存竞态下，页面可能混合了旧 JS 与新 CSS/HTML。
+      // 直接 fetch 服务器最新 index.html（network + no-store，绕过 SW 缓存）比对 app-version，
+      // 不一致则一次性 reload（sessionStorage 防死循环），确保 JS/CSS/HTML 同源同版本。
+      setTimeout(checkVersionConsistency, 500);
+    });
+
+    // 网关要求所有请求带 sharecode，裸 /api 与 /index.html 都会 403。
+    // 版本自检就曾因为这个静默失败，用户一直停在旧页面。
+    function withSharecode(p) {
+      try {
+        var sc = new URLSearchParams(location.search || '').get('sharecode');
+        if (!sc) return p;
+        return p + (p.indexOf('?') >= 0 ? '&' : '?') + 'sharecode=' + encodeURIComponent(sc);
+      } catch (e) { return p; }
+    }
+
+    /* 正忙（正在分牌）就先别刷新：草稿只在内存里，reload 等于把已放好的牌清空。
+     * 闲下来再刷，最多晚十几秒，比让玩家丢一次分牌强。 */
+    function reloadWhenIdle(reason) {
+      if (window.LXWBusy && window.LXWBusy()) {
+        setTimeout(function () { reloadWhenIdle(reason); }, 5000);
+        return;
+      }
+      console.log('[sw] reload for ' + reason);
+      window.location.reload();
+    }
+
+    function checkVersionConsistency() {
+      if (location.protocol === 'file:') return;
+      var curMeta = document.querySelector('meta[name="app-version"]');
+      var current = curMeta ? curMeta.getAttribute('content') : '';
+      if (!current) return;
+      if (sessionStorage.getItem('weile_version_reloaded') === current) return; // 已 reload 过一次
+      fetch(withSharecode('/index.html'), { cache: 'no-store' })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var m = /<meta\s+name="app-version"\s+content="([^"]+)"/.exec(html);
+          if (m && m[1] !== current) {
+            sessionStorage.setItem('weile_version_reloaded', current);
+            reloadWhenIdle('version mismatch');
+          }
+        })
+        .catch(function () { /* 离线/网络不可用则跳过 */ });
+    }
+
+    // 新版本 SW 接管后自动刷新页面，避免用户停留在旧缓存页面（refreshing 防死循环）
+    var refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (refreshing) return;
+      refreshing = true;
+      reloadWhenIdle('controllerchange');
+    });
+  })();
+</script>
+</body>
+</html>

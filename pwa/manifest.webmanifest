@@ -1,0 +1,55 @@
+{
+  "id": "/",
+  "name": "六选五",
+  "short_name": "六选五",
+  "lang": "zh-CN",
+  "description": "好友房联机扑克小游戏：单张比大小 + 十点半 + 飘三叶 + 斗牛，六张牌两轮分牌。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#16382F",
+  "background_color": "#1E5A44",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icons/screenshots/home.webp",
+      "sizes": "780x1688",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "首页：创建房间，或输入 6 位房间号加入"
+    },
+    {
+      "src": "/icons/screenshots/game.webp",
+      "sizes": "780x1688",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "第一轮分牌：6 张拆成单张 / 十点半 / 飘三叶三组"
+    }
+  ]
+}

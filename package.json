@@ -1,0 +1,20 @@
+{
+  "name": "liuxuanwu",
+  "version": "0.2.0",
+  "private": true,
+  "description": "六选五 · 好友房联机扑克小游戏（前端 pwa/ + 服务端 server/，零运行时依赖）",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node scripts/run-tests.js",
+    "journey": "node scripts/journey.js",
+    "probe:devices": "node scripts/probe-devices.js --assert",
+    "probe:flow": "node scripts/probe-ui-flow.js",
+    "probe:seatinfo": "node scripts/probe-seat-info.js",
+    "backup": "node scripts/backup-leaderboard.js",
+    "audit:comments": "node scripts/audit-comments.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

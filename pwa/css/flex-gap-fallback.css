@@ -1,0 +1,309 @@
+/* ---------------------------------------------------------------------------
+ * flex gap 老内核兼容层 —— 由 scripts/gen-flex-gap-fallback.js 生成，请勿手改
+ *
+ * 生效条件：<html> 上有 .no-flex-gap（由 index.html 里的检测脚本挂上）。
+ * 现代浏览器永远不会有这个 class，所以本文件对它们是**完全惰性**的。
+ *
+ * 100 条规则，另有 19 处刻意不处理，原因见 docs/compat.md。
+ * ------------------------------------------------------------------------- */
+
+html.no-flex-gap .dev-panel-btns > * + * {
+  margin-left: 4px;
+}
+html.no-flex-gap .dev-panel-row > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .join-row > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .entry-link > * + * {
+  margin-top: 9px;
+}
+html.no-flex-gap .room-top-right > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .player-row > * + * {
+  margin-top: 8px;
+}
+html.no-flex-gap .invite-card > * + * {
+  margin-top: 6px;
+}
+html.no-flex-gap .room-prev-row > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .room-actions > * + * {
+  margin-top: 4px;
+}
+html.no-flex-gap .room-actions .ghost-row > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .tr-body > * + * {
+  margin-top: 18px;
+}
+html.no-flex-gap .ready-acts > * + * {
+  margin-top: 6px;
+}
+html.no-flex-gap .settle-actions-row > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .gt-info > * + * {
+  margin-top: 2px;
+}
+html.no-flex-gap .gt-phase-row > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .gt-me > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .gt-me-row > * + * {
+  margin-left: 2px;
+}
+html.no-flex-gap .gt-opps > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .gt-opp > * + * {
+  margin-left: 7px;
+}
+html.no-flex-gap .opp-main > * + * {
+  margin-top: 1px;
+}
+html.no-flex-gap #game-top.gt-ring .gt-opp > * + * {
+  margin-top: 4px;
+}
+html.no-flex-gap .gt-vs .vs-side > * + * {
+  margin-left: 6px;
+}
+html.no-flex-gap .gt-plaque > * + * {
+  margin-top: 6px;
+}
+html.no-flex-gap .gt-plaque-phase > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .gt-prog > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .gt-dots > * + * {
+  margin-left: 5px;
+}
+html.no-flex-gap #game-top.gt-ring .gt-me > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap #game-top.gt-ring.rt-compact .gt-plaque > * + * {
+  margin-top: 4px;
+}
+html.no-flex-gap .slot > * + * {
+  margin-top: 6px;
+}
+html.no-flex-gap .slot-boxes > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .slot-meta > * + * {
+  margin-top: 2px;
+}
+html.no-flex-gap .slot-meta-main > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .slot-boxes > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .slots[data-dense="1"] > * + * {
+  margin-top: 10px;
+}
+html.no-flex-gap .game-bottom > * + * {
+  margin-top: 12px;
+}
+html.no-flex-gap .game-actions > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .group-chips > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .gchip > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .hand-status.waiting > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .modal-actions > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .pf-head > * + * {
+  margin-left: 18px;
+}
+html.no-flex-gap .result-head > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .result-row > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .result-cards > * + * {
+  margin-left: 4px;
+}
+html.no-flex-gap .result-info > * + * {
+  margin-top: 2px;
+}
+html.no-flex-gap .result-row .rt > * + * {
+  margin-left: 6px;
+}
+html.no-flex-gap .result-foot > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .rb-body > * + * {
+  margin-top: 8px;
+}
+html.no-flex-gap .rb-row > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .pat-core > * + * {
+  margin-top: 16px;
+}
+html.no-flex-gap .pat-cards > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .compact-v:not(.wide-stage) .game-bottom > * + * {
+  margin-top: 8px;
+}
+html.no-flex-gap .wide-stage .room-actions > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .ls #records-data > * + * {
+  margin-left: 40px;
+}
+html.no-flex-gap #stage.ls .rp-kpi > * + * {
+  margin-top: 12px;
+}
+html.no-flex-gap #stage.ls .rp-trend-bar > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .ls #screen-game.rt-ring.is-ready .tr-body > * + * {
+  margin-top: 10px;
+}
+html.no-flex-gap .ls #screen-room .room-actions > * + * {
+  margin-top: 12px;
+}
+html.no-flex-gap .auth-field label > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .acc-actions > * + * {
+  margin-top: 14px;
+}
+html.no-flex-gap .av-now > * + * {
+  margin-left: 18px;
+}
+html.no-flex-gap .av-photo-row > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .guide-head > * + * {
+  margin-left: 24px;
+}
+html.no-flex-gap .guide-dots > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .guide-art > * + * {
+  margin-left: 26px;
+}
+html.no-flex-gap .gset > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .gtile > * + * {
+  margin-top: 14px;
+}
+html.no-flex-gap .guide-facts > * + * {
+  margin-top: 12px;
+}
+html.no-flex-gap .guide-facts li > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .guide-nav > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .guide-facts > * + * {
+  margin-top: 12px;
+}
+html.no-flex-gap .guide-facts li > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .guide-nav > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .replay-head > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .replay-pack-head > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .replay-row > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .hand-limit-row > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .hand-limit-chip > * + * {
+  margin-top: 4px;
+}
+html.no-flex-gap .rp-sum-label > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .rp-sum-value > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .rp-sum-meta > * + * {
+  margin-left: 20px;
+}
+html.no-flex-gap .rp-meta-item > * + * {
+  margin-left: 6px;
+}
+html.no-flex-gap .rp-gcard > * + * {
+  margin-top: 6px;
+}
+html.no-flex-gap .rp-glabel > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .rp-best > * + * {
+  margin-top: 6px;
+}
+html.no-flex-gap .rp-best-v > * + * {
+  margin-left: 4px;
+}
+html.no-flex-gap .rp-kpi > * + * {
+  margin-top: 16px;
+}
+html.no-flex-gap .rp-legend > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .rp-legend span > * + * {
+  margin-left: 7px;
+}
+html.no-flex-gap .rp-trend-bar.fewer > * + * {
+  margin-left: 14.4px;
+}
+html.no-flex-gap .rp-ai-note > * + * {
+  margin-left: 12px;
+}
+html.no-flex-gap .rp-row-left > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .rp-sub-wrap > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .rp-foot > * + * {
+  margin-top: 22px;
+}
+html.no-flex-gap .rp-note > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .rp-warn > * + * {
+  margin-left: 10px;
+}
+html.no-flex-gap .rp-opt > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .compact-v .rp-foot > * + * {
+  margin-left: 16px;
+}
+html.no-flex-gap .rank-row > * + * {
+  margin-left: 18px;
+}
+html.no-flex-gap .compact-v .rank-row > * + * {
+  margin-left: 14px;
+}

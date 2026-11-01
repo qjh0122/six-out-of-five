@@ -1,0 +1,5138 @@
+/* 六选五 · 网页预览版样式（v2 视觉升级，自包含，无外部资源）
+ * 色板：冷绿=牌桌（对局），暖金=氛围（首页/房间/结算），红=主操作，涨红跌绿=积分。
+ * 全部质感用 CSS + Canvas 绘制实现，0 张新增图片。
+ *
+ * ★ 兼容层约定（v104）：每一处 `inset` 前面都先写了 top/right/bottom/left。
+ *   Chrome < 87 / iOS < 14.1 不认 inset 这个简写，会**把整条声明丢掉**，
+ *   而用它的元素全是 position:fixed 的全屏遮罩 —— 丢掉就等于版面塌成一条线、
+ *   底下的牌桌还看得见却点不到。四行长手写不花钱，现代内核由后面那行 inset 覆盖。 */
+
+:root {
+  --green-deep: #0F2B22;
+  --green-mid: #16382F;
+  --green-bright: #1E5A44;
+  --brand-green: #0E8C6E;
+  --brand-green-deep: #0A6B54;
+  --success-green: #43D17C;
+  --cta-red: #D62828;
+  --cta-red-deep: #A81C1C;
+  --gold: #F5C15C;
+  --gold-light: #FFE08A;
+  --gold-deep: #E8A33D;
+  /* 金色文字落在**暖白底**上的那一档：--gold 在纸感卡片里只有 1.5:1，
+   * 等于没写。所有「浅底上的金」都用这个，别再各调一个。 */
+  --gold-ink: #8A5A0B;
+  --up-red: #FF5D5D;
+  --down-green: #3DDC84;
+  --warm-white: #FFF7E8;
+  --gray-aux: #B8C0CC;
+  --danger-ghost: #FF9B9B;   /* 危险幽灵按钮字（清除战绩），比 --up-red 深一档更耐读 */
+  --ink: #1A1D23;
+  /* 暖白纸感弹窗（.modal-box）与战绩卡里的文字层级：深棕标题 → 灰蓝正文 → 弱化注释。
+     这三个色此前散落在 30 多处硬编码里，其中同一个灰还并存 #4A4F5A / #4a4f5a 两种写法。 */
+  --warm-ink: #3A1D00;
+  --text-secondary: #4A4F5A;
+  --text-muted: #6B6F79;
+  --disable-bg: #3A4A44;
+  --disable-fg: #8A93A3;
+  /* 内容区左右 padding（设计px）。game.js 的手牌布局常量 SCREEN_PAD_X 与此保持一致，永不漂移 */
+  --screen-pad-x: 40px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  /* ★ 高度读 --vp-h（game.js 每次 resize 写入的「真实屏高」），不是 100%。
+   *
+   * 100% 挂在布局视口上。iOS 26 的 standalone 里布局视口会被报成「整屏 − 一个状态栏」
+   * （WebKit bug 313800），于是 100% 和 100vh 分家：100% 矮、100vh 是整屏。
+   * 以前这里写 100%，body 就比屏幕矮 56px，而下一行的 overflow: hidden 会在
+   * 那个高度上**把舞台裁掉** —— 舞台算得再高也画不出来，表现就是底部一条纯色带。
+   * 现在 html / body / #viewport / #stage 四层统一读 --vp-h，谁也不会再裁谁。 */
+  height: var(--vp-h, 100%);
+  overflow: hidden;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  /* 不能写 manipulation —— 它等于 pan-x pan-y **pinch-zoom**，也就是把捏合放大
+     明确交还给浏览器。牌桌是整体按 750 设计空间缩放的，再叠一层浏览器缩放会让牌
+     小到看不清、拖牌时点偏。这里只留平移，捏合与双击缩放都不在允许列表里。
+     （iOS Safari 对 pinch-zoom 这个值支持不全，所以 JS 里还有一道手势拦截。） */
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+  background: var(--green-deep);
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #f5f0e6;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#viewport {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  /* 同上：inset:0 给的是布局视口的高度，这里用 --vp-h 顶掉 bottom */
+  height: var(--vp-h, 100%);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  background: var(--green-deep) radial-gradient(circle at 50% 0%, var(--green-mid) 0%, var(--green-deep) 62%);
+}
+
+/* 设计分辨率 750×1624；手机竖屏由 JS 给比例，**尺寸由 CSS 反算**。
+ *
+ * ★ 竖版的高度为什么不能由 JS 写死：
+ *
+ * 以前是 `stage.style.height = (vh / scale) + 'px'`，vh 取自 `#viewport` 的 clientHeight。
+ * 浏览器里这个值和实际可视区一致，所以一直看不出问题。但在 iOS「添加到主屏幕」的
+ * standalone 里，应用被系统接管后这个读数会比真实视口小一截（灵动岛/实时活动的
+ * 那一条安全区有时不计入），于是舞台高度比屏幕矮、底部露出一条 #viewport 的纯色底 ——
+ * 就是「PWA 底部多出一条空白，手机浏览器打开却没有」。
+ *
+ * 这和第 26 章横屏修过的是同一个病：**把某一刻量到的视口高度写成死值**。
+ * 横屏当时改成了 calc(100% / --ls-scale)，竖版漏了。现在两边一致：
+ * JS 只负责算「比例」这一个数字，铺满由 CSS 保证 —— 容器一变，下一帧自动贴合。 */
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 750px;
+  height: 1624px;
+  transform-origin: top left;
+}
+
+/* 竖版（非 .ls）：高度取「真实屏高」的反算值，不再依赖布局视口的百分比。
+ *
+ * 这里原来是 calc(100% / --pt-scale)，注释还写着「容器一变，下一帧自动贴合」——
+ * 那句话只对「容器 = 屏幕」成立。iOS 26 standalone 里容器（布局视口）本身就比屏幕
+ * 矮一个状态栏，百分比再准也跟着矮。现在改成读 --vp-h（真屏高），
+ * 由 game.js 用 rect / screen.height / 当场量的 100vh 三条来源取最大者写入。 */
+#stage:not(.ls) {
+  height: calc(var(--vp-h, 100%) / var(--pt-scale, 1));
+  transform: scale(var(--pt-scale, 1));
+}
+
+/* PWA standalone 的最后一道网：即使 JS 还没跑（冷启动第一帧）、或 --vp-h 算失败，
+ * 也用 100vh 顶住 —— iOS 26 下 100vh 报的是整屏，100% 报的是矮的那个。
+ * 只在 .pwa 下启用：浏览器里工具栏弹出时 100vh > 可视高，会白裁底部留白。 */
+#stage.pwa:not(.ls) {
+  min-height: calc(100vh / var(--pt-scale, 1));
+}
+#stage.pwa.ls {
+  min-height: calc(100vh / var(--ls-scale, 1));
+}
+
+/* 横屏：宽高按「视口 ÷ 比例」反算，**铺满由样式保证**，不再是 JS 算死的像素值。
+ *
+ * 真机上出现过「横屏底部一条深色带」：引擎按当时视口算出 stage 高度写进内联样式，
+ * 之后容器变高（浏览器收起底栏、应用内 WebView 换高度、分屏拖拽）却没派发 resize，
+ * 死值就停在旧高度，底部露出 #viewport 的底色。
+ * 改成反算之后，容器一变，下一次布局自动铺满 —— 比例算错最多少几个设计像素
+ * 的密度，不会再露出底来。高度与竖版同源（--vp-h），理由见上面那条。
+ * 100% 对绝对定位元素取的是 #viewport 的 padding box（= 整个视口，安全区 padding 在它里面）。 */
+#stage.ls {
+  width: calc(100% / var(--ls-scale, 1));
+  height: calc(var(--vp-h, 100%) / var(--ls-scale, 1));
+  transform: scale(var(--ls-scale, 1));
+  left: 0;
+  top: 0;
+}
+
+.hidden { display: none !important; }
+
+/* ---------------------------------------------------------------------------
+ * 首屏防闪：未登录时不要先露出首页
+ *
+ * 现象：index.html 里 #screen-home 默认没有 hidden，而 #screen-auth 有。
+ * 于是 HTML 一解析完、CSS 一应用，用户先看到的是**首页**，
+ * 等 game.js（defer，要等整个文档解析完）跑完 boot、发现没登录，才切到登录页。
+ * 表现是「先闪一下首页再跳登录」，弱机 + 冷启动能明显看到。
+ *
+ * 为什么不直接把 hidden 加到 #screen-home 上：那只是把「先看首页」换成「先看白屏」，
+ * 对已登录用户（占多数）反而更差 —— 他们本来该直接进首页。
+ *
+ * 所以由 <head> 里的内联脚本先读一次 localStorage：
+ *   · 没有会话 → 给 <html> 挂 .no-session，这两条规则把首页压住、把登录页放出来；
+ *   · 有会话   → 什么都不做，走原来的默认（首页可见，boot 再按真实状态修正）。
+ * showScreen() 第一次被调用时会把 .no-session 摘掉，之后完全由 .hidden 接管。
+ *
+ * 用 !important 是因为要压过 .hidden 的 !important —— 那正是它存在的目的：
+ * 在 boot 跑完之前，谁都别想把这两个页面换过来。
+ * ------------------------------------------------------------------------- */
+html.no-session #screen-home { display: none !important; }
+html.no-session #screen-auth { display: flex !important; }
+
+/* ?diag=1 的现场读数（game.js 的 updateDiag 创建）。
+ * 挂在 body 上、fixed 定位，所以是**真实 CSS px**，不受舞台缩放影响。
+ * 只用于真机排查底部色带这类布局问题，不带参数时这个元素根本不会出现。 */
+.diag-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 99999;
+  max-width: 100%;
+  padding: 6px 8px;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: #A8F0D8;
+  background: rgba(0, 0, 0, 0.78);
+  border-bottom-right-radius: 8px;
+  pointer-events: none;
+}
+
+/* ?dev=1 的调试侧栏（game.js 的 updateDev 创建）。
+ *
+ * 也是 fixed + 真实 CSS px，理由同上；但这一块**需要点**（三个开关 + 复制），
+ * 所以容器 pointer-events: none、只有按钮 auto —— 免得它挡住左下角的手牌。
+ * 停在左下角：右下角被「提交分组」占了。
+ * 手机横屏 390 高时面板最多 40vh，超出可滚，不会盖住手牌。 */
+.dev-panel {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  z-index: 9998;
+  max-width: 320px;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 6px 8px 8px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #D9F7EC;
+  background: rgba(0, 0, 0, 0.82);
+  border-top-right-radius: 10px;
+  pointer-events: none;
+}
+.dev-panel.hidden { display: none; }
+/* 标题单独一行、按钮另起一行：挤在同一行时 320 宽里「调试 · 版式」会被折成两行，
+ * 看着像排版坏了（真机截图里就是这样）。 */
+.dev-panel-head {
+  display: block;
+  margin-bottom: 4px;
+  color: #8FE3C6;
+  letter-spacing: 0.5px;
+}
+.dev-panel-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.dev-panel-btn {
+  pointer-events: auto;
+  padding: 2px 6px;
+  font: inherit;
+  color: #D9F7EC;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.dev-panel-btn:active { background: rgba(255, 255, 255, 0.26); }
+.dev-panel-row {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+.dev-panel-row i { flex: none; width: 26px; color: #7DBFA8; font-style: normal; }
+.dev-panel-row b { font-weight: 500; }
+
+/* ---------- 断网提示条 ----------
+ * navigator.onLine 之前在代码里一次都没用过：断网后界面毫无变化，
+ * 玩家只会觉得"点了没反应"。这条固定在顶部，网络恢复自动收起。
+ * 注意：它在 #stage 之外，尺寸是**真实 CSS px**（不是 750 设计px），所以数字都很小。 */
+.net-banner {
+  position: fixed;
+  left: 50%;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  transform: translateX(-50%);
+  z-index: 320;
+  padding: 6px 14px;
+  /* 这一段是真实 CSS px（不在 750 缩放体系里），字号与半径不参与「并档」：
+   * 13px 是屏上真实的 13px，并到 16px 会明显变大；48px 是这条窄横幅的胶囊半径。 */
+  border-radius: 48px;
+  background: rgba(58, 29, 0, 0.94);
+  border: 1px solid rgba(245, 193, 92, 0.55);
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.screen {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(var(--sa-top, 0px) + 44px)
+           calc(var(--sa-right, 0px) + var(--screen-pad-x, 40px))
+           calc(var(--sa-bottom, 0px) + 120px)
+           calc(var(--sa-left, 0px) + var(--screen-pad-x, 40px));
+  background: radial-gradient(circle at 50% 0%, var(--green-mid) 0%, var(--green-deep) 62%);
+  overflow: hidden;
+}
+
+/* 首页：暖金光斑背景，遮罩降到 0.25 + 底部压暗渐变 */
+#screen-home {
+  background:
+    linear-gradient(rgba(8, 18, 28, 0.25), rgba(8, 18, 28, 0.25)),
+    linear-gradient(transparent 0%, rgba(0, 0, 0, 0.55) 100%),
+    url('../assets/home_bg.webp') center / cover no-repeat;
+  /* 桌面小窗 / 分屏 / 超短屏时舞台高度可能装不下整页首页内容，
+   * .screen 默认 overflow:hidden 会直接把底部入口裁掉（表现为「选项被切了一半」）。
+   * 首页只有点击没有拖拽，允许纵向滚动是零风险兜底。 */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 对局/房间/结束：绿毡牌桌背景，移除 0.5 黑遮罩，改中心提亮 + 四角压暗 */
+#screen-room, #screen-game, #screen-settle {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(30, 90, 68, 0.55), rgba(15, 43, 34, 0.85)),
+    url('../assets/table_bg.webp') center / cover no-repeat;
+}
+
+/* 对局页：底部内边距收紧（提交按钮距 home indicator 仍有 ~70 物理px，安全），
+   为「三槽 + 放大手牌」腾出纵向空间 */
+#screen-game {
+  padding-bottom: calc(var(--sa-bottom, 0px) + 72px);
+}
+
+/* 对局页装饰金线内框（牌桌包边） */
+#screen-game::after {
+  content: '';
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  bottom: 20px;
+  left: 20px;
+  inset: 20px;
+  border: 1px solid rgba(245, 193, 92, 0.22);
+  border-radius: 16px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---------- 通用 ---------- */
+.title {
+  margin: 12px 0 6px;
+  font-size: 76px;
+  font-weight: 800;
+  letter-spacing: 8px;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold-deep));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 2px #7A4B00;
+  text-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+}
+.subtitle { margin: 0 0 28px; font-size: 24px; color: var(--gray-aux); }
+.logo {
+  width: 160px;
+  height: 160px;
+  margin-top: 40px;
+  border-radius: 32px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 4px var(--gold);
+}
+.logo svg { display: block; width: 100%; height: 100%; border-radius: 28px; }
+
+/* 缎带标题（结束页 / 结算弹窗标题）：金渐变底 + 深棕字 */
+.ribbon-title {
+  display: inline-block;
+  padding: 10px 40px;
+  border-radius: 999px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  -webkit-text-stroke: 0;
+  color: var(--warm-ink);
+  text-shadow: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* ---------- 按钮体系（凸起 + 按压凹陷，全场统一） ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  min-height: var(--tap-min, 88px);
+  padding: 0 36px;
+  border: none;
+  border-radius: 28px;
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  /* 兜底底色：`.btn` 原样不写 background，裸用（首页「加入房间」就是 `class="btn btn-lg"`）
+   * 会落到浏览器默认的 #F0F0F0 灰底，配上这里的白字 = 对比度约 1.1:1，**等于看不见**。
+   * 任何按钮要么带变体类，要么至少拿这个半透明白底，绝不允许落到 UA 默认值。 */
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  position: relative;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.25);
+  transition: transform 0.1s cubic-bezier(0, 0, 0.2, 1), box-shadow 0.1s cubic-bezier(0, 0, 0.2, 1), filter 0.1s;
+}
+.btn:active {
+  transform: translateY(6px);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
+  filter: brightness(0.92);
+}
+.btn[disabled], .btn.disabled {
+  background: var(--disable-bg) !important;
+  color: var(--disable-fg) !important;
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+/* 请求进行中：按钮已被禁用，这里只做"还在动"的暗示——
+ * 弱网下玩家最怕的是"点了没反应"，文字变成"创建中…"比什么都清楚 */
+.btn.is-busy { opacity: 0.8; }
+.btn.is-busy::after {
+  content: '';
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  margin-left: 12px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  animation: btnSpin 0.7s linear infinite;
+}
+@keyframes btnSpin { to { transform: rotate(360deg); } }
+
+.btn-primary {
+  background: linear-gradient(180deg, #E94040, var(--cta-red));
+  color: var(--warm-white);
+  box-shadow: 0 8px 0 var(--cta-red-deep);
+}
+.btn-primary:active { box-shadow: 0 2px 0 var(--cta-red-deep); }
+
+.btn-secondary {
+  background: linear-gradient(180deg, #12A07F, var(--brand-green));
+  color: var(--warm-white);
+  box-shadow: 0 8px 0 var(--brand-green-deep);
+}
+.btn-secondary:active { box-shadow: 0 2px 0 var(--brand-green-deep); }
+
+/* .btn-start（金色「开始游戏」）随按钮一起删了：开局改成全员准备后自动触发，
+   那条金色渐变再也没有挂载点。留着只会让人以为还有个入口。 */
+
+.btn-ghost {
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: var(--gray-aux);
+  box-shadow: none;
+}
+.btn-ghost:active { transform: translateY(2px); box-shadow: none; }
+
+/* 次要动作：深色底上的一档「不抢主按钮，但看得出能点」。
+ * 首页「加入房间」用它 —— 它和「创建房间」是两条并列路径，不该长得像主按钮，
+ * 之前裸用 `.btn` 落到了浏览器默认灰底 + 白字（对比度 1.1:1，看不见）。 */
+.btn-quiet {
+  background: rgba(255, 255, 255, 0.10);
+  border: 2px solid rgba(255, 255, 255, 0.30);
+  color: var(--warm-white);
+  box-shadow: none;
+}
+.btn-quiet:active {
+  transform: translateY(2px);
+  background: rgba(255, 255, 255, 0.18);
+}
+/* 暖白底（#FFF7E8 的 .modal-box）上的幽灵按钮：
+   原 `.btn-ghost` 白描边 + #B8C0CC 字对比度仅约 1.6:1，等于隐形；
+   此变体改深色描边 + 深灰字（对比度约 8:1），用于所有暖白弹窗里的取消类按钮 */
+.btn-ghost.on-light {
+  border-color: rgba(26, 29, 35, 0.16);
+  color: var(--text-secondary);
+}
+.btn-ghost.on-light:active {
+  transform: translateY(2px);
+  background: rgba(26, 29, 35, 0.05);
+}
+
+.btn-danger {
+  background: transparent;
+  border: 2px solid rgba(255, 93, 93, 0.5);
+  color: var(--danger-ghost);
+  box-shadow: none;
+}
+.btn-danger:active { transform: translateY(2px); box-shadow: none; }
+
+.btn-mini {
+  min-height: max(72px, var(--tap-min, 72px));
+  padding: 0 24px;
+  font-size: 24px;
+  border-radius: 16px;
+}
+.btn-lg { width: 100%; max-width: 560px; margin: 8px 0; }
+.btn-sm {
+  min-height: var(--tap-min, 88px);
+  padding: 0 28px;
+  font-size: 28px;
+  border-radius: 16px;
+  flex-shrink: 0;
+}
+
+/* ---------- 首页 ---------- */
+.home-inner {
+  width: 100%;
+  max-width: 620px;
+  flex: 0 0 auto; /* 内容超屏时不要被 flex 压缩（配合 #screen-home 的滚动兜底） */
+  /* auto 上下边距 = 竖屏高屏上整体垂直居中；内容超出时 auto 自动退化为 0，
+   * 变成顶端对齐（flexbox 规定负剩余空间下 auto margin 归零），不会把顶部裁掉。 */
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.field { width: 100%; margin: 6px 0 18px; position: relative; }
+.field label {
+  display: block;
+  font-size: 20px;
+  color: var(--gray-aux);
+  margin: 0 0 8px 20px;
+}
+input {
+  width: 100%;
+  height: max(96px, var(--tap-min, 96px));
+  padding: 0 30px;
+  font-size: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  color: #fff;
+  outline: none;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(245, 193, 92, 0.25), inset 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.join-row { width: 100%; display: flex; gap: 16px; margin-bottom: 8px; }
+.join-row input { flex: 1 1 0%; width: auto; min-width: 0; }
+.join-row .btn { width: auto; max-width: none; flex-shrink: 0; }
+
+/* 首页底部弱入口：4 等分「图标 + 标签」小卡片
+ * 旧版是一条 flex 文字链 + 竖分隔线：4 项最小宽度加起来 835 > 容器 620，
+ * flex 把每一项挤到 88px，CJK 逐字换行 → 整排变成竖排文字，「删除我的云端数据」被撕成三列。
+ * 现在改成 grid 等分 + 标签强制单行，任何宽度下都不会再竖排。 */
+.entry-links {
+  width: 100%;
+  max-width: 620px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.entry-link {
+  --entry-tint: var(--gray-aux);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: max(112px, var(--tap-min, 112px));
+  padding: 15px 4px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 20px;
+  /* 深色玻璃底：底部这块正好压在金色光斑最密的地方，纯白 5% 的卡片会被背景吃掉，
+   * 加一层深绿底把标签从花哨的背景上"抬"出来，同时仍然是半透明的玻璃质感 */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035)),
+    rgba(8, 26, 21, 0.50);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 8px 18px rgba(0, 0, 0, 0.16);
+  font-family: inherit;
+  color: var(--entry-tint);
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+}
+.entry-link svg { width: 34px; height: 34px; flex: 0 0 34px; }
+.entry-label {
+  /* 19px 是为最长的「删除云端数据」倒推出来的：6 字 ×19 = 114，列内可用 136，
+   * 左右各留 11px 才不像挤在边框上。四项统一字号比单独缩小那一项更整齐。 */
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0;
+  color: rgba(236, 241, 248, 0.90);
+  white-space: nowrap; /* 单行铁律：宁可留白，也绝不竖排 */
+}
+.entry-link:active { background: rgba(255, 255, 255, 0.11); border-color: rgba(245, 193, 92, 0.34); transform: scale(0.97); }
+/* 「我的战绩」是主推入口：图标金色 + 右上角一颗金点，比原来整块金字更克制 */
+.entry-link.is-new { --entry-tint: var(--gold); border-color: rgba(245, 193, 92, 0.22); }
+.entry-link.is-new::after {
+  content: '';
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 8px rgba(245, 193, 92, 0.85);
+}
+/* 危险项（删除云端数据）：只把图标与描边染红，标签保持和其它项同一灰度，
+ * 既提示「这是破坏性操作」，又不会在首页底部抢走视觉重心 */
+.entry-link.is-danger { --entry-tint: var(--danger-ghost); }
+.entry-link.is-danger:active { background: rgba(255, 107, 107, 0.10); border-color: rgba(255, 155, 155, 0.40); }
+
+/* 首页装饰牌（card_back 低透明度斜放） */
+.home-deco {
+  position: absolute;
+  width: 220px;
+  height: 308px;
+  background: url('../assets/card_back.webp') center / cover no-repeat;
+  opacity: 0.16;
+  pointer-events: none;
+  border-radius: 16px;
+}
+.home-deco.deco-a { top: 120px; left: 24px; transform: rotate(-12deg); }
+.home-deco.deco-b { bottom: 470px; right: 18px; transform: rotate(12deg); }
+
+/* ---------- 房间页 ---------- */
+.room-top {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(245, 193, 92, 0.25);
+}
+.room-top-right { display: flex; align-items: center; gap: 16px; }
+
+/* ---------- 声音开关（BGM + 音效总开关） ----------
+ * 之前 BGM 在解锁后一路循环播放（0.22 音量），界面上没有任何入口能关，
+ * 只能用手机静音键硬顶。现在首页角落 + 房间页各一个图标，状态存本地。
+ * 图标是 currentColor 描边，开着亮、关掉压暗，不额外画一套彩色图标。 */
+.audio-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  min-width: 88px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--gray-aux);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s, color 0.15s;
+}
+.audio-toggle svg { width: 44px; height: 44px; }
+.audio-toggle:active { opacity: 0.7; }
+.audio-toggle.is-off { color: rgba(255, 255, 255, 0.4); }
+/* 64 设计px 在 728×348（缩放 0.448）上只有 28.7 CSS px —— 低于「点得到」的下限。
+ * 图标（svg 34）不变，只把外圈放大到 76 → 34 CSS px。 */
+.audio-toggle--sm { width: 76px; height: 76px; min-width: 76px; }
+.audio-toggle--sm svg { width: 34px; height: 34px; }
+/* 首页：浮在标题右上角，屏边安全区跟着走 */
+#screen-home > .audio-toggle {
+  position: absolute;
+  top: calc(var(--sa-top, 0px) + 24px);
+  right: calc(var(--sa-right, 0px) + 24px);
+}
+.room-code-box { font-size: 28px; color: var(--gray-aux); }
+.room-code-box b {
+  font-size: 48px;
+  color: var(--gold);
+  letter-spacing: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 座位卡网格（2 列 × 4 行，8 人满屏） */
+.room-grid {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-content: start;
+  padding-bottom: 8px;
+}
+.player-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 10px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 20px;
+  position: relative;
+}
+.player-row.me {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold);
+}
+/* 自己座位角落那支「改昵称」铅笔。
+ * 座位卡整体已经是「点开战绩」的热区，改名不能和它抢同一块点击 —— 于是挪到角落：
+ * 位置固定、图标明确，点错也只会落到「看自己战绩」，不会再把改名框弹出来。
+ * 88 = --tap-min 的默认值（44 物理 px 的热区下限），到屏幕上约 46px，点得中。 */
+.player-edit {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap-min, 88px);
+  height: var(--tap-min, 88px);
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(245, 193, 92, 0.14);
+  color: var(--gold);
+  font-size: 38px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, transform 0.12s;
+}
+.player-edit:active {
+  background: rgba(245, 193, 92, 0.30);
+  transform: scale(0.94);
+}
+.avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  color: #fff;
+  flex-shrink: 0;
+  position: relative;
+  /* 不能加 overflow:hidden：房主皇冠（.owner-crown）是在 top:-8px 上挂着的，
+   * 裁掉就看不见了。圆形裁切由 .avatar-img 自己的 border-radius 负责。 */
+}
+
+/* 头像图（v89 §9.2）：容器负责尺寸 / 描边 / 状态色，图只负责填满里面的圆。
+ * 这样换头像不用碰任何布局 —— .avatar / .opp-avatar / .pf-avatar / .ss-av
+ * 四个容器的宽高、边框、.st-thinking 之类的状态样式全部原样保留。
+ * pointer-events:none 让点击落在容器上：座位卡的委托监听挂在 row / card 上，
+ * 图自己吃掉事件的话，点头像正中反而不响应（边缘却能点）—— 最难自己发现的一类 bug。 */
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* AI 玩家：虚线描边 + 降饱和，一眼和真人区分开 */
+.avatar.is-bot {
+  background: #33415c;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.5);
+  font-size: 32px;
+}
+.owner-crown {
+  position: absolute;
+  top: -8px;
+  right: 4px;
+  font-size: 20px;
+}
+.player-name {
+  max-width: 100%;
+  font-size: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-status {
+  font-size: 20px;
+  color: var(--gray-aux);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 2px 12px;
+}
+.player-status.ready {
+  color: #062b16;
+  background: var(--success-green);
+}
+/* 就位态（点了「开始下一局」之后的房间页）：还没报名的人 —— 他还在结算页看回放。
+ * 不做成灰座位（灰 = 掉线 / 被踢），用虚线描边的状态胶囊 + 稍暗的头像，
+ * 读起来是「他还在那儿，只是还没决定」。 */
+.player-status.pending {
+  color: rgba(255, 247, 232, 0.58);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+.player-row.pending .avatar { opacity: 0.55; }
+.player-row.pending .player-name { color: rgba(255, 247, 232, 0.62); }
+.player-score {
+  font-size: 24px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+.invite-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 150px;
+  border: 2px dashed rgba(245, 193, 92, 0.4);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(245, 193, 92, 0.85);
+  font-size: 24px;
+  cursor: pointer;
+}
+.invite-card .plus { font-size: 60px; line-height: 1; }
+
+.room-hint {
+  font-size: 24px;
+  color: var(--gray-aux);
+  margin: 10px 0;
+  background: rgba(0, 0, 0, 0.24);
+  border-radius: 999px;
+  padding: 8px 24px;
+  text-align: center;
+}
+.room-hint.ready {
+  color: #062b16;
+  background: var(--success-green);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+/* 就位态的两颗胶囊：「看上一局过程」「上一局结算」。
+   不做成大按钮 —— 现在要做的事是「准备」，回顾上一局是顺手的事；
+   但也不能做成 12px 灰字，那等于没有入口。
+   并排放一行而不是各占一行：这里离底部的「准备」很近，多一行就多挤一次主操作。
+   750 设计宽下两个胶囊加起来约 430px，富余足够，不必再缩字号。 */
+.room-prev-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin: 2px 0 4px;
+}
+.room-prev {
+  margin: 0;
+  padding: 0 26px;
+  border-radius: 999px;
+  font-size: 24px;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+.room-actions { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+/* 三个按钮并排（补 AI 队友 / 结束本局 / 离开房间）。
+ * 390 宽下「补 AI 队友」曾经断成「补 AI 队」+「友」—— 因为 flex:1 把每个按钮
+ * 压到等分宽度，而中文字可以逐字断行，浏览器就选了「挤在同一行+断字」而不是「换行」。
+ * 修法不是缩字号（三档字号并排更难看），而是明确告诉浏览器：文字不许断，容器可以换行。
+ * 于是第三个按钮整体掉到第二行，而不是从一个词中间劈开。 */
+.room-actions .ghost-row { display: flex; flex-wrap: wrap; width: 100%; gap: 12px; }
+.room-actions .ghost-row .btn { flex: 1 1 auto; margin: 0; white-space: nowrap; }
+
+/* ---------- 准备态：长在牌桌上（v82） ----------
+ * 这一层只在 #screen-game 里出现，接管「房间等人」的全部内容：
+ *   上：搬进来的 .room-top（房间号 / 声音 / 邀请）
+ *   中：.tr-card（起始分、两轮玩法、局数规则、我的战绩）
+ *   下：搬进来的 .room-prev-row + .room-actions（准备 / 补 AI / 结束 / 离开）
+ * 它不需要任何自己的背景 —— 底下的绿毡牌桌就是背景，这正是「不用再开一个房间页」的意思。
+ * 高度全部用 flex 分配，不写死 px：竖屏 / 横屏 / 矮屏三档共用一套。 */
+.table-ready {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* .room-top 原来底下还压着一整张座位网格，所以在房间页里它只留了 16px 间距；
+   到了牌桌上它下面是空的，把那条分隔线以下的留白收回来一点。 */
+.table-ready .room-top { margin-bottom: 8px; }
+.tr-body {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 8px 0;
+}
+.tr-card {
+  width: 100%;
+  max-width: 620px;
+  padding: 26px 30px 22px;
+  border-radius: 26px;
+  border: 1px solid rgba(245, 193, 92, 0.28);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.02)),
+    rgba(6, 22, 17, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 18px 40px rgba(0, 0, 0, 0.28);
+}
+.tr-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(245, 193, 92, 0.18);
+}
+.tr-card-title { font-size: 36px; font-weight: 700; color: var(--gold); letter-spacing: 1px; }
+/* 字号不能按竖屏「看起来够大」来定：横屏舞台缩放只有 0.41，24 设计 px 落到 9.9 CSS px，
+ * 探针直接判不合格（probe-safearea「横屏最小文字 ≥ 11 CSS px」）。
+ * 28 设计 px × 0.41 ≈ 11.5，正好过线；竖屏（缩放 1）看着也只是略大，不突兀。 */
+.tr-card-sub { font-size: 28px; color: var(--gray-aux); }
+.tr-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 6px 0;
+  font-size: 30px;
+}
+.tr-k { color: var(--gray-aux); flex: 0 0 auto; }
+.tr-v { color: var(--text-main); text-align: right; }
+/* 动作条：和底部那些 ghost 按钮同宽，视觉上不会比「准备」窄一截 */
+.ready-acts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+/* 结束页底排：查看战绩（品牌绿次按钮）＋ 离开房间（幽灵）1:1 并排 */
+.settle-actions-row { width: 100%; max-width: 560px; display: flex; gap: 16px; margin-top: 6px; }
+.settle-actions-row .btn { flex: 1 1 0; min-width: 0; margin: 0; }
+
+/* ---------- 对局页顶部：桌沿 ----------
+ * 座位从「一张张玻璃卡片」搬到桌面上：头像 + 名字 + 分数直接贴在毡面上，
+ * 状态靠头像描边色 + 角标符号表示（不再用一个状态药丸占掉一行）。
+ * 顶栏因此从 184 压到 ~146 设计px，省下的高度还给牌区。
+ * 面板本身仍是首页底部入口那一套语言：深绿半透明 + 1px 白描边 + 顶部高光。 */
+.game-top {
+  width: 100%;
+  position: relative;
+  z-index: 1;
+  margin-bottom: 12px;
+  padding: 10px 16px 8px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.028)),
+    rgba(8, 26, 21, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.gt-row1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+/* 左：主信息（第几轮/什么阶段）在上，次要信息（第几把/房间号）在下 */
+.gt-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* 阶段名与分牌倒计时同一行：倒计时是辅助信息，不该把阶段名挤到单独一行去 */
+.gt-phase-row { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+/* 分牌倒计时。tabular-nums 是必须的：等宽数字下「剩 59 秒」跳到「剩 58 秒」时
+ * 整块不会左右抖，否则每秒抖一下，比不显示还烦。 */
+.gt-timer {
+  padding: 1px 12px;
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  color: rgba(214, 222, 232, 0.92);
+  background: rgba(0, 0, 0, 0.26);
+  border: 1px solid rgba(196, 205, 216, 0.26);
+  white-space: nowrap;
+}
+/* 最后 15 秒转暖红：这是「马上要被判弃权」的唯一提示，
+ * 不用纯颜色表达也行——数字本身在往下走，颜色只是加强。 */
+.gt-timer.is-warn {
+  color: #FFE0D8;
+  background: rgba(150, 34, 22, 0.62);
+  border-color: rgba(255, 132, 108, 0.8);
+}
+.gt-phase {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: 0.5px;
+  color: var(--warm-white);
+}
+.gt-sub {
+  font-size: 16px;
+  line-height: 1.2;
+  color: rgba(196, 205, 216, 0.70);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gt-sub b {
+  font-weight: 600;
+  color: rgba(245, 193, 92, 0.78);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+.gt-sep { font-style: normal; margin: 0 7px; opacity: 0.40; }
+
+/* 右：我的座位（与对手同一套头像语言，金色描边标出「这是你」）+ 记分 */
+.gt-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding-left: 16px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+.gt-me-body { display: flex; flex-direction: column; align-items: flex-end; }
+.gt-me-label {
+  font-size: 16px;
+  letter-spacing: 2px;
+  line-height: 1.1;
+  color: rgba(196, 205, 216, 0.62);
+}
+.gt-me-row { display: flex; align-items: baseline; gap: 2px; }
+.gt-me .gt-score {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 10px rgba(245, 193, 92, 0.22);
+}
+.gt-me .gt-score.pos { color: var(--up-red); }
+.gt-me .gt-score.neg { color: var(--down-green); }
+.opp-avatar.is-me {
+  background: rgba(245, 193, 92, 0.16);
+  border-color: rgba(245, 193, 92, 0.62);
+  color: var(--gold);
+  font-size: 20px;
+}
+
+/* 对手座位条：桌沿上的一排座位。隐藏原生滚动条 ——
+ * 那条灰白粗条是旧版顶栏最扎眼的一处。 */
+.gt-opps {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.gt-opps::-webkit-scrollbar { width: 0; height: 0; display: none; }
+/* 右缘渐隐提示「还有更多、可滑动」；滑到边缘时对应侧渐隐消失（mask 只影响视觉，不影响点击热区） */
+.gt-opps.can-scroll {
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 36px), transparent 100%);
+          mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 36px), transparent 100%);
+}
+.gt-opps.can-scroll.at-start:not(.at-end) {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 36px, #000 calc(100% - 36px), transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 36px, #000 calc(100% - 36px), transparent 100%);
+}
+.gt-opps.can-scroll.at-end {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 36px, #000 100%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 36px, #000 100%);
+}
+/* 座位：头像 + 名字/分数，没有卡片底，像坐在桌边
+ * flex:1 让 2 人局宽一些、3 人等分；min-width 保证「机器人1」不被截成「机器…」 */
+.gt-opp {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 150px;
+  max-width: 260px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(0, 0, 0, 0.22);
+}
+.gt-opp.st-left, .gt-opp.st-forfeit { opacity: 0.62; }
+.opp-avatar {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 -6px 10px rgba(0, 0, 0, 0.20), inset 0 4px 8px rgba(255, 255, 255, 0.16);
+}
+/* AI 座位：与房间页同一套（降饱和 + 虚线描边 + 机器人图标），不再用饱和色块 + 「机」字 */
+.opp-avatar.is-bot {
+  background: #33415c;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.34);
+  font-size: 16px;
+  box-shadow: none;
+}
+.opp-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.opp-name {
+  min-width: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: rgba(255, 247, 232, 0.94);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.opp-score {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 状态位：头像描边色 + 右下角小角标。
+ * 颜色之外再给一个符号，色弱也能区分「已提交 / 已弃权 / 掉线 / 已离开」。 */
+.opp-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  color: #062b16;
+  background: var(--success-green);
+  border: 2px solid rgba(10, 30, 24, 0.90);
+  animation: popIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+/* 分牌中：金边呼吸，一眼能看出「还在等他」 */
+.st-thinking .opp-avatar { border-color: rgba(245, 193, 92, 0.55); animation: seatWait 2s ease-in-out infinite; }
+@keyframes seatWait {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 193, 92, 0.00); }
+  50%      { box-shadow: 0 0 0 4px rgba(245, 193, 92, 0.14); }
+}
+.st-submitted .opp-avatar, .st-ready .opp-avatar {
+  border-color: rgba(67, 209, 124, 0.85);
+  box-shadow: 0 0 10px rgba(67, 209, 124, 0.22), inset 0 -6px 10px rgba(0, 0, 0, 0.20);
+}
+.st-forfeit .opp-avatar { border-color: rgba(138, 147, 163, 0.55); }
+.st-forfeit .opp-badge { background: var(--disable-fg); color: #141a20; border-color: rgba(10, 30, 24, 0.90); }
+.st-off .opp-avatar { border-color: rgba(224, 163, 74, 0.80); }
+.st-off .opp-badge { background: #E0A34A; color: #2a1c05; }
+.st-left .opp-avatar { border-color: rgba(214, 106, 106, 0.70); }
+.st-left .opp-badge { background: #D66A6A; color: #2a0808; }
+@keyframes popIn {
+  from { transform: scale(0.3); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* ---------- 圆桌座位环（v87） ----------
+ * 顶栏整块换成一张桌子：对手坐在椭圆环的上弧上，中央是公共状态牌，我在环下沿。
+ *
+ * 全部挂在 `#game-top.gt-ring` 下面而不是改 `.gt-*` 本身 —— 两套版式共用同一批类名，
+ * 改裸类名等于把 CONFIG.SEAT_RING 的回滚路径一起改了（关掉开关会看到半张桌子）。
+ *
+ * 座位上的一切都是绝对定位，坐标由 js/seatRing.js 算好、内联写在 style 上：
+ * 把几何写进 CSS 就只能靠 calc 拼椭圆，改一个数字要动三处，而且没法单测。 */
+#game-top.gt-ring {
+  height: var(--gt-h, 450px);
+  margin-bottom: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+/* 毡面：椭圆本身。比座位环外扩一圈，座位才像「坐在桌沿上」而不是「浮在空中」 */
+.gt-felt {
+  position: absolute;
+  border-radius: 50%;
+  background:
+    radial-gradient(130% 110% at 50% 2%, rgba(52, 122, 96, 0.95) 0%, rgba(24, 72, 58, 0.96) 46%, rgba(11, 40, 32, 0.97) 100%);
+  border: 2px solid rgba(245, 193, 92, 0.24);
+  box-shadow:
+    inset 0 3px 30px rgba(0, 0, 0, 0.52),
+    inset 0 -18px 44px rgba(0, 0, 0, 0.30),
+    0 18px 46px rgba(0, 0, 0, 0.34);
+  pointer-events: none;
+}
+/* 座位层：不再是「可横滑的座位条」，而是一块定位容器。
+ * mask（右缘渐隐）必须关掉 —— 它是给横向滚动用的，留着会把最外侧的座位淡掉半个人。 */
+#game-top.gt-ring .gt-opps {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  -webkit-mask-image: none;
+          mask-image: none;
+}
+#game-top.gt-ring .gt-opp {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: var(--nmw, 112px);
+  flex: none;
+  min-width: 0;
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  text-align: center;
+}
+#game-top.gt-ring .opp-avatar {
+  width: 68px;
+  height: 68px;
+  flex: 0 0 68px;
+  font-size: 30px;
+  border-width: 3px;
+}
+/* 座位文字的字号由 JS 按缩放反算（--seat-*，见 game.js 的 seatText 段）：
+ * 写死 20 设计px 在 800×360 的横屏（scale 0.48）上只有 9.6 CSS px，读不出来。
+ * 变量缺席时退回原设计值，所以「变量没写进去」等于「保持 v104 的样子」。 */
+#game-top.gt-ring .opp-name { width: 100%; font-size: var(--seat-name, 20px); line-height: 1.1; }
+#game-top.gt-ring .opp-score { font-size: var(--seat-score, 24px); line-height: 1.05; }
+/* 中央公共状态牌：房号在最上（要念给朋友听），阶段最大，倒计时与进度在下面。
+ * 顺序不是随便定的 —— 删掉顶栏之后这里是**唯一的**公共信息位。 */
+/* ---- 2 人局对战条（v89）----
+ * 单挑时桌上只有一个对手坐在正上方，毡面中间是**全屏最显眼的一片空**，
+ * 而这一局唯一真正要紧的数字是分差。位置（含中央牌下移 34）由
+ * seatRing.js 的 vs 坐标给出，这里只管长相 —— 与中央牌同一套玻璃语言。 */
+.gt-vs {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 340px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-radius: 999px;
+  background: rgba(4, 30, 18, 0.55);
+  border: 1px solid rgba(245, 193, 92, 0.30);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.gt-vs .vs-side { display: flex; align-items: baseline; gap: 6px; }
+.gt-vs .vs-side i {
+  font-style: normal;
+  font-size: 18px;
+  color: rgba(236, 241, 248, 0.72);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gt-vs .vs-side b { font-size: 32px; color: var(--warm-white); }
+.gt-vs .vs-mid { font-size: 17px; color: rgba(196, 205, 216, 0.72); }
+.gt-vs .vs-mid b { font-size: 22px; color: var(--gold-light); }
+/* 领先的一方金色：单挑里「谁在前面」是扫一眼就要知道的 */
+.gt-vs.is-me .vs-side:first-child b { color: var(--gold-light); }
+.gt-vs.is-opp .vs-opp b { color: var(--gold-light); }
+
+.gt-plaque {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  /* 340 不是随手写的：3 人局的两个对手坐在 ±66°，落点 x≈87/583、块宽 120，
+   * 内沿到 x≈147/523。宽度给 400 时左内沿 x=135 < 147 —— 牌边的「已提交」会被
+   * 对手头像压住 12 设计px（探针量出来的）。340 让内沿退到 165，两边都让开。
+   * 同时 340 还够放「第一轮分牌 + 剩 58 秒」一行（约 290）。 */
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  pointer-events: none;
+}
+.gt-plaque .gt-sub { font-size: 18px; }
+.gt-plaque-phase { display: flex; align-items: baseline; gap: 10px; }
+.gt-plaque .gt-phase { font-size: 40px; line-height: 1.05; }
+.gt-plaque .gt-timer { font-size: 20px; }
+.gt-prog {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  letter-spacing: 0.5px;
+  color: rgba(196, 205, 216, 0.62);
+  font-variant-numeric: tabular-nums;
+}
+/* 中央牌这一行是「已提交 4/5 ●●●●」—— 玩家靠它判断还差谁，不能小到看不清。
+ * 17 设计px 在 390×844（scale 0.52）上只有 8.8 CSS px；探针在 667×375 上量到过 7。
+ * 用 max() 顶住 11 CSS px 的下限（与第 25 章横屏那套 max(20px, --ls-fs-floor) 同源，
+ * 这里独立写是因为它竖屏也要守）。 */
+#stage:not(.ls) .gt-prog { font-size: max(17px, calc(11px / var(--pt-scale, 1))); }
+#stage.ls .gt-prog { font-size: max(17px, calc(11px / var(--ls-scale, 1))); }
+.gt-dots { display: inline-flex; gap: 5px; }
+.gt-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(196, 205, 216, 0.50);
+}
+.gt-dots i.on { background: var(--gold); border-color: var(--gold); }
+/* 「我」：环下沿正中。和对手同一套头像语言，金色描边标出「这是你」。 */
+#game-top.gt-ring .gt-me {
+  position: absolute;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border-left: 0;
+  white-space: nowrap;
+}
+#game-top.gt-ring .gt-me .opp-avatar {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  font-size: 26px;
+}
+#game-top.gt-ring .gt-me-body { align-items: flex-start; }
+#game-top.gt-ring .gt-me-label { font-size: var(--seat-label, 15px); letter-spacing: 2px; }
+#game-top.gt-ring .gt-me .gt-score { font-size: var(--seat-me, 34px); }
+/* 表情入口：桌面右下角（拇指最近的一角）。
+ * 位置用 margin 偏移而不是 transform —— .gt-emo:active 会把 transform 改成 scale，
+ * 两者写在一起的话按下去整颗按钮会先跳回左上角再缩小。 */
+#game-top.gt-ring .gt-emo {
+  position: absolute;
+  /* 88×88 设计px = 45.8 CSS@0.52。早先试过 76（39.5 CSSpx），看着更秀气，
+   * 但手指点不准 —— 而这是对局里唯一的表情入口。
+   * ★ v105：接上 --tap-min（= max(88, ceil(44/scale))）。写死 88 在 scale 0.48 的
+   *   横屏上只有 42 CSS px，差 2 个像素点不准 —— 而那道「scale ≥ 0.5 才上桌」的
+   *   闸门原本守的正是它。热区交给构造保证之后，闸门才敢按「桌子本身够不够大」重定。 */
+  width: max(88px, var(--tap-min, 88px));
+  height: max(88px, var(--tap-min, 88px));
+}
+#game-top.gt-ring .gt-emo svg { width: 38px; height: 38px; }
+
+/* ---- 紧凑竖屏（16:9 手机，v90）----
+ * 环高从 466 收到 404（见 seatRing.MODES.portraitCompact），桌上的东西要**同时**缩一档：
+ * 只缩环不缩块，5 人局的两个内圈座位心到中央牌心只剩 ~102 设计px，
+ * 而 340×110 的中央牌半高 55 + 座位块半高 53 = 108 —— 会压住。
+ * 用 .rt-compact 隔离，≥1500 的竖屏与横屏一个像素都不动。 */
+#game-top.gt-ring.rt-compact .opp-avatar {
+  width: 56px; height: 56px; flex: 0 0 56px; font-size: 26px;
+}
+/* 紧凑档分数的基础字号（22）在 JS 里作为 --seat-score 的底值给出，
+ * 这里不再覆盖 —— 两条路各写一份，迟早一条改一条忘。 */
+#game-top.gt-ring.rt-compact .gt-me .opp-avatar {
+  width: 50px; height: 50px; flex: 0 0 50px; font-size: 24px;
+}
+/* 中央牌：宽度 340→300、字号降一档（阶段 40→34）。宽度还得让出内圈座位，
+ * 环一压扁，座位在横向上反而更靠近牌 —— 这条不是审美，是几何。 */
+#game-top.gt-ring.rt-compact .gt-plaque { width: 300px; gap: 4px; }
+#game-top.gt-ring.rt-compact .gt-plaque .gt-phase { font-size: 34px; }
+#game-top.gt-ring.rt-compact .gt-plaque .gt-sub { font-size: 16px; }
+#game-top.gt-ring.rt-compact .gt-vs { width: 300px; }
+/* 表情入口反而要**放大**到 92：88 设计px 在 scale 0.5 上正好 44 CSS，
+ * 刚好卡在触摸下限上，差半个像素就点不准。 */
+#game-top.gt-ring.rt-compact .gt-emo {
+  width: max(92px, var(--tap-min, 92px));
+  height: max(92px, var(--tap-min, 92px));
+}
+#game-top.gt-ring.rt-compact .gt-emo svg { width: 36px; height: 36px; }
+
+
+/* 组槽区：每一组是一条满宽的「桌带」。
+ * 之前每组只有 max-content 宽、挤在左侧 60%，右边留出 264px 一片没来由的空毡面 ——
+ * 现在桌带吃满宽度、牌在左、组信息右对齐成一列，空的那部分变成桌带内的留白。 */
+.slots {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  gap: 12px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  z-index: 1;
+}
+.slot {
+  width: 100%;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 18px 6px 16px;
+  border-radius: 16px;
+  /* 桌带不用方框：只留左侧一条组色竖条，空出来的那半边就是毡面本身。
+   * 之前是 670 宽的圆角方框 + 边框 + 深色底，牌只占左边一小块，看起来像「一个空盒子」。 */
+  border-left: 4px solid var(--slot-color);
+  background: transparent;
+}
+.slot-boxes { display: flex; gap: 8px; }
+/* 组信息：右下角对齐成一列 —— 牌张数不同的桌带右边缘也齐，看起来像一张表 */
+.slot-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.slot-meta-main { display: flex; align-items: center; gap: 8px; }
+.slot-hint {
+  font-size: 16px;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  color: rgba(196, 205, 216, 0.52);
+}
+.slot-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--slot-color);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.slot-label { font-size: 20px; font-weight: 700; color: rgba(236, 241, 248, 0.90); }
+.slot-progress {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--disable-fg);
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.slot-progress.full {
+  color: var(--success-green);
+  background: rgba(67, 209, 124, 0.15);
+}
+/* 组槽实时牌型（v92）：放满即报，取代满组时的 n/n。
+ *
+ * 为什么顶掉进度而不是并排加一个：进度条在满组时已经没有信息量（就是 n/n），
+ * 而这一行在窄横屏两列档里是 nowrap 的 —— 并排加会直接顶出格子。
+ * 换掉之后宽度基本持平（"3/3" ≈ "豹子"），一列两个东西也更容易扫。
+ *
+ * 配色分两档，**普通牌型刻意不用组色**：
+ *   普通牌型（散牌 / 对子 / 顺子 / 同花 / 牛1~牛9 / 没牛）= 中性深底 + 白字。
+ *     一开始用组色淡底，结果飘三叶那组的「对子」变成一颗红色胶囊，
+ *     和旁边十点半的「爆 15」撞在一起 —— 两个红胶囊并排，
+ *     「红 = 这组废了」的既有语义就被稀释了。牌型本身是中性的，不该借用警告色。
+ *   大牌型（BIG_FX 里那 5 个）= 牌型色实底 + 一次成手脉冲，
+ *     这一手值得被看见 —— 与结算弹窗里的特写是同一套颜色（--fx-color 由 JS 写入）。
+ */
+.slot-type {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0;
+  padding: 2px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.slot-type.is-big {
+  color: #1b1105;
+  background: var(--fx-color, var(--gold));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45), 0 3px 10px -2px rgba(0, 0, 0, 0.45);
+}
+/* 脉冲只放一次：is-new 由 JS 在「牌型从无到有 / 变了」那一帧挂上，
+ * 下一帧内容没变 → innerHTML 不重写 → 类名也不会再出现，动画不会循环。 */
+.slot-type.is-new.is-big {
+  animation: slotTypePop 0.52s cubic-bezier(0.22, 1.24, 0.36, 1) both;
+}
+@keyframes slotTypePop {
+  0%   { transform: scale(0.62); filter: brightness(1.9); }
+  55%  { transform: scale(1.12); filter: brightness(1.25); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+/* 成手那一刻组本身也亮一下边框，把视线从手牌拉回组槽。
+ * 只用 box-shadow，不动 layout：组槽是 flex 行，改尺寸会把下面的手牌顶一下。 */
+.slot.is-fresh {
+  animation: slotFreshGlow 0.62s ease-out both;
+}
+@keyframes slotFreshGlow {
+  0%   { box-shadow: 0 0 0 0 var(--fx-color, var(--gold)), 0 0 0 1px var(--fx-color, var(--gold)); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0), 0 0 18px -6px rgba(0, 0, 0, 0); }
+}
+/* 十点半组的点数徽标（2 张放满才出现）。
+ * 三种状态各有颜色含义，和牌桌上已有的色彩语言一致：
+ *   金色 = 还没凑到顶但没爆（中性，和 --gold 的点数体系同一支）
+ *   绿色 = 10.5，这组的满分
+ *   红色 = 爆了，这组必输（engine 里未爆 > 爆）
+ * 它必须常驻：只在放牌那一刻弹 toast，玩家放完转头看别的组就忘了。 */
+.slot-point {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: var(--gold);
+  background: rgba(245, 193, 92, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(245, 193, 92, 0.30);
+}
+.slot-point.best {
+  color: #062b16;
+  background: var(--success-green);
+  box-shadow: inset 0 0 0 1px rgba(67, 209, 124, 0.55), 0 4px 12px rgba(67, 209, 124, 0.24);
+}
+.slot-point.bust {
+  color: var(--up-red);
+  background: rgba(255, 93, 93, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 93, 93, 0.42);
+}
+/* 刚凑到 10.5 的那一帧：徽标自己也弹一下（v93）。
+ *
+ * 复用胶囊那支 slotTypePop，不另写一个关键帧 —— 四个大牌型（10.5 / 豹子 /
+ * 牛牛 / 五花牛）的「成手」必须是同一个动作，否则同一屏里出现两种弹法，
+ * 玩家会以为其中一个是另一件事。
+ *
+ * 为什么是徽标而不是再加一个胶囊：十点半的牌型就是点数，胶囊会和小绿标
+ * 说同一句话（见 slotTypeOf 的注释）。这里只补「刚成手」这一下。 */
+.slot-point.is-new.best {
+  animation: slotTypePop 0.52s cubic-bezier(0.22, 1.24, 0.36, 1) both;
+}
+/* 爆点：把整组的组色竖条也换掉。只标一个小红胶囊不够 ——
+ * 「这组已经废了」是扫一眼就该看出来的信息，不该靠读字。 */
+.slot.is-bust { border-left-color: var(--up-red); }
+/* 既是「当前放牌的组」又爆了（玩家点回十点半组看那两张牌）：
+ * .slot.is-active 写在 .is-bust 之后，会把它左侧那根红竖条改回组色 ——
+ * 「这组废了」最直观的那个信号被「这是当前组」盖掉。这里抬一层特异性，
+ * 让爆点无论在哪一种选中状态下都是红的。 */
+.slot.is-bust.is-active { border-left-color: var(--up-red); }
+.slot.is-bust .slot-label { color: rgba(255, 157, 157, 0.92); }
+/* 放牌那一刻摇一下：toast 在屏幕下方，玩家的注意力在刚才落牌的槽位上。
+ * 位移给 ±6px，够被看见，又不至于像卡顿。 */
+.slot.nudge { animation: slotNudge 340ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+@keyframes slotNudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  45% { transform: translateX(5px); }
+  70% { transform: translateX(-3px); }
+}
+.slot-boxes { display: flex; gap: 8px; }
+/* ---------- 矮屏桌带：组信息挪到牌右侧 ----------
+ * 普通排法里组信息（标签 + 进度 + 规则提示）在牌的下方，纵向要吃掉 55 设计px；
+ * 三组就是 165 —— 而 390×844 的组槽总共只有 846，三组刚性 840，只剩 6px 余量。
+ * 375×667 的组槽只有 557，第三组「飘三叶」被整块挤出容器（实测 clippedPx 136），
+ * 滚动条在这套皮肤里看不见，玩家会以为这组不存在。
+ *
+ * 矮屏把组信息搬到牌右侧：纵向不再为文字留空间，省下的高度全给牌。
+ * 规则提示在这里隐藏（规则页有全文）—— 留着它会吃掉右侧横向空间，把牌重新挤小。
+ * 触发条件在 game.js 的 resize()：stageH < 1500 设计像素（16:9 手机 1331~1334、横屏 1440）。
+ * 这套数值与 js/slotLayout.js 的 METRICS.dense 一一对应，改一处必须改另一处
+ * （pwa/test/table-layout.test.js 会读这份 CSS 反查）。 */
+.slots[data-dense="1"] { gap: 10px; }
+.slots[data-dense="1"] .slot {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 6px 18px 6px 16px;
+}
+.slots[data-dense="1"] .slot-boxes { flex: 0 0 auto; }
+.slots[data-dense="1"] .slot-meta { flex: 0 1 auto; min-width: 0; }
+.slots[data-dense="1"] .slot-hint { display: none; }
+
+.card-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  /* 牌尺寸是 JS 按可用高算出来的，不该再被 flex 二次收缩 ——
+   * 实测矮屏桌带里空牌位会被压到 96（内联写的是 109），
+   * 等真正发牌时 img 比容器宽就会盖住右边一张。 */
+  flex: 0 0 auto;
+  /* 槽里的牌也支持拖拽，关掉 touch-action 保证 pointer 事件连续跟手 */
+  touch-action: none;
+}
+/* 槽里的牌被拖起时淡出，留一个空位，别让整组塌缩 */
+.card-box.is-dragging { opacity: 0.25; }
+.card-box.is-dragging .card { box-shadow: none; }
+.card-box.empty {
+  /* 空位只留一圈很淡的中性虚线：原来按组色染成蓝/金/红，三个大虚线框抢走了注意力 */
+  border: 1.5px dashed rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.022);
+}
+.card-box.empty.highlight {
+  border: 2px solid var(--slot-color);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05), 0 0 16px var(--slot-soft, rgba(255, 255, 255, 0.2));
+}
+
+/* ---------- 当前落点组 ----------
+ * 只强调一组，避免四组同时发光看不出该点哪里。
+ * 左色条保留该组主色，其余三边只用中性描边 + 外发光。 */
+.slot.is-active {
+  border-left-color: var(--slot-color);
+  background: rgba(255, 255, 255, 0.075);
+  box-shadow: 0 0 0 2px var(--slot-soft, rgba(255, 255, 255, 0.2)), 0 10px 22px rgba(0, 0, 0, 0.20);
+}
+/* 拖到这组上方时的落点反馈 */
+.slot.drop-hover {
+  border-left-color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 4px var(--slot-color), 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+.slot.drop-hover .card-box.empty { background: rgba(255, 255, 255, 0.16); }
+
+/* 拖着一张牌落到**另一张牌**上时的反馈：这两张会互换位置（v105）。
+ *
+ * 必须和 .slot.drop-hover 视觉上分得开：那个是「整组接收」，
+ * 这个是「一对一替换」。松手前玩家得看清到底是哪一张要让位，
+ * 否则六张牌全入组之后，「换位置」和「塞进这组」会变成同一个手势、两种结果。
+ * 金色描边 + 抬起，比整组的白色外框更小、更贴身。 */
+.card-box.drop-swap {
+  border-radius: 14px;
+  box-shadow: 0 0 0 4px var(--gold), 0 0 26px rgba(245, 193, 92, 0.5);
+  transform: translateY(-8px) scale(1.05);
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+}
+
+/* ---------- 牌 ---------- */
+.card {
+  display: block;
+  border-radius: 16px;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  background: #fff;
+}
+.card-wrap {
+  position: absolute;
+  top: 20px;
+  transition: transform 0.15s cubic-bezier(0, 0, 0.2, 1);
+  will-change: transform;
+  /* 手指按在牌上拖动时不要触发页面滚动/双击缩放，拖拽才跟手。
+     手牌区本身不可滚动，所以这里关掉 touch-action 不会损失任何手势。 */
+  touch-action: none;
+}
+.card-wrap.selected .card {
+  box-shadow: 0 0 0 3px var(--gold), 0 12px 24px rgba(245, 193, 92, 0.45);
+}
+/* 正在被拖走的牌：留一个"位"但淡下去，避免手牌区突然塌缩 */
+.card-wrap.is-dragging { opacity: 0.28; }
+.card-wrap.is-dragging .card { box-shadow: none; }
+/* 拖拽时跟着手指的幽灵牌 */
+.drag-ghost {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  border-radius: 16px;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%) scale(1.06);
+  opacity: 0.96;
+}
+body.is-dragging { cursor: grabbing; }
+/* 大王牌自带微光 */
+.card.joker-glow {
+  box-shadow: 0 0 16px rgba(245, 193, 92, 0.5), 0 6px 12px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes dealInOdd {
+  from { transform: translateY(-220px) scale(0.9) rotate(-6deg); opacity: 0; }
+  to   { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
+}
+@keyframes dealInEven {
+  from { transform: translateY(-220px) scale(0.9) rotate(6deg); opacity: 0; }
+  to   { transform: translateY(0) scale(1) rotate(0); opacity: 1; }
+}
+.card.deal-in { animation: dealInOdd 0.3s cubic-bezier(0, 0, 0.2, 1) backwards; }
+.card.deal-in:nth-child(even) { animation-name: dealInEven; }
+
+.game-bottom {
+  width: 100%;
+  /* 上方留出选中牌上浮 24px 的缓冲（含扇形弧 12px + 8px 间隙），避免选中牌顶压住组槽底缘 */
+  padding-top: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+.game-actions {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.game-actions .btn { margin: 0; }
+.btn-submit { flex: 1 1 auto; min-width: 0; max-width: 560px; }
+
+/* ---------- 当前组标签条 ----------
+ * 手牌就在下面，标签也在拇指区：选组、放牌都不用抬手够屏幕上方。
+ * 宽度按 750 设计宽算过：四个标签 + 「清空」正好一行（≈660 / 670），不换行。
+ * 组色用 inset 阴影做左侧色条，不额外占宽度。 */
+.group-chips {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.gchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 88px;              /* 88 设计px = 屏上约 44 物理 px，符合最小热区 */
+  padding: 0 18px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 6px 0 0 var(--slot-color, #9aa4b2);
+  color: var(--warm-white);
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+.gchip-count {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  color: var(--disable-fg);
+}
+.gchip.is-active {
+  border-color: var(--slot-color, var(--gold));
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(-3px);
+}
+.gchip.is-full .gchip-count { color: var(--success-green); }
+/* 满组不再抢注意力，但仍可点（点它会提示「这组满了」） */
+.gchip.is-full:not(.is-active) { opacity: 0.72; }
+.gchip:active { transform: scale(0.96); }
+.gchip-clear {
+  box-shadow: none;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--gray-aux);
+  font-weight: 600;
+  padding: 0 16px;
+}
+
+/* 手牌扇形区 */
+.hand {
+  position: relative;
+  width: 100%;
+  height: 268px;
+  overflow: visible;
+}
+/* 拖槽牌回手牌区时的落点反馈：整片手牌区泛一层绿光，示意"松手=收回" */
+.hand.drop-hover {
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 3px rgba(67, 209, 124, 0.55), inset 0 0 40px rgba(67, 209, 124, 0.14);
+}
+.hand-status {
+  font-size: 28px;
+  color: var(--gray-aux);
+  text-align: center;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* 等待态带一个脉冲点 + 一句话，长的那一版还会带「（对方掉线，重连中或本局将结束）」。
+ * 默认 nowrap 会让这行文字把脉冲点挤出边界，所以允许换行。 */
+.hand-status.waiting { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.pulse-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 0 rgba(245, 193, 92, 0.7);
+  animation: pulse 1.2s infinite;
+}
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(245, 193, 92, 0.7); }
+  70%  { box-shadow: 0 0 0 14px rgba(245, 193, 92, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(245, 193, 92, 0); }
+}
+
+/* ---------- 弹窗 ---------- */
+/* 层级一律显式写，别靠 DOM 顺序。
+ * 踩过的坑：所有 .modal 都是 z-index:50，而 #account-modal / #pwd-modal 写在
+ * #confirm-modal 之后，于是从「我的账号」点「退出登录」弹出的确认框被账号弹窗
+ * 整个盖住——用户看到的是「点了没反应」。 */
+/* 开局倒计时（?countdown=1 演示模式）。压在所有弹窗之上：它只在开局那一瞬间出现，
+ * 那一刻理论上不该有弹窗，但真要有（比如刚结算完的房间又开了一局），
+ * 让遮罩在上比让它被压住更安全 —— 被压住的话它会一直挂在下面，4 拍跑完才消失。 */
+.countdown {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 26, 18, 0.66);
+  pointer-events: auto;
+}
+.countdown.hidden { display: none; }
+.countdown b {
+  font-size: 220px;
+  line-height: 1;
+  font-weight: 800;
+  color: var(--gold-light, #f5c15c);
+  text-shadow: 0 10px 44px rgba(0, 0, 0, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+/* 「开始」用字号换宽度：两个字按 220px 会顶出 750 的设计宽 */
+.countdown b.go {
+  font-size: 120px;
+  letter-spacing: 10px;
+  color: var(--warm-white, #ffffff);
+}
+.countdown.tick b { animation: cdPop 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes cdPop {
+  0%   { opacity: 0; transform: scale(0.62); }
+  28%  { opacity: 1; transform: scale(1.06); }
+  72%  { opacity: 1; transform: scale(1.00); }
+  100% { opacity: 0; transform: scale(1.16); }
+}
+/* 减少动态：不缩放、不淡出，但**照常换字** —— 那是节奏不是动画。
+ * 与 .result-seq-bar 同一条口径。 */
+@media (prefers-reduced-motion: reduce) {
+  .countdown.tick b { animation: none; }
+}
+
+.modal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 50;
+  padding: 40px;
+}
+
+/* 从弹窗里再开的子弹窗，压在父弹窗之上 */
+#pwd-modal { z-index: 55; }
+
+/* 全局确认框永远最上层：房间里、账号页里、记录页里都可能调它。
+ * 它下面那层遮罩本身是半透明的，叠起来会显得更暗，视觉上有层次感，不必处理。 */
+#confirm-modal { z-index: 60; }
+.modal-card {
+  width: 100%;
+  max-width: 640px;
+  max-height: 82%;
+  overflow: hidden;
+  background: var(--warm-white);
+  border-radius: 28px;
+  padding: 28px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  position: relative;
+  animation: modalIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.modal-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: linear-gradient(90deg, var(--gold-light), var(--gold-deep));
+  border-radius: 28px 28px 0 0;
+}
+@keyframes modalIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+.modal-card h2 { margin: 0 0 16px; font-size: 40px; color: var(--warm-ink); text-align: center; }
+.modal-box {
+  position: relative;
+  width: 100%;
+  max-width: 620px;
+  overflow: hidden;
+  background: var(--warm-white);
+  border-radius: 28px;
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+/* 顶部 8px 金渐变封边：与 .modal-card 统一质感（v2 §4.6-Z4） */
+.modal-box::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 8px;
+  background: linear-gradient(90deg, var(--gold-light), var(--gold-deep));
+}
+.modal-box h3 { margin: 0 0 16px; font-size: 40px; color: var(--warm-ink); text-align: center; }
+.modal-box p { margin: 0 0 24px; font-size: 28px; line-height: 1.5; color: var(--text-secondary); text-align: center; }
+.modal-actions { display: flex; gap: 16px; }
+.modal-actions .btn { flex: 1; margin: 0; }
+/* ---------- 爆点拦截弹窗 ----------
+ * 顶那道金条换成爆点红：和槽位 .is-bust、toast.warn 用同一个 --up-red，
+ * 让「这是会输的那一类提示」在颜色上先成立，不必先读文字。
+ * 只有一个按钮，所以不用给 .modal-actions 做什么特殊处理（.btn 自带 flex:1）。 */
+.bust-box::before { background: linear-gradient(90deg, #FFB3B3, var(--up-red)); }
+.bust-box h3 { color: #C0392B; }
+#bust-desc { font-size: 26px; line-height: 1.62; margin-bottom: 26px; }
+
+/* 提交确认要把三组牌摊成多行，行高和字号都要跟着收一点，否则撑出屏幕 */
+#confirm-desc { white-space: pre-line; font-size: 24px; line-height: 1.65; }
+
+/* 删号确认里那个密码框：只在需要时出现，且要跟下面的按钮拉开距离 */
+#confirm-secret { margin: 0 0 20px; }
+#confirm-secret.hidden { display: none; }
+
+/* ---------- 玩法规则弹窗 ---------- */
+.rules-card { padding: 20px; }
+.rules-card h2 { margin-bottom: 12px; }
+.rules-body { text-align: left; }
+/* 修：.rules-lead 原继承 .modal-card 的暖白文字色（#F5F0E6）落在暖白底 #FFF7E8 上几乎不可见，
+   这里补回正文灰（只加一行颜色，结构/字号/间距不动） */
+.rules-lead { color: var(--text-secondary); text-align: left !important; font-size: 24px; margin: 0 0 12px !important; }
+.rules-step { font-size: 24px; color: var(--text-secondary); margin: 6px 0; }
+.rules-step b { color: var(--cta-red); }
+.rules-list { margin: 10px 0; }
+.rules-list dt { font-size: 24px; color: var(--cta-red-deep); font-weight: 700; margin: 8px 0 2px; }
+.rules-list dd { font-size: 20px; color: var(--text-secondary); line-height: 1.5; margin: 0 0 4px; }
+.rules-joker { font-size: 24px; color: var(--cta-red-deep); margin: 8px 0; }
+.rules-joker b { color: var(--cta-red); }
+.rules-end { font-size: 24px; color: var(--text-secondary); margin: 4px 0; }
+
+/* ============================================================
+   玩家战绩卡（服务端轻量档案弹窗）
+   ------------------------------------------------------------
+   结构：.profile-box > 关闭键 + 头部（首字圆头像 + 昵称 + 来源）+ #profile-body
+   配色：暖白纸感弹窗内用深字（#3A1D00 / #4A4F5A），涨红跌绿用深一档保证对比
+   适配：320 窄屏三列统计不溢出；关闭键热区 ≥44 物理 px（--tap-min）
+   ============================================================ */
+.profile-box {
+  max-width: 620px;
+  max-height: 86%;
+  padding: 26px 26px 22px;
+}
+/* 内容型弹窗的统一关闭键（玩家档案 / 本场过程）。
+ *
+ * 两个决定：
+ *   1) 与档案卡共用一套规则，而不是各写一份 —— 之前回放借用了引导页的 .guide-skip，
+ *      一 CSS 改动就会让两个弹窗的关闭长得不一样，正是用户报的「风格和 app 不一致」。
+ *   2) 加常驻淡底（原来只有 :active 才显形）。回放卡片是暖白纸，纯透明的键
+ *      在静止状态下等于不存在；用户的原话是「关闭不够显眼」。
+ *
+ * 只给「看一眼」的弹窗用。确认框 / 解散投票 / 清空战绩这类必须留明确按钮 ——
+ * 让它们在遮罩上一点就消失，等于把玩家刚做的决定吞掉。 */
+.modal-x,
+.profile-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: max(64px, var(--tap-min, 64px));
+  height: max(64px, var(--tap-min, 64px));
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(26, 29, 35, 0.05);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 2;
+}
+.modal-x svg,
+.profile-close svg { width: 30px; height: 30px; display: block; }
+.modal-x:active,
+.profile-close:active { background: rgba(26, 29, 35, 0.13); }
+
+.pf-head { display: flex; align-items: center; gap: 18px; padding-right: 72px; }
+.pf-avatar {
+  width: 84px;
+  height: 84px;
+  flex: 0 0 84px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  font-weight: 800;
+  color: #fff;
+  background: var(--brand-green);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.6), 0 6px 14px rgba(0, 0, 0, 0.16);
+}
+.pf-name-wrap { min-width: 0; }
+.pf-name {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--warm-ink);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-source { font-size: 20px; color: #8A8F99; margin-top: 4px; }
+
+.profile-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+/* ★ 选择器要点名两个容器：整张战绩卡（.profile-box）**和**座位面板的信息档（.ss-info）。
+ * 两边共用同一段标记（game.js 的 profileBodyHtml），样式却一度只挂在 .profile-box 下 ——
+ * 于是信息档里的「19 胜 · 20 负 · 1 平」既没有字号也没有颜色，还带着浏览器默认的 p 边距，
+ * 视觉上和下面的「最近 5 局」糊在一起。改标记的人不会想到还要改这里。
+ * 规约：profileBodyHtml 里出现的每一块，样式必须同时覆盖 .profile-box 和 .ss-info。 */
+.profile-box p, .ss-info p { margin: 0; text-align: center; }  /* 覆盖 .modal-box p 的 24px 下边距 */
+.profile-box .pf-loading, .ss-info .pf-loading {
+  font-size: 24px; color: var(--text-muted); padding: 26px 0;
+}
+
+.pf-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pf-stat {
+  min-width: 0;
+  padding: 14px 6px 12px;
+  border-radius: 16px;
+  background: rgba(26, 29, 35, 0.05);
+  text-align: center;
+}
+.pf-stat b {
+  display: block;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: #2E2417;
+  font-variant-numeric: tabular-nums;
+}
+.pf-stat span { display: block; margin-top: 2px; font-size: 20px; color: var(--text-muted); }
+.pf-stat.up b { color: var(--cta-red); }      /* 涨红 */
+.pf-stat.down b { color: var(--brand-green); }    /* 跌绿（浅底上用深绿，保证对比度）*/
+.pf-stat.flat b { color: var(--text-muted); }
+
+.profile-box .pf-record, .ss-info .pf-record {
+  font-size: 20px; color: var(--text-muted); margin-top: 10px;
+}
+
+.pf-recent { margin-top: 16px; }
+.pf-recent-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 20px;
+  color: var(--text-muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(26, 29, 35, 0.10);
+}
+.pf-streak {
+  font-style: normal;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--cta-red-deep);
+  background: rgba(214, 40, 40, 0.10);
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+.pf-streak.down { color: var(--brand-green-deep); background: rgba(14, 140, 110, 0.12); }
+.pf-list { list-style: none; margin: 0; padding: 0; }
+.pf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 4px;
+  border-bottom: 1px solid rgba(26, 29, 35, 0.07);
+  font-size: 24px;
+}
+.pf-row:last-child { border-bottom: 0; }
+.pf-date { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.pf-net { font-weight: 800; font-variant-numeric: tabular-nums; }
+.pf-net.up { color: var(--cta-red); }
+.pf-net.down { color: var(--brand-green); }
+.pf-net.flat { color: var(--text-muted); }
+.profile-box .pf-recent-empty, .ss-info .pf-recent-empty {
+  font-size: 20px; color: var(--text-muted); padding: 12px 0;
+}
+
+.pf-empty { padding: 6px 0 2px; }
+.pf-empty svg { width: 116px; height: 116px; display: block; margin: 0 auto 4px; }
+.profile-box .pf-empty-title { font-size: 28px; font-weight: 700; color: var(--warm-ink); margin-bottom: 6px; }
+.profile-box .pf-empty-sub { font-size: 20px; color: var(--text-muted); line-height: 1.5; }
+.profile-box .pf-note, .ss-info .pf-note {
+  font-size: 20px; color: #9AA0AA; line-height: 1.5; margin-top: 14px;
+}
+
+/* 可点座位卡 / 结算行：给指针态（移动端点下去有 opacity 反馈，不依赖 hover）
+ * .gt-me 是右上角「我的座位」，行为和对手座位卡一样（点开战绩），反馈也要一样。 */
+.player-row,
+.settle-row,
+.gt-opp,
+.gt-me { cursor: pointer; }
+.player-row:active,
+.settle-row:active { opacity: 0.86; }
+.gt-opp:active,
+.gt-me:active { opacity: 0.86; }
+
+/* 战绩卡打开时阻止背景滚动（房间网格 / 结算列表 / 对手座位条都锁住） */
+#stage.modal-open .room-grid,
+#stage.modal-open .settle-body,
+#stage.modal-open .gt-opps {
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* ---------- 结算弹窗（暖白纸感） ---------- */
+#result-title {
+  align-self: center;
+  margin: 0 0 16px;
+  padding: 10px 40px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  color: var(--warm-ink);
+  font-size: 40px;
+  font-weight: 800;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+.result-group {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 12px;
+  position: relative;
+  animation: groupIn 0.3s cubic-bezier(0, 0, 0.2, 1) backwards;
+}
+@keyframes groupIn {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 24px;
+  color: var(--ink);
+  flex-wrap: wrap;
+}
+.result-head .slot-badge { width: 28px; height: 28px; font-size: 16px; }
+.result-head-label { font-weight: 800; }
+/* 计分加倍标记（十点半满点 / 飘三叶豹子）：纯样式，不占额外图片 */
+.result-head-x2 {
+  flex: 0 0 auto;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffe08a, #ffb347);
+  color: #7a3b00;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.result-head-winner { margin-left: auto; color: #6b7280; font-size: 20px; }
+.result-head-winner b { color: var(--cta-red); }
+
+.result-rows { overflow: visible; }
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin-bottom: 6px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center;
+}
+.result-row:last-child { margin-bottom: 0; }
+.result-cards { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
+.result-cards .mini-card { border-radius: 8px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25); }
+.result-cards.compact .mini-card + .mini-card { margin-left: -30px; }
+.result-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.result-row .rn {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 类型行：斗牛那行左边挤着 5 张迷你牌，行宽很紧 —— 拆成「类型 + 小徽标」两段各自不折行，
+ * 挤不下时整块换行，绝不出现「比」和牌面被拆到两行的断句。 */
+.result-row .rt {
+  font-size: 20px;
+  color: #6b7280;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.result-row .rt-type { white-space: nowrap; }
+/* 决胜牌：同点数/同牛型时实际比的那张（比 10♠ / 比 K♣），做成淡色小徽标不抢分数 */
+.result-row .rt-cmp {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: #8b93a1;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  padding: 1px 9px;
+  line-height: 1.5;
+}
+/* 赢家行是金底，浅灰底徽标会糊掉，换一层更浅的白底 */
+.result-row.win-row .rt-cmp { background: rgba(255, 255, 255, 0.55); color: #7a6a45; }
+.result-row .rd {
+  font-size: 32px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.result-row .rd.pos { color: var(--up-red); }
+.result-row .rd.neg { color: var(--down-green); }
+
+/* 赢家行：金底 + 3px 金描边 + 王冠（横向放大上限 1.04，避免分数被裁） */
+.result-row.win-row {
+  transform: scale(1.04, 1.08);
+  background: rgba(245, 193, 92, 0.18);
+  box-shadow: 0 0 0 3px var(--gold);
+}
+
+/* 大牌型斜纹横幅：独立一行、位于组标题行上方
+ * 说明（v0.1 修复）：旧版 position:absolute + top:-12px 会压住组标题左半（「十点半」只剩「十」）。
+ * 现改为正常流内的收缩胶囊（display:table 收缩宽度并独占一行），不与标题/赢家/x2 标记争空间。 */
+.result-banner {
+  display: table;
+  margin: 0 0 8px;
+  background: repeating-linear-gradient(45deg, var(--gold) 0 12px, var(--gold-light) 12px 24px);
+  color: var(--warm-ink);
+  font-size: 20px;
+  font-weight: 800;
+  padding: 5px 16px;
+  border-radius: 999px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+  animation: bannerIn 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes bannerIn {
+  from { transform: translateX(-60px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+/* 「本轮有组没进行」的说明。★ v103 起新局不会再出现（三组一定算完），
+ * 这一条只为**老战绩回放**留着：老记录的 groups 可能真的短。
+ * 字号按**设计 px** 写（本页在 750 宽设计空间里，会整体缩放），
+ * 和大列表里的辅助文字同一档（18），比正文小一档、比脚注大一档。 */
+.result-abort-note {
+  margin: 2px 0 6px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 18px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--gray-aux);
+}
+
+/* ---------------- 逐组结算的节奏（v89 §13.1 / §13.2） ----------------
+ * 一次结算里有 2~3 组，一幕一组自动推进。这里只有三样东西：
+ *   ① 进度条 —— 让「它自己会走」这件事看得见（不然玩家会一直找「下一步」按钮）；
+ *   ② 脚注   —— 「下一组 · 3 秒后自动」，说清楚还有没有下一幕；
+ *   ③ 交替卡 —— 第一轮结束时的过场。
+ * 进度条的时长从 --hold 读（JS 按 ?hold= 覆盖写在 #result-groups 上），
+ * 所以改节奏只要改一个数，不会出现「文案说 3 秒、条子跑 5 秒」。 */
+.result-seq-bar {
+  height: 4px;
+  margin: 4px 2px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.07);
+  overflow: hidden;
+}
+.result-seq-bar > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--gold), var(--gold-deep));
+  animation: seqBar var(--hold, 3000ms) linear forwards;
+}
+@keyframes seqBar {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+/* 减少动态：条子直接不跑（但**不**影响自动推进 —— 那是节奏不是动画） */
+@media (prefers-reduced-motion: reduce) {
+  .result-seq-bar > i { animation: none; opacity: 0.35; }
+}
+
+.result-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  /* .modal-card > .btn 那条 flex-shrink:0 管不到它（这里是 div 包着一颗按钮），
+   * 不补这一句的话，组卡一多、弹窗一挤，脚注会被压成一条缝 */
+  flex: 0 0 auto;
+}
+.result-next {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 20px;
+  line-height: 1.35;
+  color: var(--gray-aux);
+  /* 一行说完：折成两行会把按钮挤到下一行，而这一行出现的时间只有 3 秒，
+   * 位置一跳，眼睛就跟丢了 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ★ .btn-lg 是 width:100% —— 它在这个 flex 行里会把整行吃光，
+ * 左边的倒计时文字被压成 0 宽、只剩一个「下」字露在按钮边上（真机截图里就是这个样子）。
+ * 这里显式改回内容宽度。 */
+.result-foot .btn {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  margin: 0;
+}
+
+/* 横屏：高度是唯一的稀缺资源。
+ *
+ * 横屏 844×390 ≈ 750 设计高，而 .modal-card 的 max-height 是 82% ——
+ * 一个 4 人局的组卡（4 行 × ≈110 设计 px）加上标题和脚注正好顶到天花板，
+ * 第 4 家被裁在卡外，赢家行也常常落在折叠线以下（真机截图里就是这个样子）。
+ * 横屏的余量在**宽**不在高，所以这里只做两件事：把高度上限放到 94%、
+ * 把行内边距压一档。不做「横屏两列」——结算是一列从上往下读的，
+ * 分两列会让 +3 和 −1 的对照关系断掉。
+ * ★ 只在 4 行以上的大组才真的用到这些，3 人局还是用默认值：压得太狠会显得挤。 */
+/* ★ 一列放不下：一家一行 ≈150 设计 px（迷你牌 88×124 撑起来的），
+ * 4 家 = 600，而横屏给结算区的高度只有 ~435。所以横屏改成**两列** ——
+ * 横屏的余量在宽不在高，而每一行本身是自包含的（牌 + 名字 + 分数），
+ * 分两列不影响「谁赢谁输」的对照关系。
+ * 卡片同时放宽到 980 设计 px：两列各 470，5 张迷你牌的斗牛行也放得下。 */
+#stage.ls #result-modal .modal-card {
+  max-width: 980px;
+  max-height: 96%;
+  padding: 12px 18px 8px;
+}
+#stage.ls #result-modal .modal-card > h2 {
+  font-size: 30px;
+  margin: 0 0 8px;
+}
+#stage.ls .result-rows {
+  display: grid;
+  /* ★ minmax(0, 1fr) 而不是 1fr：`1fr` 的**最小**值是内容的最小宽度（auto），
+   * 而一行里挤着 5 张迷你牌 + 名字 + 分数，最小宽度远超一半 ——
+   * 两列会各自撑宽、整块从右边溢出卡片，分数被切掉（实测过，截图里就是这样）。
+   * 写 minmax(0, 1fr) 才允许列收缩到「一半」，超出的部分交给行内的省略。 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 6px;
+  align-content: start;
+}
+#stage.ls .result-group { padding: 10px; margin-bottom: 8px; }
+#stage.ls .result-head { margin-bottom: 6px; }
+#stage.ls .result-row { padding: 4px 8px; margin-bottom: 0; }
+#stage.ls .result-seq-bar { margin: 2px 2px 8px; }
+#stage.ls .rb-card { max-height: 94%; padding: 16px 22px 12px; }
+#stage.ls .rb-row { padding: 5px 10px; }
+
+/* ---------------- 轮次交替卡（v89 §13.2） ---------------- */
+.rb-card { width: min(560px, 86vw); }
+.rb-sub {
+  margin: 2px 0 14px;
+  font-size: 20px;
+  color: var(--gray-aux);
+}
+.rb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.rb-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.04);
+}
+/* 「我」这一行靠左边一条金线，不靠底色：底色和冠军行的金色撞色后
+ * 就分不清「我是这轮第一」还是「这是我」 */
+.rb-row.me {
+  box-shadow: inset 3px 0 0 var(--gold-deep);
+}
+.rb-av {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.rb-av .avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rb-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rb-delta {
+  flex: 0 0 auto;
+  font-size: 28px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.rb-next {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(245, 193, 92, 0.16);
+  font-size: 20px;
+  line-height: 1.45;
+  text-align: center;
+  color: #7a5a17;
+}
+/* 两行：先比什么 / 什么时候开始。各自一行，不靠自动折行 ——
+ * 自动折行会把「分数延续」单独剩在第二行，看着像话没说完。 */
+.rb-next-l { display: block; }
+
+/* ==================== 牌型特写（v83 R5） ====================
+ * 触发条件只有一个：结算页里**赢家的牌型**命中 game.js 的 BIG_FX
+ * （豹子 / 同花顺 / 牛牛 / 五花牛 / 10.5），此时该组挂 .is-big。
+ *
+ * 三样东西：横幅弹入、粒子从组中心爆开、一圈光晕扫过边框。
+ * 为什么全是 CSS 动画而不是 canvas / 逐帧脚本：
+ *   结算页一屏 3 组、每组 12 个粒子，正好是全页最卡的时刻（刚收完 WS 推送、
+ *   同时在跑分数滚动）。DOM + CSS 合成层比 JS 逐帧稳，而且
+ *   prefers-reduced-motion 那条全局规则能直接把它们一起关掉。
+ *
+ * 颜色由 JS 按牌型写在 --fx-color / --fx-ring 上（见 BIG_FX），
+ * 这里不硬编码任何牌型色 —— 否则改一个牌型要改两个文件。
+ */
+.result-group.is-big {
+  /* 边框用 --fx-ring（半透明）而不是 --fx-color（实色）：
+   * 实色边框看起来像「这一组被选中了」或「出错了」，而这里想表达的是
+   * 「这一手很漂亮」—— 半透明 + 外发光才是装饰的语气。 */
+  border-color: var(--fx-ring, rgba(245, 193, 92, 0.5));
+  box-shadow: 0 0 0 1px var(--fx-color, rgba(245, 193, 92, 0.5)),
+              0 0 26px -8px var(--fx-color, rgba(245, 193, 92, 0.6));
+}
+.result-group.is-big::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 0 0 var(--fx-ring, rgba(245, 193, 92, 0.5));
+  /* inherit：拿宿主元素上那个「逐组错峰」的 animation-delay（inline style），
+   * 否则第 3 组的光晕会在它滑进屏幕之前就在屏幕外闪完。 */
+  animation: fxHalo 1.15s ease-out both;
+  animation-delay: inherit;
+}
+@keyframes fxHalo {
+  0%   { box-shadow: 0 0 0 0 var(--fx-ring, rgba(245, 193, 92, 0.5)); opacity: 0; }
+  25%  { opacity: 1; }
+  100% { box-shadow: 0 0 0 18px rgba(0, 0, 0, 0); opacity: 0; }
+}
+
+.fx-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.fx-pt {
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  /* 10 设计 px ≈ 5 CSS px。6 设计 px 在 390 宽下只有 3px，
+   * 配合浅底低对比度就是「看不见的粒子」，与没有这个动画没区别。 */
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--fx-color, #b8862b);
+  opacity: 0;
+  animation: fxBurst 0.92s cubic-bezier(0.15, 0.75, 0.3, 1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes fxBurst {
+  0%   { opacity: 0; transform: rotate(var(--a)) translateY(0) scale(0.4); }
+  18%  { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(-74px) scale(1); }
+}
+
+/* 横屏（矮屏）时结算页更挤：粒子半径收一半，避免串到相邻那一组去。
+ * 不靠「反正有 overflow 裁掉」—— 结算弹窗是滚动容器，
+ * 溢出的粒子会把滚动条撑出来，看起来像卡片抖了一下。 */
+.ls .fx-pt {
+  animation-name: fxBurstTight;
+}
+@keyframes fxBurstTight {
+  0%   { opacity: 0; transform: rotate(var(--a)) translateY(0) scale(0.4); }
+  18%  { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(-38px) scale(1); }
+}
+
+/* ==================== 牌型特写幕（v98，原型 .fx 层移植） ====================
+ * 上面那三样（横幅 / 粒子 / 描边光环）是 v83 的「组内提示」，不是特写：
+ * 玩家投诉「看不到特效动画」说的是原型里那一整幕 —— 毡面中央换成一个
+ * 会转的金色 conic 光环、赢家的牌一张张砸下来、牌型大字从 2.3 倍缩进来、
+ * 三圈冲击波扩散、14 颗粒子飞出 170~305px，豹子和五花牛还把桌子震一下。
+ *
+ * 为什么是**独立一幕**而不是塞进结算卡：
+ *   原型 `S.fx ? '' : plaqueHTML(SC, g)` —— 有特写时中央那块牌位是被顶掉的，
+ *   特写和结算卡不同屏。所以这里在结算卡出现**之前**播，播完再画卡，
+ *   结算卡的 3 秒阅读时间一秒不少。盖在卡上面播的话，3 秒里 1.7 秒被遮住，
+ *   玩家还没看清分数就自动翻页了。
+ *
+ * 尺寸全部按 750 设计 px 写（和原型同一套数字），由 #stage 整体缩放：
+ * 光环 920、粒子半径 170~305、大字 108、牌宽 104/94/84。
+ */
+.pat-fx {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  z-index: 52;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 点一下跳过。原型是自动播放的演示页，线上是「一局要放 3~5 次」的游戏，
+   * 必须有出口 —— 否则连出两次五花牛就等于强制看 3.4 秒。 */
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pat-fx.hidden { display: none; }
+.pat-fx.is-out { animation: patFadeOut 0.22s ease-out both; }
+@keyframes patFadeOut { to { opacity: 0; } }
+
+/* 幕布：中间透、四周沉。不做成纯黑遮罩 —— 桌子还在后面，特写是「打在桌上的一束光」，
+ * 全黑就变成了另一个页面。
+ *
+ * ★ 特写播放时结算卡是**透明**的（.is-hero，见下面的规则），所以这里只需要压住牌桌：
+ *   #FFF7E8 的暖白卡如果透出来，会变成一大片比毡面亮两档的灰绿，
+ *   边界清清楚楚，整幕看起来像「贴了一张半透明白纸」。
+ *   干脆不让它透 —— 卡还在 DOM 里（探针、无障碍、点击区域全都不受影响），
+ *   只是 opacity:0，幕布收起时再淡入。
+ */
+.pat-scrim {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  background: radial-gradient(circle at 50% 46%,
+    rgba(4, 26, 18, 0.55) 0%,
+    rgba(4, 22, 16, 0.84) 58%,
+    rgba(2, 12, 9, 0.93) 100%);
+  animation: patScrimIn 0.32s ease-out both;
+}
+@keyframes patScrimIn { from { opacity: 0; } to { opacity: 1; } }
+
+.pat-core {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+/* 震屏只在豹子 / 五花牛：原型里也只有这两个 kind 挂 .felt.shake。
+ * 震的是整块构图（光环+牌+大字），因为线上这一层已经盖住了桌子 ——
+ * 震桌子在幕布后面看不出来。幅度与原型一致的 7/6/4/3 px。 */
+.pat-fx.is-shake .pat-core { animation: patShake 0.4s 2; }
+@keyframes patShake {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-7px, 4px); }
+  40% { transform: translate(6px, -5px); }
+  60% { transform: translate(-4px, -3px); }
+  80% { transform: translate(3px, 4px); }
+}
+
+/* 旋转光环：conic 扇形 + 径向蒙版掏空中心，只剩一圈转动的光齿。
+ * 用 mask 而不是 `ring` 图片，是因为它要跟着 750 设计宽整体缩放 ——
+ * 位图在 2x / 3x 屏上会糊，conic 不会。
+ * ★ v104 兼容：conic-gradient 要 Chrome 69 / Safari 12.1，而本项目声明底线更低。
+ *   老内核会整条丢弃 —— 所以每条规则前面先给一层纯色底：
+ *   降级成「静止的一圈暖光」而不是「什么都没有」。装饰而已，不成块、不报错。 */
+.pat-halo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 920px;
+  height: 920px;
+  margin: -460px 0 0 -460px;
+  border-radius: 50%;
+  background: rgba(245, 193, 92, 0.30);
+  background: conic-gradient(from 0deg,
+    rgba(245, 193, 92, 0) 0 6%, rgba(245, 193, 92, 0.55) 9%, rgba(245, 193, 92, 0) 13% 25%,
+    rgba(245, 193, 92, 0.55) 28%, rgba(245, 193, 92, 0) 32% 50%,
+    rgba(245, 193, 92, 0.55) 53%, rgba(245, 193, 92, 0) 57% 75%,
+    rgba(245, 193, 92, 0.55) 78%, rgba(245, 193, 92, 0) 82%);
+  -webkit-mask: radial-gradient(circle, transparent 26%, #000 44%, transparent 70%);
+  mask: radial-gradient(circle, transparent 26%, #000 44%, transparent 70%);
+  animation: patSpin 7s linear infinite;
+}
+@keyframes patSpin { to { transform: rotate(360deg); } }
+/* 豹子：红金。五花牛：紫金。其余（牛牛 / 10.5）走默认金。
+ * 三套色只覆盖 halo 与 lbl —— 粒子颜色由 JS 按 kind 写在 --pc 上，
+ * 因为同一幕里粒子是交错两色的，CSS 一条规则表达不了。 */
+.pat-fx[data-kind="bz"] .pat-halo {
+  background: rgba(255, 100, 70, 0.32);
+  background: conic-gradient(from 0deg,
+    rgba(255, 90, 60, 0) 0 5%, rgba(255, 120, 80, 0.6) 8%, rgba(255, 90, 60, 0) 12% 24%,
+    rgba(245, 193, 92, 0.6) 27%, rgba(255, 90, 60, 0) 31% 49%,
+    rgba(255, 120, 80, 0.6) 52%, rgba(255, 90, 60, 0) 56% 74%,
+    rgba(245, 193, 92, 0.6) 77%, rgba(255, 90, 60, 0) 81%);
+}
+.pat-fx[data-kind="wh"] .pat-halo {
+  background: rgba(214, 164, 255, 0.30);
+  background: conic-gradient(from 0deg,
+    rgba(200, 140, 255, 0) 0 5%, rgba(214, 164, 255, 0.62) 8%, rgba(200, 140, 255, 0) 12% 24%,
+    rgba(255, 214, 120, 0.62) 27%, rgba(200, 140, 255, 0) 31% 49%,
+    rgba(214, 164, 255, 0.62) 52%, rgba(200, 140, 255, 0) 56% 74%,
+    rgba(255, 214, 120, 0.62) 77%, rgba(200, 140, 255, 0) 81%);
+}
+
+/* 三道冲击波：0 / 0.14 / 0.28 秒依次扩散到 5.2 倍并消失 */
+.pat-wave {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 160px;
+  height: 160px;
+  margin: -80px 0 0 -80px;
+  border-radius: 50%;
+  border: 3px solid rgba(245, 193, 92, 0.8);
+  animation: patWave 0.95s ease-out both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes patWave {
+  from { opacity: 0.9; transform: scale(0.22); }
+  to   { opacity: 0;   transform: scale(5.2); }
+}
+
+/* 14 颗粒子：角度 --a、半径 --r、延迟 --d、颜色 --pc 全由 JS 写死在这一个 <i> 上。
+ * 原型用的是 `translate(0, calc(-1 * var(--r)))` 的写法 —— 半径随角度旋转，
+ * 所以每一颗都是「沿自己那条射线飞出去」，不是绕圈。 */
+.pat-pt {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: var(--pc, #ffe08a);
+  animation: patBurst 1.05s ease-out both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes patBurst {
+  0%   { opacity: 0; transform: rotate(var(--a)) translate(0, 0) scale(0.3); }
+  14%  { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--a)) translate(0, calc(-1 * var(--r))) scale(1); }
+}
+
+/* 赢家的牌重新画一遍、放大：104 / 94 / 84 宽，逐张 0.09s 错峰从 -110px 砸下来。
+ * 不复用结算行里的迷你牌 —— 那一套是 88×124 的「明细尺寸」，
+ * 特写要的是「牌很大、看得清花色」。 */
+.pat-cards {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.pat-cd {
+  position: relative;
+  animation: patCardDrop 0.42s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+  animation-delay: var(--d, 0s);
+}
+@keyframes patCardDrop {
+  from { opacity: 0; transform: translateY(-110px) rotate(-7deg) scale(1.24); }
+  to   { opacity: 1; transform: none; }
+}
+/* 牛牛：把「凑成 10 的三张」圈出来。这是四种特写里唯一的解释性动画 ——
+ * 豹子 / 五花牛 / 10.5 一眼就懂，牛牛不圈的话没人看得出凭什么赢。 */
+.pat-cd.is-mk {
+  box-shadow: 0 0 0 3px rgba(245, 193, 92, 0.95), 0 0 30px rgba(245, 193, 92, 0.7);
+  border-radius: 11px;
+}
+.pat-mkb {
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffe8a8, #f5c15c);
+  font-size: 16px;
+  font-weight: 800;
+  color: #3a2a00;
+  white-space: nowrap;
+}
+
+/* 牌型大字：108px + 3px 描边，从 2.3 倍缩进来（原型 lblIn）。
+ * 描边必须用 -webkit-text-stroke：光靠 text-shadow 在深色毡面上会糊成一团。 */
+.pat-lbl {
+  position: relative;
+  z-index: 2;
+  font-size: 108px;
+  font-weight: 900;
+  letter-spacing: 10px;
+  line-height: 1;
+  color: #ffe08a;
+  -webkit-text-stroke: 3px #6b3e06;
+  text-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+  animation: patLblIn 0.52s 0.2s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+/* 10.5 只有 4 个字符但其中两个是数字：按 108px 会顶到 560 宽，
+ * 和 5 张牌（468）不同轴，缩一档让上下两块等宽。 */
+.pat-fx[data-kind="jh"] .pat-lbl { font-size: 96px; letter-spacing: 6px; }
+.pat-fx[data-kind="bz"] .pat-lbl { color: #ffc0ac; -webkit-text-stroke-color: #5c1208; }
+.pat-fx[data-kind="wh"] .pat-lbl { color: #f3d7ff; -webkit-text-stroke-color: #4a1e6b; }
+@keyframes patLblIn {
+  from { opacity: 0; transform: scale(2.3) rotate(-7deg); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 系统开了「减少动态效果」：整套特写按静态收尾（动画 0 时长 = 直接到终态），
+ * JS 那边还会直接跳过这一幕。两道保险都要 —— CSS 单独兜底时，
+ * 玩家仍然要等 1.6 秒的空白幕布。 */
+@media (prefers-reduced-motion: reduce) {
+  .pat-halo { animation: none; }
+  .pat-wave, .pat-pt, .pat-cd, .pat-lbl, .pat-core { animation-duration: 0.001s; }
+  .pat-fx.is-shake .pat-core { animation: none; }
+}
+
+/* 特写播放时把结算卡「收起来」——但不是收起来，是让它透明。
+ *
+ * 为什么不 hideModalEl：
+ *   一幕一组时会 2~3 次/轮地「关掉 → 再打开」，一张白卡瞬间消失又回来，
+ *   比任何动画都更抢眼；而且探针/无障碍看到的是「结算弹窗反复开关」。
+ * 为什么不直接让幕布更黑去压住它：
+ *   幕布要压的是 #FFF7E8（255），毡面只有 ~15 —— 为了把白卡压到和毡面一档，
+ *   幕布得 0.95+，那桌子就彻底看不见了，「打在桌上的一束光」也就不存在了。
+ * 所以：卡还在 DOM 里（布局、可点击区域、读屏文本一样不少），只是 opacity 0，
+ * 幕布收起时用 0.22s 淡回来 —— 和幕布的淡出是同一个 0.22s，正好交叉。 */
+#result-modal .modal-card { transition: opacity 0.22s ease-out; }
+#result-modal.is-hero .modal-card { opacity: 0; }
+
+/* 分数飞字：涨红（加分）、跌绿（减分） */
+@keyframes floatUpPos {
+  0%   { transform: translateY(0) scale(1); opacity: 1; color: var(--gold-light); }
+  30%  { color: var(--up-red); }
+  100% { transform: translateY(-46px) scale(1.25); opacity: 0; color: var(--up-red); }
+}
+@keyframes floatUpNeg {
+  0%   { transform: translateY(0) scale(1); opacity: 1; color: var(--gold-light); }
+  30%  { color: var(--down-green); }
+  100% { transform: translateY(-46px) scale(1.25); opacity: 0; color: var(--down-green); }
+}
+.result-row .rd.fp { animation: floatUpPos 0.5s cubic-bezier(0, 0, 0.2, 1); }
+.result-row .rd.fn { animation: floatUpNeg 0.5s cubic-bezier(0, 0, 0.2, 1); }
+
+/* 页面转场 */
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.screen.enter { animation: slideInRight 0.3s cubic-bezier(0, 0, 0.2, 1); }
+
+/* 涨红跌绿（积分语义） */
+.pos { color: var(--up-red); }
+.neg { color: var(--down-green); }
+
+/* ---------- 结束页 ---------- */
+/* 列表区撑满剩余高度，但内容**垂直居中**。
+ * 以前是 flex:1 且默认从顶部排，1 到 3 人的结算页下面会空出一大块，
+ * 按钮被推到屏幕最底，看起来像「页面没渲染完」。 */
+.settle-body {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  /* 用 auto 外边距做「内容不多时垂直居中」，而不是 justify-content: center ——
+   * 后者在内容超过容器时会把顶部裁掉且滚不回来（flex 居中的经典坑）。
+   * auto 外边距在空间不足时会自动收成 0，永远从顶部开始。 */
+}
+/* 内容整体居中：外层 flex，内层用 auto 上下外边距。
+ * 不用 justify-content: center —— 那个在内容超高时会把顶部裁掉且滚不回来。 */
+.settle-inner {
+  width: 100%;
+  margin: auto 0;
+}
+.settle-list { width: 100%; }
+.settle-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 132px 92px;
+  column-gap: 16px;
+  align-items: center;
+  /* 右边距比左边宽一档（30 vs 18）：尾部箭头（.settle-go）要住在这块留白里。 */
+  padding: 18px 30px 18px 18px;
+  margin-bottom: 12px;
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 16px;
+  /* 尾部箭头（.settle-go）是绝对定位的：把它塞进 grid 会多出一列，
+   * 名字列被挤窄 16px —— 而这两行本来就是按当前列宽调过省略号位置的。
+   * 绝对定位的子元素不参与 grid 排布，加它等于零成本。 */
+  position: relative;
+  animation: settleIn 0.3s cubic-bezier(0, 0, 0.2, 1) backwards;
+}
+@keyframes settleIn {
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+/* 「我」的那一行：和排行榜 .rank-row.is-me 用同一套语言 ——
+ * 左侧金色竖条 + 名字变金 + 一枚「我」胶囊。
+ * 以前这里只有一圈金色描边，而冠军行本身就是金色渐变底，两种金挤在一起，
+ * 结果是「到底哪一行是我」看不出来（这正是用户报的那个问题）。 */
+.settle-row.me {
+  border-color: rgba(245, 193, 92, 0.55);
+  background: rgba(245, 193, 92, 0.10);
+  box-shadow: inset 6px 0 0 var(--gold);
+}
+.settle-row.me .settle-name { color: var(--gold); }
+.settle-row.champion.me {
+  background: linear-gradient(180deg, rgba(245, 193, 92, 0.42), rgba(232, 163, 61, 0.20));
+}
+/* 胶囊在名字后面，和排行榜的 .rank-you 保持一致的字号/圆角/配色 */
+.settle-you {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: rgba(245, 193, 92, 0.18);
+  border: 1px solid rgba(245, 193, 92, 0.5);
+  color: var(--gold);
+  font-size: 20px;
+  font-style: normal;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.settle-row.champion {
+  grid-template-columns: 72px minmax(0, 1fr) 132px 104px;
+  background: linear-gradient(180deg, rgba(245, 193, 92, 0.35), rgba(232, 163, 61, 0.18));
+  border-color: rgba(245, 193, 92, 0.8);
+  padding: 22px 30px 22px 18px;
+}
+.settle-rank {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: var(--warm-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 800;
+  flex-shrink: 0;
+  /* 名次角标（.settle-pos）要挂在这个圆上，所以基准点在这儿。
+   * 头像图（.avatar-img）是 100%×100% 的 img，会把 gold 底完全盖住 ——
+   * 底色只在「AI 机器人」和「Avatar 模块没加载」这两种文字头像时才露出来。 */
+  position: relative;
+  /* 和牌桌座位（.avatar）、玩家档案（.pf-avatar）同一圈浅白描边：
+   * 结算页上一排头像如果完全没有描边，会像贴在底色上的贴纸而不是座位。 */
+  border: 2px solid rgba(255, 255, 255, 0.28);
+}
+/* AI 那一颗：和牌桌座位（.avatar.is-bot）逐字对齐 —— 深蓝底 + 虚线描边。
+ * 结算页如果给 AI 一颗金色实心圆，它在牌桌上是深蓝虚线圆，同一局里同一个人
+ * 两副面孔，正是「每行都补头像」想要消灭的那种不一致。 */
+.settle-rank.is-bot {
+  background: #33415c;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.5);
+  font-size: 30px;
+}
+/* 冠军那颗给金圈：这一行的底色本身就是金色渐变，白描边会被吃掉。 */
+.settle-rank.champion-rank {
+  width: 72px;
+  height: 72px;
+  font-size: 32px;
+  color: #fff;
+  position: relative;
+  border-color: rgba(255, 255, 255, 0.85);
+}
+.settle-rank.champion-rank .crown {
+  position: absolute;
+  top: -16px;
+  font-size: 24px;
+}
+/* 名次角标：第 2 名开始才有（第 1 名头顶是皇冠）。
+ * 深底 + 白字这一套在**两种底上都能读**：结算页是墨绿，上一局弹窗是暖白纸 ——
+ * 同一份结构要同时落在两个底色上，所以不能选金色（金色在暖白上等于没有）。 */
+.settle-pos {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(26, 29, 35, 0.88);
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 21px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+/* 弃局者那一行（v104）：沉到列表末尾、整行压暗、角标给一根横杠。
+ * 压暗不是装饰：只靠「排在最后」会被读成「他垫底」，而垫底是有名次的 ——这里有。 */
+.settle-row.is-abandoned { opacity: 0.62; }
+.settle-rank.is-gone {
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.82);
+}
+.settle-pos.is-out {
+  background: rgba(26, 29, 35, 0.7);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+/* 并列名次：数字前加一个「=」（电竞赛事里通用的并列写法）。
+ * 不直接写「并列」两个字：角标只有 24px 高，两个字会溢出圆角。 */
+.settle-pos.is-tie::before { content: '='; margin-right: 1px; opacity: 0.75; }
+/* 并列冠军的「并列」胶囊：和「我」胶囊同一套尺寸，但用中性色 ——
+ * 冠军行底色本身就是金渐变，金色胶囊在上面等于没有。 */
+.settle-tie {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  color: #fff;
+  font-size: 20px;
+  font-style: normal;
+  font-weight: 700;
+  vertical-align: middle;
+}
+/* 尾部箭头：这一行是可点的（点了看这一把的过程）。
+ * 压在右内边距里，不占列宽；pointer-events:none 让点击落到行上 ——
+ * 箭头自己吃事件的话，正对着它点会「什么都没发生」。 */
+.settle-go {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  /* 整块落在行的右留白（30px）里：净胜那列的右边界在距行右 31 处，
+   * 箭头占 18~6，中间留 13 —— 净胜是 32~48px 的大字，
+   * 箭头只要贴上去就会被读成「负号」或者干脆糊成一片（截图里真的会）。 */
+  width: 12px;
+  font-size: 22px;
+  line-height: 1;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.26);
+  pointer-events: none;
+}
+/* 桌面端（有 hover 的设备）才给悬停反馈：触摸屏上 :hover 会粘住不散。 */
+@media (hover: hover) {
+  .settle-row { transition: border-color 0.15s, background-color 0.15s; }
+  .settle-row:hover { border-color: rgba(255, 255, 255, 0.26); }
+  .settle-row:hover .settle-go { color: rgba(255, 255, 255, 0.55); }
+}
+.settle-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 28px; }
+.settle-score { text-align: right; font-variant-numeric: tabular-nums; font-size: 28px; color: var(--gold); }
+.settle-net { min-width: 0; text-align: right; font-variant-numeric: tabular-nums; font-size: 32px; font-weight: 800; }
+/* 净胜三态，和战绩卡（.rp-net）/ 排行榜（.rank-net）/ 玩家档案（.pf-net）同一套。
+ * 原来是 .pos / .neg 两态，把 0 归进 pos —— 净胜 0 显示成红色，看着像赢了；
+ * 而同一个「净胜 0」在排行榜是中性灰。同一份数据两套说法，只能有一个对。 */
+.settle-net.up { color: var(--up-red); }
+.settle-net.down { color: var(--down-green); }
+.settle-net.flat { color: var(--gray-aux); }
+.settle-row.champion .settle-net { font-size: 48px; }
+.settle-tip { font-size: 20px; color: var(--gray-aux); text-align: center; margin: 10px 0; line-height: 1.5; }
+/* 含 AI 的局：这一句是「结论」不是「公式」，所以用金色提到前面一档。
+ * 玩家看完结算就要判断「我这把算不算战绩」，漏掉它只会以为数据丢了。 */
+.settle-ai-note {
+  margin: 2px 0 10px;
+  font-size: 20px;
+  text-align: center;
+  color: var(--gold);
+}
+.settle-wait { font-size: 24px; color: var(--gray-aux); }
+
+/* ---------- toast ---------- */
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 180px;
+  transform: translateX(-50%);
+  max-width: 640px;
+  padding: 16px 30px;
+  background: rgba(0, 0, 0, 0.85);
+  color: var(--gold);
+  font-size: 24px;
+  border-radius: 24px;
+  z-index: 80;
+  text-align: center;
+  /* 它只是通知，不是控件 —— 必须让点击穿过去。
+   * 首页底部正好压在「玩法规则」四宫格和「添加到桌面」条上
+   * （1920×947 实测盖住「玩法规则」按钮左半边），
+   * 不加这条就会在提示出现的 1.8~2.6 秒里点不动下面的按钮。
+   * 和手牌容器（§.hand 外层）是同一条道理：容器 none，只有真按钮回 auto。 */
+  pointer-events: none;
+}
+/* 「这句话有分量」的语气。
+ * 用 inset 描边 + 深色底而不是纯红底：牌桌是深绿毡面，纯红块跳得像系统弹窗，
+ * 与 .slot / .btn 那一套「细描边 + 低饱和底」的语言不一致。
+ *
+ * 只有 warn 一种：第一轮的提示现在只在「这组会输」时出现。
+ * 原来还有个 .hint（琥珀色，用于「没爆但没凑到 10.5」）——
+ * 那一档判定已经删了（见 stateMachine 的 tenHalfAdvice），
+ * 语气跟着一起删，免得留着一条没人用的样式让人以为还有这种提示。 */
+.toast.warn {
+  color: #FFE7E7;
+  background: rgba(52, 12, 12, 0.94);
+  box-shadow: inset 0 0 0 2px rgba(255, 93, 93, 0.55), 0 12px 30px rgba(0, 0, 0, 0.42);
+}
+
+/* ============================================================
+   全机型适配（竖屏 320~440 / 横屏 / 桌面）
+   ============================================================ */
+
+.wide-stage .screen > *:not(.home-inner) { max-width: 750px; }
+
+.gt-sub,
+.room-code-box,
+.room-hint,
+.player-name,
+.settle-name,
+.gt-opp,
+.settle-wait,
+.opp-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* `.hand-status` 不在这组里，单独给它换行的规矩。
+ *
+ * 它和上面那几个不是一个量级的东西：那几个是「一行里的一格」（昵称、房间号），
+ * 长了该省略号；而 hand-status 是**手牌区中央唯一的一句话**，
+ * 它要说的是「为什么现在不能打牌」—— 等待、已放完、超时弃权。
+ *
+ * 被套上 nowrap + ellipsis 之后，长文案的结局是两端直接被切掉：
+ * 等待态那句带「（对方掉线，重连中或本局将结束）」的版本，
+ * 在 390 宽下变成「…对方掉线，重连中或本局将结」，读起来像界面坏了。
+ * 而且它是 flex 容器，`text-overflow: ellipsis` 在 flex 容器上根本不会生效
+ * （省略号要求块级盒子里有溢出的行内文本），所以连「…」都不会出现。
+ *
+ * 这里让它换行：文案最多两行，手牌区 268 设计高完全放得下。 */
+.hand-status {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  padding: 0 40px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.screen > .title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.modal-card { overflow: hidden; }
+.modal-card > h2, .modal-card > h3 { flex-shrink: 0; }
+.modal-card > .btn { flex-shrink: 0; margin-top: 8px; }
+#result-groups, .rules-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* flex 子项的 `min-width` 默认是 `auto`（不许比内容窄）。
+   * 结算行是一串不可换行的整体（5 张迷你牌 + 名字 + 分数 + 净胜），
+   * 名字长一点、屏幕窄一点，这一列就会被顶得比弹窗还宽 —— 而父级是
+   * `overflow: hidden`，表现出来不是滚动条，是**右边被切掉一条**，
+   * 而且只有真机截图才看得出来。这里显式允许收缩，超出的部分交给
+   * 行内自己的省略/换行处理。 */
+  min-width: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- 短屏压缩（判据 = 设计像素高，走 .compact-v） ----------
+ *
+ * 原来这里是两组媒体查询：`@media (max-width: 360px)` 和
+ * `@media (max-height: 620px) and (orientation: portrait)`。两处判据都读错了对象。
+ *
+ * (1) 竖屏下 #stage 的宽度恒等于 CONFIG.DESIGN_WIDTH = 750（game.js 的 isPortraitPhone
+ *     分支只改缩放、不改舞台宽），所以「视口宽 320」和「视口宽 430」拿到的是**同一套
+ *     设计空间排版**。320 上会横向溢出的地方，430 上一样会溢出 —— 用窄屏媒体查询修
+ *     横向溢出在逻辑上不成立，那 9 条规则（收窄列宽 + 缩小字号）唯一净效果，是把缩放
+ *     已经最小的 320 再缩小一档字号，等于双重缩小。实测 .gt-me-label 在 320 上只有
+ *     6.0 CSS px，390 上有 7.8，差值全由这里造成。
+ * (2) 纵向预算的真实尺度是「视口高 / 缩放」= 设计像素高，不是视口 CSS 像素高。
+ *     320×568 → 1331 设计px，360×640 → 1333 设计px，两者只差 2px，旧判据
+ *     （568 < 620 命中、640 < 620 不命中）却把它们分成了两套规则。
+ *     game.js 早就用 stageH < 1500 算出正确分组并挂了 .compact-v，这里统一跟它走。
+ *
+ * `:not(.wide-stage)` 排除横屏：横屏 stageH 恒为 1440 也 < 1500，但那一档有自己的
+ * .wide-stage 规则（见下），不该被这里的间距压缩叠加。
+ *
+ * 字号一律不再缩：这些元素在 320 上的物理字号本来就最小（缩放 0.4267 全场景最低），
+ * 再缩就低于可读下限。间距压缩保留，它换来的纵向空间才是三槽 + 手牌 + 按钮放得下的
+ * 真正原因（实测 320×568 三槽 clippedPx 全为 0）。 */
+.compact-v:not(.wide-stage) .screen { padding-top: calc(var(--sa-top, 0px) + 24px); padding-bottom: calc(var(--sa-bottom, 0px) + 24px); }
+.compact-v:not(.wide-stage) #screen-game { padding-bottom: calc(var(--sa-bottom, 0px) + 24px); }
+.compact-v:not(.wide-stage) .game-top { padding: 8px 12px 8px; margin-bottom: 8px; border-radius: 20px; }
+.compact-v:not(.wide-stage) .gt-opps { margin-top: 8px; padding-top: 8px; }
+.compact-v:not(.wide-stage) .gt-opp { min-width: 136px; padding: 3px 9px 3px 3px; }
+.compact-v:not(.wide-stage) .slot { padding: 6px 12px 5px; }
+.compact-v:not(.wide-stage) .game-bottom { padding-top: 8px; gap: 8px; }
+/* 头像字号与头像尺寸是耦合的：38px 方框里放两字姓名首字母，字号必须跟着缩，
+   否则字撑出圆形。这是唯一保留的字号收缩，且只影响头像。 */
+.compact-v:not(.wide-stage) .opp-avatar { width: 38px; height: 38px; flex: 0 0 38px; font-size: 16px; }
+.compact-v:not(.wide-stage) .opp-avatar.is-bot { font-size: 16px; }
+
+/* 横屏：竖排内容在缩小的舞台上仍可读 */
+.wide-stage .gt-phase { font-size: 32px; }
+.wide-stage .gt-me .gt-score { font-size: 48px; }
+.wide-stage .opp-name { font-size: 24px; }
+.wide-stage .opp-score { font-size: 28px; }
+.wide-stage .slot-label { font-size: 24px; }
+
+/* 横屏：设计高度压到 1440 且按钮受 44px 物理热区约束（tap-min 放大），
+   牌面显示尺寸按 0.8 倍缩放（Canvas 仍按 2x 高清渲染，仅显示缩小），保证三槽 + 手牌完整可见 */
+.wide-stage #screen-game .hand { height: 224px; }
+.wide-stage #screen-game .hand .card-wrap { width: 134px !important; height: 189px !important; }
+.wide-stage #screen-game .hand .card-wrap .card { width: 100% !important; height: 100% !important; }
+/* 注意：这里原来还有一条 `.wide-stage #screen-game .card-box { width:96px !important; height:134px !important }`
+ * 把组槽里的牌钉死在 96×134。它是「尺寸写死」时代的遗留，会盖掉 JS 按可用高算出来的值
+ * （横屏实测 JS 算 109×153、CSS 强制 96×134），等于两处来源各说各话。
+ * 现在组槽尺寸统一由 js/slotLayout.js 决定，这条删掉；手牌区不参与自适应，仍保留上面的写死值。 */
+.wide-stage .hand-status { font-size: 32px; }
+.wide-stage .result-row .rn { font-size: 28px; }
+.wide-stage .result-row .rt { font-size: 24px; }
+.wide-stage .result-head { font-size: 28px; }
+.wide-stage .settle-name, .wide-stage .settle-score, .wide-stage .settle-net { font-size: 28px; }
+.wide-stage .settle-row.champion .settle-net { font-size: 40px; }
+
+/* 横屏：房间页/结束页竖排按钮改成两列排布 */
+.wide-stage .room-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.wide-stage .room-actions .btn { flex: 1 1 40%; min-width: 0; }
+.wide-stage .room-actions .btn-lg { width: auto; }
+.wide-stage .room-actions .ghost-row { width: 100%; }
+.wide-stage .room-hint { margin: 4px 0; }
+
+/* ==========================================================================
+ * 横屏版式（.ls）：画布 1624×750
+ *
+ * 横屏不是「把竖屏缩小」，是换一版版式 —— 宽度才是横屏多出来的东西。
+ * 舞台由 game.js 设成 1624×750 等比居中（scale 与竖屏同档 ≈0.52），
+ * 这里只负责把内容摆成两栏：左边组槽、右边手牌。
+ *
+ * 为什么不用 .wide-stage：那条规则把内容限宽 750 设计像素、居中在宽画布里，
+ * 用在横屏上就是把牌桌又缩回一根窄柱（这正是 REVIEW 21.3 量到的问题）。
+ * 所以 resize() 里横屏只挂 .ls，不挂 .wide-stage。
+ * ======================================================================== */
+
+/* 单栏屏（首页/房间/结束/战绩/排行榜/登录）：限宽居中。
+ * 不限宽的话它们会摊满 1624 设计像素，一行文字横跨整屏，读起来要转头。 */
+.ls .screen > *:not(.home-inner) { max-width: 820px; }
+
+/* 横屏的弹窗纵向预算只有 750 设计像素（.modal-card 上限 82% ≈ 615），
+ * 而 .guide-body 写死 min-height: 616 —— 光是正文就超过整张卡的上限。
+ * 后果不是「要滚动」，是卡片 overflow:hidden 把「下一步」直接裁掉：
+ * 实测 844×390 下 cardOverflow = 291、nextBtn 的 bottom 落在 429（视口 390），
+ * 新玩家横屏第一次进来只能点「跳过」。
+ * 竖屏不用管：stageH 1623 时 82% ≈ 1331，装得下；短屏 360×640 也还有 1093。 */
+.ls .guide-body { min-height: 0; }
+
+/* 可滚的长正文：底部 22px 渐隐，暗示「下面还有」。
+ * 类名由 game.js 的 syncScrollFade 维护（真能滚才加、滚到底就撤）——
+ * 常驻渐隐会把最后一行蒙住，那比不给提示更糟。 */
+.guide-body.scroll-fade,
+.rules-body.scroll-fade,
+.settle-body.scroll-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+
+/* 横屏最小可读字号 -----------------------------------------------------------------
+ *
+ * 尺寸是「设计 px × 缩放」，所以同一段文字在不同屏上物理大小不同：
+ *   1112×511 → 缩放 0.681，20 设计 px 渲染成 13.6 CSS px（够）
+ *    844×390 → 缩放 0.520，同样的 20 设计 px 只有 10.4 CSS px（看得见、读不动）
+ * 这正是「大屏横屏看着挺好、小屏横屏发糊」的来源，也是只在真机截图上才暴露的原因。
+ *
+ * 规则：正文级文字的实际渲染尺寸不低于 12 CSS px。
+ * 写成 max(设计值, 12/缩放) —— 比例一变自动跟着变，不需要为每档屏幕写死像素。
+ * 只抬**承载信息**的那几类（标签 / 提示 / 次要说明），
+ * 卡在固定尺寸徽章里的微字（.gt-timer、.opp-badge、.slot-progress 等）保持原样：
+ * 它们放进更大的字号会把胶囊撑破，收益也低。 */
+.ls { --ls-fs-floor: calc(12px / var(--ls-scale, 1)); }
+
+/* 横屏弹窗的纵向预算：82% 是竖屏时代的取值（1623 设计高 → 1331，怎么写都够）。
+ * 横屏画布只有 750，82% ≈ 615 设计像素，而引导正文一项就要 542，加上进度条与按钮
+ * 就顶不住 —— 实测正文字幕被切在半句上、只剩 325 CSS 的可视高度。
+ * 抬到 92%（≈690 设计像素）后引导能一次装下；规则这种长文仍然滚，靠底部渐隐提示。 */
+.ls .modal-card,
+.ls .modal-box { max-height: 92%; }
+
+/* 横屏引导：插画与正文并排，而不是上下叠。
+ * 叠着放时一屏的插画（约 190 CSS）+ 标题 + 两段正文要 542 设计像素，
+ * 而卡片上限抬到 92% 也只给到 392 —— 正文必然断在半句上。
+ * 并排之后高度取两者的最大值（≈260），一屏读完，不用滚，也就没有「渐隐猜谜」。 */
+.ls .guide-card { max-width: 1100px; padding: 20px 24px 14px; }
+.ls .guide-step {
+  display: grid;
+  /* 插画那一栏要放得下「1 张 / 2 张 / 3 张」三组牌并排：360 太窄，
+   * 第一组会被面板裁掉（实测只看到 2 张、3 张两组，还有一张牌漏到文字栏外面）。
+   * 500 设计像素是量出来的最小可用宽度。 */
+  grid-template-columns: 500px minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  column-gap: 28px;
+  align-content: center;
+}
+.ls .guide-step .guide-art { grid-column: 1; grid-row: 1 / span 3; align-self: center; margin: 0; }
+.ls .guide-step h2 { grid-column: 2; grid-row: 1; margin: 0 0 10px; }
+.ls .guide-step p { grid-column: 2; grid-row: 2; margin: 0 0 8px; }
+.ls .guide-step p.guide-tip { grid-column: 2; grid-row: 3; margin: 0; }
+.ls .field label,
+.ls .auth-field label,
+.ls .entry-label,
+.ls .slot-label,
+.ls .slot-hint,
+.ls .gt-sub,
+.ls .opp-name,
+.ls .settle-tip,
+.ls .settle-ai-note,
+.ls .rp-best-k,
+.ls .pf-stat span,
+.ls .rp-legend,
+.ls .rank-row .rank-meta {
+  font-size: max(20px, var(--ls-fs-floor));
+}
+/* 横屏小字保护清单 ------------------------------------------------------------
+ *
+ * 25 章立的「横屏正文不低于 12 CSS px」是一条**逐条点名**的规则：只有被写进
+ * 清单的选择器才受保护。26 章为了给「最近 10 局」腾高度压了一轮留白，几处
+ * 20 / 24 设计 px 的小字就留在保护范围外 —— 667×375 横屏实测只有 8.2~9.9
+ * CSS px，属于「看得见但读不清」。
+ *
+ * 按「元素自己的 font-size」收口，不是按父级：`<i>分</i>` 是典型 ——
+ * 父级 .rp-best-v 有 40 设计 px，单位却只有 20，只查父级永远查不出它。
+ *
+ * ★ 以后新增小字要一并加进这两组。probe-safearea 会量每个屏「最小的那段真文字」，
+ *   漏一个就红 —— 这张清单是穷举，不是抽样。
+ * ★ 写成 #stage.ls 是为了压过 records.css 里的 .compact-v 规则：
+ *   横屏手机 stageH 恒为 750，.compact-v 一定同时挂在 #stage 上。
+ */
+#stage.ls .rp-legend,
+#stage.ls .rp-glabel,
+#stage.ls .rp-people,
+#stage.ls .rp-best-v i,
+#stage.ls .slot-point,
+#stage.ls .player-status,
+#stage.ls .rp-ai-chip,
+#stage.ls .rp-row-ai { font-size: max(20px, var(--ls-fs-floor)); }
+
+#stage.ls .subtitle,
+#stage.ls .rp-note,
+#stage.ls .rp-sub,
+#stage.ls .rp-empty-sub,
+#stage.ls .rank-tip,
+#stage.ls .rp-sum-label,
+#stage.ls .rp-meta-item,
+#stage.ls .rp-ai-note,
+#stage.ls #rp-list-count,
+#stage.ls #room-hint,
+#stage.ls .player-score,
+#stage.ls .invite-txt,
+#stage.ls #btn-copy { font-size: max(24px, var(--ls-fs-floor)); }
+
+/* ---------------------------------------------------------------------------
+ * 首页 / 登录页：横屏改两栏（品牌在左，操作在右）
+ *
+ * 为什么必须改：这两屏是竖屏单列设计的，内容设计高约 1080，而横屏画布只有 750。
+ * #screen-home 虽然有 overflow-y:auto 兜底、不会真的丢内容，但实测 844×390 下
+ * 溢出 171 CSS px —— 静置时「加入房间」只剩上半截、规则/战绩/排行榜/账号
+ * 四个入口整排看不见，得先滑动才知道它们存在。入口屏不该是「要滑才发现」。
+ *
+ * 两栏之后：左列品牌（160 徽标 + 标题 + 副标题 ≈ 340 设计高），
+ * 右列操作（昵称 + 创建 + 加入 + 四入口 ≈ 480），都落在 750 以内，不用滚。
+ * ------------------------------------------------------------------------- */
+.ls #screen-home .home-inner {
+  width: 1180px;
+  max-width: none;
+  display: grid;
+  grid-template-columns: 480px minmax(0, 1fr);
+  column-gap: 90px;
+  align-content: center;
+  align-items: center;
+}
+.ls #screen-home .home-inner > .logo { grid-column: 1; grid-row: 1; margin-top: 0; justify-self: center; }
+.ls #screen-home .home-inner > .title { grid-column: 1; grid-row: 2; }
+.ls #screen-home .home-inner > .subtitle { grid-column: 1; grid-row: 3; margin-bottom: 0; }
+.ls #screen-home .home-inner > .field { grid-column: 2; grid-row: 1; }
+.ls #screen-home .home-inner > #btn-create { grid-column: 2; grid-row: 2; }
+.ls #screen-home .home-inner > .join-row { grid-column: 2; grid-row: 3; }
+.ls #screen-home .home-inner > .entry-links { grid-column: 2; grid-row: 4; max-width: none; }
+
+/* 登录页本来就分「品牌 / 卡片」两块，直接并排即可 */
+.ls #screen-auth .auth-inner {
+  width: 1180px;
+  max-width: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 80px;
+  align-content: center;
+  align-items: center;
+}
+.ls #screen-auth .auth-brand { grid-column: 1; }
+.ls #screen-auth .auth-card { grid-column: 2; margin-top: 0; }
+/* 底注是「这张表在干什么」的说明，必须贴在卡片下面。
+ * 不指定位置会被自动流放到第 2 行第 1 列 —— 实测跑到左下角，
+ * 离它解释的登录卡隔了半个屏幕。 */
+.ls #screen-auth .auth-note { grid-column: 2; grid-row: 2; }
+
+/* ---------------------------------------------------------------------------
+ * 战绩页 / 排行榜：横屏两栏，数字与流水各自滚动
+ *
+ * 预算是量出来的，不是估的（probe-landscape-screens 与 probe-records-cloud 实测）：
+ *   #rp-sum 205 + .rp-grid 107 + #rp-bests 109 + .rp-trend 125 = 546 设计像素，
+ *   而横屏滚动区只有 426 —— 单栏时整页一起滚，玩家在横屏**一条流水都看不到**，
+ *   要在 222 CSS px 的窗口里滑 2684 px 才能滑到列表。
+ * 拆两栏后：左列自己滚（546 内容 / 432 视口），右列列表自己滚（约 4~5 行可见）。
+ * ------------------------------------------------------------------------- */
+.ls #screen-records,
+.ls #screen-rank {
+  /* 顶/底都必须带上 --sa-*。
+   *
+   * 这两行原来写的是 `padding-top: 24px; padding-bottom: 40px` —— 一条简写把
+   * .screen 那套 `calc(--sa-top + 44) / calc(--sa-bottom + 120)` 整体替换掉了，
+   * 安全区跟着一起丢。横屏 844×390 上 40 设计 px = 21 CSS px，正好等于
+   * home indicator 的高度：页脚「清除记录」的下沿就压在它上面（真机反馈的「底部贴边」，
+   * 探针实测内容下沿 25 CSS px / 安全区 21 CSS px，只富余 4）。
+   * 现在底部 = 安全区 + 16（≈8 CSS px 余量），内容下沿回到 37 CSS px。
+   * 竖屏走的是 records.css 里 `padding: var(--sa-*)` 那一套，一直是对的 ——
+   * 所以这个 bug 只在横屏出现，不是「底部整体没铺满」。 */
+  padding-top: calc(var(--sa-top, 0px) + 16px);
+  padding-bottom: calc(var(--sa-bottom, 0px) + 16px);
+}
+/* 横屏标题栏压到 88：竖屏的 112 是「40 标题 + 上下留白」，
+ * 横屏这 24 设计像素直接决定「最近 10 局」能不能留在左栏里（见下面的趋势条）。
+ * 88 同时也是返回键的最小热区（--tap-min），不能再小。 */
+.ls .rp-nav { flex: 0 0 88px; height: 88px; }
+/* 上面那条「单栏屏限宽 820」是按「一行文字横跨 1624 太宽」写的，
+ * 但它也会命中 <main class="rp-scroll"> —— 战绩页两栏要在 1544 里分，
+ * 被限成 820 之后左列 620 + gap 40 只剩 160 给列表，表头文字直接竖排。
+ * 所以这两屏的滚动容器与页脚要放开到满宽。 */
+.ls #screen-records > .rp-scroll,
+.ls #screen-records > .rp-foot,
+.ls #screen-rank > .rp-scroll,
+.ls #screen-rank > .rp-foot,
+.ls #screen-rank > .rp-nav { max-width: none; }
+.ls #screen-records .rp-scroll {
+  overflow: hidden;
+  padding-top: 6px;
+  padding-bottom: 0;
+}
+.ls #records-data {
+  display: flex;
+  gap: 40px;
+  height: 100%;
+  min-height: 0;
+}
+/* 左列：数字自己滚。用 flex 而不是 grid —— grid 里「左列跨两行」会把第一行（表头）
+ * 按左列内容撑开，实测表头被顶到 208 设计像素、列表只剩 170，等于没改。 */
+.ls .rp-sumcol {
+  flex: 0 0 620px;
+  /* 必须显式 min-width:0：flex 项的 min-width 默认是 auto（= 内容的 min-content 宽），
+   * 左列里的趋势条/纪录格会把 min-content 撑到 1400+ 设计像素，flex-basis 620 根本不生效，
+   * 右列被挤成 60px、表头文字竖排 —— 实测就是这张截图。 */
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-width: none;
+}
+/* 底部 26px 渐隐只在**真的滚得动**时才挂（.is-scroll 由 game.js 的 syncSumcolFade 维护）。
+ * 这层渐隐原本是因为左列必然要滑、需要「下面还有」的提示；现在压完之后一屏装得下，
+ * 常驻渐隐就变成把最底下的「最近 10 局」方块洗掉半截 —— 那是内容，不是提示。
+ * 真溢出时（更窄的窗口／系统字号放大）它照样出现。 */
+.ls .rp-sumcol.is-scroll {
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(#000 calc(100% - 26px), transparent 100%);
+}
+.ls .rp-sumcol::-webkit-scrollbar { display: none; }
+.ls .rp-listcol {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 左栏压缩 + 「最近 10 局」保留 ------------------------------------------------
+ *
+ * 竖屏这块是一路往下排（汇总 205 + 胜负平 107 + 纪录 109 + 趋势 125 = 546 设计像素），
+ * 横屏可视只有约 480 —— 不压就必然要滑，而「每看一次战绩都要滑」是被报过的问题。
+ * 压的是留白和字号档位，不是内容：**趋势条一度被整块 display:none 掉**，
+ * 结果横屏没有最近 10 局、竖屏有，同一份数据两个朝向给的东西不一样，玩家当成 bug。
+ * 现在它的位置保住了，代价从别处抠：标题栏 112→88、汇总卡大数字 60→52、卡片留白收一档。
+ * 实测左栏 460 / 可视 478，余量 18 设计像素，仍然不用滑。
+ *
+ * ★ 下面这些必须写成 #stage.ls，不能只写 .ls：
+ *   横屏手机的 stageH 恒为 750（< 1500），.compact-v 因此一定也挂在 #stage 上，
+ *   而 records.css 里的 `.compact-v .rp-t` / `.rp-gnum` 等特异性与 `.ls .rp-t` 相同、
+ *   加载在后 —— 谁后加载谁赢，横屏这一套会被「短屏压缩」的竖屏数值悄悄盖掉。
+ *   实测被盖掉时：趋势方块 36 被撑回 46、`.rp-legend` 掉到 20 设计 px（低于横屏
+ *   12 CSS px 的可读下限）、胜/负/平大数字 32 被顶回 40。加个 #stage 抬一层最省事。 */
+/* 横屏的汇总卡：保持竖排，只收一档 --------------------------------------------
+ * 雷达还在的时候，这张卡曾被压成**一行**（累计净胜 +12 分 ｜ 5 场 · 胜率 60%），
+ * 从 157 让到 71 设计像素，为的是给右下那张雷达腾出高度 —— 当时带安全区的机型上
+ * slack 已经掉到 −32，「最近 10 局」被裁掉一截。
+ *
+ * 雷达撤掉后这 86 设计像素不必再省：恢复竖排（标签 / 大数字 / 场次胜率），
+ * 左栏底部那 ~100 的空洞随之填平，也和竖屏的层级保持一致。
+ * 只把数字从 88 收到 64、内边距从 28/26 收到 16/14 —— 0.52 缩放下 45 CSS px
+ * 的「累计净胜」会把三卡和纪录条一起顶出首屏，而它仍然是这一页最大的字。 */
+#stage.ls #rp-sum { padding: 12px 24px 10px; }
+#stage.ls #rp-sum .rp-sum-label { font-size: max(24px, var(--ls-fs-floor)); }
+#stage.ls #rp-sum .rp-sum-value { margin-top: 2px; font-size: 56px; }
+#stage.ls #rp-sum .rp-sum-meta { margin-top: 2px; font-size: max(24px, var(--ls-fs-floor)); }
+#stage.ls .rp-grid { margin-top: 10px; }
+#stage.ls .rp-gcard { padding: 12px 6px 10px; }
+#stage.ls .rp-gnum { font-size: 32px; }
+#stage.ls #rp-bests { margin-top: 0; }
+#stage.ls .rp-best { padding: 12px 6px 12px; }
+#stage.ls .rp-best-v { font-size: 40px; }
+/* 横屏的中段（三卡 + 纪录条） ------------------------------------------------
+ * 雷达撤掉之后这里只剩一列，612 的栏宽下三卡各 193 设计像素、纪录格各 204，
+ * 与竖屏（207 / 218）几乎一样，因此不再需要「为横屏另配一套列宽」。
+ * 只保留纵向压缩：margin-top 与竖屏的 16 差 2 设计像素，为的是让
+ * 「最近 10 局」在带安全区的机型上也留在首屏内。 */
+#stage.ls .rp-kpi { margin-top: 12px; gap: 12px; }
+
+#stage.ls .rp-trend { margin-top: 14px; }
+#stage.ls .rp-trend-head { margin-bottom: 8px; }
+/* 趋势标题原本写死 22 —— 844×390 上 11.4 CSS px 勉强，667×375 上只有 9。
+ * 归进「20 组」的小字保护：它和「胜/负/平」是同一类「要读的字」。 */
+#stage.ls .rp-trend-title { font-size: max(22px, var(--ls-fs-floor)); }
+#stage.ls .rp-trend-bar { gap: 8px; }
+#stage.ls .rp-t {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+#stage.ls .rp-t.flat { font-size: 20px; }
+/* 「更早 / 最新」在 40px 见方的条上会挤成两坨小字，读不出是轴标签；
+ * 左旧右新的方向由标题和配色已经说清，横屏去掉这一行换 26 设计像素。 */
+#stage.ls .rp-trend-axis { display: none; }
+.ls .rp-listcol .rp-list-head { flex: 0 0 auto; margin: 4px 0 10px; }
+.ls #records-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-bottom: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.ls #records-list::-webkit-scrollbar { display: none; }
+
+/* 页脚（数据来源说明 + 清除按钮）横屏压成一行：说明在左、按钮在右。
+ * 竖屏它是「说明一行 + 按钮一行」共 212 设计像素，横屏这 212 全是从列表身上抢的 ——
+ * 真机截图里战绩页左列「纪录」卡只剩标题行、排行榜第 6 名被渐隐洗掉，都是这 212 造成的。 */
+.ls #screen-records .rp-foot,
+.ls #screen-rank .rp-foot {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 8px var(--screen-pad-x) 10px;
+}
+.ls #screen-records .rp-foot .rp-clear,
+.ls #screen-rank .rp-foot .rp-clear { flex: 0 0 auto; }
+.ls #screen-records .rp-foot .rp-note { justify-content: flex-start; text-align: left; }
+/* 排行榜页脚只有这句说明、**没有「清除」按钮**（排行是全站的，没人能清），
+ * 所以「说明在左 + 按钮在右」那对失去了配对对象 —— 标题居中而说明吊在左下角，
+ * 电脑端一眼看就是歪的（1280×720 实测）。
+ * 单独让它居中；战绩页仍保持左对齐，那边真的有「清除全部」按钮在右边。 */
+.ls #screen-rank .rp-foot { justify-content: center; }
+.ls #screen-rank .rp-foot .rp-note { justify-content: center; text-align: center; }
+
+/* 返回箭头与内容对齐：nav 原本被「限宽 820」居中，而战绩页两栏是 1544 宽，
+ * 箭头就飘在半个屏幕右边。这里放开到满宽，箭头落到左栏左边缘上。
+ * 排行榜不动 —— 它的列表本来就是 820 居中单列，nav 跟着 820 才和行对齐；
+ * 放开满宽反而让行拉到 1544，名字在最左、分数在最右，眼睛要横跨整个屏幕。 */
+.ls #screen-records > .rp-nav { max-width: none; }
+
+/* 排行榜：横屏行距收紧（98 → 78 设计像素/行），并排成两列。
+ *
+ * 两列解决的是三件事：① 8 名也不用滚；② 宽屏不再是一条居中的窄列、两侧大片空；
+ * ③ 真机上「第一行被滚动容器上边缘硬切」不再出现（容器不再需要滚动）。
+ * 用 column 流向：第 1 列 1~4 名、第 2 列 5~8 名 —— 榜单按列往下读，
+ * 和通讯录一致；用 row 流向会变成「1、2 名并排」，那就没有先后了。 */
+.ls #screen-rank .rp-scroll { overflow: hidden; }
+.ls #rank-body {
+  display: grid;
+  /* 两列直接铺满 1112 时实测「名字在最左、分数在最右」隔了 800 CSS px，
+   * 一行里眼睛要走完全屏才读完一个人。限宽 1240 设计像素（≈845 CSS）居中，
+   * 两列各 ≈414 CSS，名字与分数的距离回到「一眼能扫」的范围。 */
+  max-width: 1240px;
+  margin: 0 auto;
+  grid-auto-flow: column;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, auto);
+  column-gap: 28px;
+  align-content: start;
+}
+/* 只有一列（4 名以内）时把整块收窄：列宽是 1fr，不收窄的话单行会横跨半个屏幕，
+ * 名字一个人在最左、分数离了 700 CSS px。620 设计像素 ≈ 422 CSS，接近竖屏的阅读宽度。
+ * 用 :has 判「没有第 5 行」；不支持 :has 的浏览器退回上面的两列（能看，只是偏宽）。 */
+.ls #rank-body:not(:has(.rank-row:nth-child(5))) {
+  max-width: 620px;
+  grid-template-columns: minmax(0, 1fr);
+}
+/* 空态：提示语要占满列表区并居中。
+ * 不这么做的话 .rank-tip 自带的 120px 上内边距会把提示压在顶部，
+ * 竖屏下方空出 70% 的画面（全流程巡检 390×844 实测 B71）。
+ * is-empty 由 renderRank 同时挂到 #rank-scroll 与 #rank-body 上：
+ * 只有滚动容器自己高度确定（flex 项），给它 flex-direction:column，
+ * 子级才能用 flex:1 拿到「剩下的全部高度」并把文字居中。
+ * 只在真的没有榜时挂，不动有数据的版式。 */
+#rank-scroll.is-empty {
+  display: flex;
+  flex-direction: column;
+}
+#rank-scroll.is-empty #rank-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#rank-scroll.is-empty .rank-tip {
+  padding: 0 40px;
+  margin: 0;
+}
+.ls #rank-scroll.is-empty #rank-body {
+  max-width: none;
+  grid-template-columns: none;
+  grid-template-rows: none;
+}
+.ls #screen-rank .rank-row { padding: 12px 24px; }
+
+/* 对局页：顶栏独占一行，下面左组槽 / 右手牌。
+ * 用 grid 而不是再写一套 flex：三个块的相对高度由「剩余空间」决定，
+ * 组槽自己会量高度（recomputeSlotBudget 读 clientHeight），不需要知道像素。 */
+.ls #screen-game {
+  display: grid;
+  grid-template-columns: 800px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "top    top"
+    "slots  bottom";
+  column-gap: 26px;
+  row-gap: 10px;
+  align-items: stretch;
+}
+.ls #screen-game > * { max-width: none; }
+.ls #screen-game #game-top { grid-area: top; width: 100%; }
+/* 准备态：横屏把「房间信息」放左、「准备动作」放右，和分牌态一样是两栏。
+   这一条必须写在 .ls #screen-game 之后 —— grid-template-areas 是后写覆盖先写。 */
+.ls #screen-game.is-ready {
+  grid-template-areas:
+    "top   top"
+    "ready acts";
+}
+.ls #screen-game.is-ready #table-ready { grid-area: ready; width: 100%; height: 100%; min-height: 0; }
+.ls #screen-game.is-ready #ready-acts {
+  grid-area: acts;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  justify-content: center;
+}
+.ls #screen-game #slots {
+  grid-area: slots;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.ls #screen-game .game-bottom {
+  grid-area: bottom;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  /* 手牌区高度固定 268（.hand 自己定的），竖向居中，上下留白均分 */
+  justify-content: center;
+  padding-top: 0;
+}
+/* 横屏不用竖屏那套「选中牌上浮 24px」的缓冲 —— 手牌不在最下方，没有组槽底缘要避 */
+.ls #screen-game .hand .card-wrap { top: 26px; }
+/* 手牌横向位置由 JS 按 HAND_AREA_W(670) 算，右栏比它宽时靠 margin 居中，
+   否则六张牌会整体贴左、右边空一条 */
+.ls #screen-game .hand { width: 670px; margin-left: auto; margin-right: auto; }
+
+/* ===== 圆桌·横屏「左桌右盘」（v88）=====
+ *
+ * 横屏不能像竖屏那样让桌子横跨整宽：750 设计px 高的舞台上，整宽的环要 1050 高，
+ * 组槽会被压成负数。所以桌子下移到左栏、跨两行，组槽与手牌进右栏。
+ *
+ * 为什么这一版几乎没有代价：横屏组槽本来就「高得用不完」——三组只占 247，
+ * 而容器有 502（实测）。搬到右栏后宽从 796 变 780、高从 502 变 424，牌面仍是
+ * 105×147 一个像素没变。竖屏那次要付 18% 的牌面代价，横屏不用。
+ *
+ * 行高用 minmax(0,1fr) + auto：右栏上组槽、下手牌（手牌自己定高 268），
+ * 桌子跨两行 + align-self center，于是它在左栏竖直居中，不用算任何余量。
+ * ★ 必须写在 `.ls #screen-game.is-ready` 之后 —— grid-template-areas 后写覆盖先写。 */
+.ls #screen-game.rt-ring {
+  grid-template-columns: 800px minmax(0, 1fr);
+  /* 右栏上下两行：上组槽（1fr，吃掉剩下的），下手牌+操作（auto，由内容定高）。
+   *
+   * ★ auto 不是「随手写的」。原来 slots 与 bottom 是**并排**在两列里，两者共享
+   *   同一行高（502）—— 所以手牌要 368、组槽要 305 都放得下。改成上下排之后
+   *   它们只能互相挤，任何 fr 分配都会压掉一边：给 1.45:1 时手牌被 flex 压成
+   *   91 高（实测），给 1:1 时组槽只剩 341、第三组溢出。所以只让组槽吃弹性，
+   *   手牌那行按内容取高。 */
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top slots"
+    "top bottom";
+}
+/* auto 行 + 原来的 height:100% 会互相拽（百分比相对 auto 行 = 循环），
+ * 且 .game-bottom 是 flex 容器，行高不够时它会把 #hand 压扁而不是报错。 */
+.ls #screen-game.rt-ring .game-bottom {
+  height: auto;
+  flex: none;
+}
+/* auto 行 + 原来的 height:100% 会互相拽（百分比相对 auto 行 = 循环），
+ * 且 .game-bottom 是 flex 容器，行高不够时它会把 #hand 压扁而不是报错。 */
+.ls #screen-game.rt-ring .game-bottom {
+  height: auto;
+  flex: none;
+}
+.ls #screen-game.rt-ring > #game-top {
+  grid-area: top;
+  /* 块高由 JS 写进 --gt-h，别让它被 grid 拉满整列 */
+  align-self: center;
+  margin-bottom: 0;
+}
+/* 准备态：左栏仍是桌子，右栏上「房间信息」下「准备动作」。
+ * 和分牌态同一套网格，局内局外不会因为换版式而跳一下。 */
+.ls #screen-game.rt-ring.is-ready {
+  grid-template-areas:
+    "top ready"
+    "top acts";
+}
+.ls #screen-game.rt-ring.is-ready #table-ready { grid-area: ready; align-self: start; height: auto; }
+.ls #screen-game.rt-ring.is-ready #ready-acts { grid-area: acts; align-self: end; height: auto; }
+
+/* ---- 就位态的空间账（v105）----
+ *
+ * 右栏两行：信息卡（1fr）+ 动作条（auto）。横屏舞台的设计高只有 750~780，
+ * 而「房间号 + 6 行规则卡 + 提示 + 两颗胶囊 + 准备键 + 两颗次键」实测 779 设计 px
+ * ——**溢出 60**，而 `align-self: start` 不裁剪，多出来的部分直接压到动作条底下：
+ * 实测 728×348 下提示行 top 226 / 动作条 top 230，两行叠在一起，「等待其他人准备」
+ * 被「准备」按钮压掉一大半（这是 v105 之前就有的，只是没人量过）。
+ *
+ * 修法不是「再挤一挤」，而是**去掉唯一一行不影响决策的内容**：
+ * 提示条说的是「等待其他人准备 / 全部准备好」，而这两件事在中央牌上写着
+ * 「已准备 4/5」、在卡片抬头写着「等大家准备 5 人」。留着它换一次重叠不值得。
+ * 剩下的 96 设计px 靠收间距（gap / padding / 行高）出，不缩字号 ——
+ * 字号已经贴着 11 CSS px 的下限（见 .tr-card-sub 那条注释）。
+ */
+.ls #screen-game.rt-ring.is-ready #room-hint { display: none; }
+.ls #screen-game.rt-ring.is-ready .tr-body { gap: 10px; padding: 2px 0; }
+.ls #screen-game.rt-ring.is-ready .tr-card { padding: 18px 28px 16px; }
+.ls #screen-game.rt-ring.is-ready .tr-card-head { padding-bottom: 8px; margin-bottom: 8px; }
+.ls #screen-game.rt-ring.is-ready .tr-line { padding: 4px 0; }
+
+/* ===== 圆桌·窄横屏「四区 + 两列」（v89）/ 桌面宽横屏「四区 + 三行」（v91）=====
+ *
+ * 对象是 iPhone 横屏（844×390 / 932×430）：设计高恒为 750，右栏只有 702（减上下留白）。
+ * v88 的三行右栏在这里装不下 —— chips 88 + 三组 305 + 手牌操作 368 = 761，差 69。
+ * 硬挤的后果不是「有点挤」，是组槽 232 高、三组各 70 → 牌 60×84 设计 px（33×47 CSS，认不出）。
+ *
+ * 换排法而不是换尺寸：把组标签条挪到左下角，右栏三样东西剩 326 高，
+ * 组槽再从「三行」变「两列两行」，每题 158 高 → 牌 104×146，与不上圆桌时持平。
+ *
+ * display:contents 是这一步的关键：chips / hand / actions 都包在 .game-bottom 里，
+ * 不这样它们没法各自落到不同的格子里。搬 DOM 要处理重渲染顺序与回滚，成本高一个量级。
+ * 代价是 .game-bottom 的 padding-top / gap / justify-content 一起失效，
+ * 手牌的居中改由 #hand 自己的 margin:auto 负责（那条规则在上面 v88 段里已有）。
+ *
+ * ★ 必须写在 .rt-ring.is-ready 之后：同档特异性下后写覆盖先写。
+ *   ready 态没有 chips/hand/actions（.hidden 会把 display:contents 顶掉），
+ *   继续沿用 .rt-ring.is-ready 的「左桌右盘」两行即可。
+ *
+ * ★ 两档共用下面这一条规则（选择器并列）—— 只改其中一个类会让另一档悄悄掉队。
+ *   v91 的桌面宽横屏（1280×800 / 1024×768）复用同一套四区网格，差别只有两处：
+ *     1. 不走两列组槽 —— 右栏 798 宽、591 高，三行各 190，比拆成两列各 322 划算；
+ *        判定在 JS（slotTwoCol 只认 ringNarrow()），CSS 这边一个字不用改。
+ *     2. 桌子换 `seatRing.MODES.desktop`（头像 80、环 608，见 seatRing.js）。
+ *   为什么桌面也要改网格而不只是放大桌子：v88 的三行右栏把 chips 88 + 手牌 268 +
+ *   操作 88 全堆在右栏，1280×800 下组槽只剩 497 —— 三张牌被高度卡成 105×147，
+ *   而**同一窗口下关闭圆桌是 144×202**（组槽 770）。桌子再好，牌看不清就是负收益。
+ *   挪走 chips 与操作条之后组槽回到 591，牌 127×178（probe-table 实测）。 */
+.ls #screen-game.rt-narrow,
+.ls #screen-game.rt-desktop {
+  grid-template-columns: 800px minmax(0, 1fr);
+  /* 行 1 给组槽吃弹性，行 2 是手牌（.hand 自己定高 268），行 3 是标签条与操作条。
+   * 行 2/3 必须 auto —— 用 fr 会让它们互相挤，手牌会被 flex 压扁（v88 踩过）。 */
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "top   slots"
+    "top   hand"
+    "chips acts";
+}
+.ls #screen-game.rt-narrow .game-bottom,
+.ls #screen-game.rt-desktop .game-bottom { display: contents; }
+.ls #screen-game.rt-narrow > #game-top,
+.ls #screen-game.rt-desktop > #game-top {
+  grid-area: top;
+  align-self: center;
+  margin-bottom: 0;
+}
+.ls #screen-game.rt-narrow #slots,
+.ls #screen-game.rt-desktop #slots { grid-area: slots; }
+.ls #screen-game.rt-narrow #hand,
+.ls #screen-game.rt-desktop #hand { grid-area: hand; }
+.ls #screen-game.rt-narrow #group-chips,
+.ls #screen-game.rt-desktop #group-chips { grid-area: chips; width: 100%; }
+.ls #screen-game.rt-narrow .game-actions,
+.ls #screen-game.rt-desktop .game-actions { grid-area: acts; }
+/* 两列组槽：比大小｜十点半 一行、飘三叶整行；第二轮 比大小整行、斗牛整行。
+ * 列间距 10 必须与 game.js 的 TWO_COL_GAP 一致（pwa/test/seat-ring.test.js 会反查）。 */
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 10px;
+  row-gap: 10px;
+}
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] .slot[data-span="2"] { grid-column: span 2; }
+/* 两列时每格只有半行宽，组信息要能换行 —— 不许把牌挤小（牌尺寸由 JS 按高度定） */
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] .slot-meta { min-width: 0; }
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] .slot-hint { display: none; }
+/* ★ 半宽格子里组信息必须压成一行。
+ * 十点半那一格 322 内容宽，两张牌占 216，只剩 92 给组信息 ——
+ * 「十点半 · 2张」在 92 宽里折成 3 行、把组信息撑到 174 高，
+ * 于是整行从 157 变 185，第一轮组槽 scrollH 352 > clientH 326（实测溢出 26）。
+ * 折行是被父级 min-width:0 允许的，靠「不许折 + 藏组名」根治：
+ * 组名与计数在左下角的标签条上本来就有，而且那里高亮着当前组。 */
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] .slot[data-span="1"] .slot-label { display: none; }
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] .slot-meta { flex: 0 0 auto; }
+.ls #screen-game.rt-narrow #slots[data-twocol="1"] .slot-meta-main { flex-wrap: nowrap; white-space: nowrap; }
+
+/* 房间页：左边房间号 / 玩家列表 / 提示，右边操作按钮竖排。
+ *
+ * 这里**故意不用 grid**：`.room-grid` 自己是 `flex:1 + overflow-y:auto` 的网格，
+ * 放进 grid 容器后实测被排到第 1 行（量到 listTop=13 与房间号行重叠 53px，
+ * 而 gridRowStart 报的是 2）—— 两者都带 grid 时的行归属不值得赌，
+ * 改回普通块流 + 绝对定位右栏，行为一目了然。 */
+.ls #screen-room {
+  display: block;
+  /* 给右栏按钮留出固定宽度，左栏内容区自然变窄。
+   * 必须叠加 --sa-right：横屏的刘海在侧边，直接写 480 会把它一起覆盖掉，
+   * 右栏按钮正好落在刘海/圆角下方的不可点区里（和战绩页底部那条同源）。 */
+  padding-right: calc(var(--sa-right, 0px) + 480px);
+}
+.ls #screen-room > * { max-width: none; }
+/* 座位改 4 列 × 2 行。房间上限是 8 人（CONFIG.MAX_PLAYERS），座位卡实测 242 设计高：
+ * 竖屏 2 列 → 4 行 992，横屏可用高只有约 546，真机上第 3 行就被裁掉一半、
+ * 底部提示条还压在那个裁口上。横屏只有 2 行才装得下 8 个座位（2×242 + 12 = 496）。 */
+.ls #screen-room #room-players {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-height: none;
+}
+.ls #screen-room .room-actions {
+  position: absolute;
+  /* 绝对定位的 right 量的是 .screen 的 padding box 外沿（= 屏幕边），
+   * 所以安全区得在这里再让一次，否则按钮压在侧边刘海下面。 */
+  right: calc(var(--sa-right, 0px) + 26px);
+  top: 50%;
+  width: 430px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ls #screen-room .room-actions .btn,
+.ls #screen-room .room-actions .ghost-row { width: 100%; }
+/* 横屏是竖排（column）。这里必须把竖屏那条 flex-wrap 关掉：
+ * column + wrap 在高度不够时会另起一列，三个按钮会横着并排成三列。 */
+.ls #screen-room .room-actions .ghost-row { flex-direction: column; flex-wrap: nowrap; }
+
+/* 「我的账号」弹窗：横屏别做成一根竖柱。
+ * 竖屏里它是「三行信息 + 三个按钮 + 关闭」一路往下排，实测 403×505 CSS ——
+ * 在 511 高的横屏里几乎顶满上下（t=3, bottom=508），左右却空着大半个屏幕。
+ * 改成两栏：信息在左、操作在右，关闭键落在右侧最后一格，卡片宽度用起来。 */
+.ls #account-modal .modal-box {
+  max-width: 1000px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  column-gap: 32px;
+  row-gap: 12px;
+}
+.ls #account-modal h3 { grid-column: 1 / -1; grid-row: 1; }
+.ls #account-modal .acc-info { grid-column: 1; grid-row: 2; align-self: start; }
+.ls #account-modal .acc-actions { grid-column: 2; grid-row: 2; align-self: center; }
+.ls #account-modal .modal-actions { grid-column: 2; grid-row: 3; }
+.ls #account-modal .acc-actions .btn,
+.ls #account-modal .modal-actions .btn { width: 100%; }
+
+/* 结束页：结算表在左、按钮在右 */
+.ls #screen-settle {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  /* 两行都 auto + align-content:center：结算表只有两三行时整块竖向居中，
+   * 用 1fr 会让内容顶在上半屏、下半屏空一大片 */
+  grid-template-rows: auto auto;
+  column-gap: 26px;
+  row-gap: 8px;
+  align-content: center;
+}
+.ls #screen-settle > * { max-width: none; }
+.ls #screen-settle .ribbon-title { grid-column: 1; grid-row: 1; }
+/* max-height 是「5 人局 + 尾注 + 「本局含 AI」那一行」的实测总高，不是拍的：
+ * 5 行 × 106 设计px ≈ 530，尾注 ~40，AI 说明 ~30，合计 ~600 里取 580（留 20 余量）。
+ * 原来写 470 时第 5 行被切成半行（800×360 实测只露出 92%）；
+ * 先改到 540 把第 5 行救回来了，却轮到「本局含 AI」那行被切 —— 一次给够。
+ * 上限校验：舞台设计高 750，减去标题条 88 + row-gap 8 + 上下内边距，剩 ~600，580 装得下。 */
+.ls #screen-settle .settle-body { grid-column: 1; grid-row: 2; min-height: 0; max-height: 580px; overflow-y: auto; }
+.ls #screen-settle .settle-wait { grid-column: 2; grid-row: 1; }
+.ls #screen-settle .room-actions { grid-column: 2; grid-row: 2; align-self: center; flex-direction: column; }
+.ls #screen-settle .room-actions .btn { width: 100%; }
+/* 横屏的高度是唯一的稀缺资源：5 人局（4 个 AI + 我）时
+ * 5 行 × (行高 + 12 间距) 会把尾注和「本局含 AI」那两行挤到视口外
+ * （844×390 实测尾注底边 424 > 390），而这两行说的正是「这局算不算战绩」。
+ * 竖向内边距收一档、行间距收一档，共省出 ~60px —— 不靠滚动也能看全。
+ * 头像（56/72）和字号都不动：那两个一缩就会变成另一种版式，
+ * 而这里要的只是「同一版式挤一点」。 */
+.ls #screen-settle .settle-row { padding: 12px 30px 12px 18px; margin-bottom: 8px; }
+.ls #screen-settle .settle-row.champion { padding: 15px 30px 15px 18px; }
+
+
+/* ---------- 战绩分享图预览 ---------- */
+.share-box { padding: 24px 24px 28px; }
+.share-img {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  border-radius: 16px;
+  background: var(--green-mid);
+}
+.share-tip {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: 24px;
+  line-height: 1.5;
+  color: rgba(24, 25, 28, 0.55);
+}
+
+/* ==========================================================================
+ * 登录 / 注册 / 我的账号
+ *
+ * 视觉口径：与首页同一套。深绿玻璃底 + 淡金描边 + 金色渐变大标题，
+ * 主按钮沿用红色（和「创建房间」一致），不做白底表单——那会立刻变成
+ * 「网页里嵌了个第三方登录框」的观感。
+ * ======================================================================== */
+
+#screen-auth {
+  justify-content: center;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 两团光斑：左上暖金、右下品牌绿，和首页的 deco 呼应，但更收敛 */
+.auth-glow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(46px);
+}
+.auth-glow.glow-a {
+  width: 520px;
+  height: 520px;
+  left: -170px;
+  top: -150px;
+  background: radial-gradient(circle, rgba(245, 193, 92, 0.20), transparent 68%);
+}
+.auth-glow.glow-b {
+  width: 600px;
+  height: 600px;
+  right: -230px;
+  bottom: -200px;
+  background: radial-gradient(circle, rgba(14, 140, 110, 0.28), transparent 70%);
+}
+
+.auth-inner {
+  position: relative;
+  width: 100%;
+  max-width: 620px;
+  margin: auto 0;               /* 内容不满屏时垂直居中；超屏时退化为顶端对齐，顶部不被裁 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.auth-brand { display: flex; flex-direction: column; align-items: center; }
+.auth-logo {
+  width: 124px;
+  height: 124px;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45), 0 0 0 3px rgba(245, 193, 92, 0.55);
+}
+.auth-logo svg { display: block; width: 100%; height: 100%; }
+
+.auth-title {
+  margin: 20px 0 0;
+  font-size: 60px;
+  font-weight: 800;
+  letter-spacing: 8px;
+  background: linear-gradient(180deg, var(--gold-light), var(--gold-deep));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.auth-sub {
+  margin: 10px 0 0;
+  font-size: 24px;
+  letter-spacing: 2px;
+  color: var(--gray-aux);
+}
+
+/* 玻璃面板：和首页四入口、对局页顶栏同一配方（顶部高光 + 内描边） */
+.auth-card {
+  width: 100%;
+  margin-top: 40px;
+  padding: 34px 34px 30px;
+  border-radius: 32px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(165deg, rgba(30, 90, 68, 0.72) 0%, rgba(8, 26, 21, 0.86) 100%);
+  border: 1px solid rgba(245, 193, 92, 0.18);
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* 登录 / 注册切换：两格等分，选中态用淡金底 + 金边，不做滑动指示条（窄屏更稳） */
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 30px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.auth-tab {
+  height: 76px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--gray-aux);
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, border-color 0.16s;
+}
+.auth-tab.is-on {
+  background: rgba(245, 193, 92, 0.16);
+  border-color: rgba(245, 193, 92, 0.46);
+  color: var(--gold-light);
+  text-shadow: 0 1px 6px rgba(245, 193, 92, 0.28);
+}
+
+.auth-field { width: 100%; margin: 0 0 20px; }
+.auth-field label {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 20px;
+  color: var(--gray-aux);
+  margin: 0 0 10px 22px;
+}
+.auth-opt { font-size: 20px; color: rgba(184, 192, 204, 0.62); }
+/* 输入框沿用全局 input 造型（胶囊 + 内阴影），只把高度和字号按面板内比例收一点 */
+.auth-field input {
+  height: 92px;
+  font-size: 28px;
+  padding: 0 28px;
+}
+
+/* 错误条：不弹 alert（手机上 alert 会锁死页面），直接在按钮上方给一行 */
+.auth-err {
+  margin: 4px 0 20px;
+  padding: 16px 22px;
+  border-radius: 16px;
+  background: rgba(214, 40, 40, 0.16);
+  border: 1px solid rgba(255, 93, 93, 0.40);
+  color: #FFC9C9;
+  font-size: 24px;
+  line-height: 1.45;
+  text-align: left;
+  word-break: break-word;
+}
+
+#btn-auth-submit { width: 100%; margin: 6px 0 0; }
+
+.auth-hint {
+  margin: 22px 0 0;
+  text-align: center;
+  font-size: 24px;
+  color: var(--gray-aux);
+}
+.auth-link {
+  /* 热区 vs 视觉：这行字本身只有 24 设计px 高，在 0.44 缩放下只有 14 CSS px，
+   * 触屏上基本点不中（全流程巡检测到的最小热区）。
+   * 用 padding 撑热区、再用等量负 margin 把版面拉回去 —— 视觉零变化，
+   * 但可点范围长到 69 设计px（≥30 CSS 一直到 scale 0.44）。
+   * 为什么不写 min-height：它是行内元素，min-height 不生效。 */
+  padding: 20px 8px;
+  margin: -20px -4px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--gold);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.auth-note {
+  margin: 26px 0 0;
+  font-size: 20px;
+  letter-spacing: 1px;
+  color: rgba(184, 192, 204, 0.55);
+  text-align: center;
+}
+
+/* ---------- 我的账号弹窗（复用暖白 .modal-box，与其它弹窗一致） ---------- */
+.acc-info {
+  margin: 0 0 8px;
+  padding: 4px 0;
+}
+.acc-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 4px;
+  border-bottom: 1px solid rgba(26, 29, 35, 0.08);
+  font-size: 24px;
+}
+.acc-row:last-child { border-bottom: 0; }
+.acc-row span { color: #6B7280; flex-shrink: 0; }
+.acc-row b {
+  color: var(--ink);
+  font-weight: 700;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acc-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 18px 0 20px;
+}
+.acc-actions .btn { width: 100%; }
+/* 暖白弹窗上的危险按钮：原 .btn-danger 是给深色底用的（浅红字 #FF9B9B），
+ * 落在 #FFF7E8 上对比度只有 1.9:1，等于看不清。这里换深红字 + 淡红描边。 */
+.btn-danger.on-light {
+  border-color: rgba(200, 33, 33, 0.32);
+  color: #C62828;
+}
+.btn-danger.on-light:active {
+  transform: translateY(2px);
+  background: rgba(198, 40, 40, 0.06);
+}
+
+/* ---------- 换头像弹窗（v89 §9.2 P1a） ----------
+ * 8 列 × 6 行。8 列是跟着 avatar.js 的排序来的：id 顺序是「形状优先、配色在后」，
+ * 所以一行 8 格 = 同一组配色的 8 种底纹，往下滑一屏 = 换一组配色。
+ * 想「换个形状」横向找、想「换个色」纵向找，比 48 格糊成一片好选。
+ *
+ * ★ 这里**不能用 vw / vh**：弹窗在 #stage 里，而 #stage 整体被 transform: scale()
+ * 缩放过。vw 取值时按视口 CSS px 算，算出来的数字再被 scale 乘一次 ——
+ * 390 宽的手机上 92vw = 359，进到设计坐标系里是 359 设计 px，缩完只剩 187 CSS px，
+ * 8 列每格 15px，手指根本点不准（实测值）。改用 max-width（设计 px），
+ * 宽度交给 .modal-box 的 width:100%，和全站其它弹窗同一套算法。 */
+.av-box {
+  max-width: 680px;
+  max-height: 100%;
+}
+.av-now {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 4px 0 18px;
+}
+/* 预览大图要比格子明显大一档：一样大时就分不清「这是当前用的」和「这是可选的」 */
+.av-now .pf-avatar { flex: 0 0 104px; width: 104px; height: 104px; font-size: 40px; }
+.av-hint {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.45;
+  color: #6B7280;
+}
+.av-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 10px;
+  /* flex:1 + min-height:0：横屏时窗口只有 390 CSS 高（≈750 设计 px），
+   * 48 格铺不下就该「网格自己滚」，而不是把下面的按钮顶出弹窗
+   *（.modal-box 是 overflow:hidden，顶出去等于按钮消失）。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 620px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* ★ align-content:start 同样不能省：容器高度不够时 grid 默认会把**行高**压扁
+   * 来塞满（align-content:stretch），于是每格仍按宽高比是正圆、行高却比它矮，
+   * 48 个圆就竖着叠在一起 —— 探针量「格子是不是圆」也照样通过。
+   * 改成 start 之后行高按内容走，装不下就自己滚。
+   * ★ grid-auto-rows: max-content 是配套的那一半：auto 行在**高度确定**的容器里
+   * 会被压到「刚好塞满」，而格子的 block 轴最小尺寸是 0（宽高比盒子），
+   * 于是行只有 45 设计 px、格子 69 —— 竖着压掉 12 CSS px。 */
+  align-content: start;
+  grid-auto-rows: max-content;
+  padding: 2px;
+}
+.av-cell {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  /* ★ align-self:start 不能省。格子在 grid 里默认 align-self:stretch，
+   * 一旦容器高度不够（横屏 390 高就是这样），行高被压扁、宽高比失效，
+   * 48 个头像会被拉成竖椭圆 —— 而列宽、数量、类名全都正常，
+   * 只有「看着不对」，静态断言一条也抓不到。 */
+  align-self: start;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  /* 选中态用外圈金环，不给格子加边框 —— 加边框会让 48 格里被选中的那格
+   * 比旁边小一圈，看起来像「它不一样大」而不是「它被选中了」 */
+  box-shadow: 0 0 0 1px rgba(26, 29, 35, 0.10);
+  transition: transform 0.1s, box-shadow 0.12s;
+}
+.av-cell:active { transform: scale(0.92); }
+.av-cell.is-on {
+  box-shadow: 0 0 0 3px var(--gold), 0 4px 12px rgba(245, 193, 92, 0.35);
+}
+.av-cell .avatar-img { width: 100%; height: 100%; }
+/* iOS 14 / Safari < 15 没有 aspect-ratio：格子会塌成「只有一行文字那么高」，
+ * 48 个头像变成一排扁椭圆 —— 列宽、数量、类名全对，只有「看着不对」，
+ * 静态断言一条也抓不到（和上面 align-self:start 那条是同一类事故）。
+ * 老办法把方块撑起来：高度由 padding-bottom:100% 顶出来，图片绝对定位铺满。
+ * 现代浏览器不匹配这条 @supports，一行都不生效。 */
+@supports not (aspect-ratio: 1 / 1) {
+  .av-cell {
+    height: 0;
+    padding-bottom: 100%;
+  }
+  .av-cell .avatar-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+}
+/* 上传照片那一行（P1b）。默认 .hidden —— 由 CONFIG.AVATAR_UPLOAD 决定显不显示。
+ * 文件输入本身藏起来，用按钮去点它：<input type=file> 的原生外观在各家
+ * 浏览器/WebView 上完全不一样（有的还是个灰条），跟这张暖白弹窗放一起很难看。 */
+.av-photo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(26, 29, 35, 0.08);
+}
+/* 比主按钮轻一档：上传是「附加动作」，跟底部「随机一个 / 关闭」抢视觉权重
+ * 会让人以为它是这一屏的主操作。高度不动（--tap-min 是触摸下限）。 */
+.av-photo-row .btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 28px;
+  font-size: 28px;
+}
+.av-file { display: none; }
+.av-photo-hint {
+  flex: 1 1 160px;
+  font-size: 19px;
+  line-height: 1.4;
+  color: #8A8F99;
+}
+
+@media (max-width: 420px) {
+  .av-grid { gap: 8px; }
+  .av-now .pf-avatar { flex: 0 0 84px; width: 84px; height: 84px; font-size: 32px; }
+  .av-hint { font-size: 18px; }
+}
+
+/* 暖白弹窗里的输入框（改昵称 / 改密码）。
+ * 全局 input 是给深色底设计的：白字 + 10% 白底。落在 #FFF7E8 的 .modal-box 上
+ * 就成了白字白底——占位文字还看得见（浏览器默认样式），一旦开始打字就一个字都看不见。
+ * 这里换成白底 + 深字，焦点态改用品牌绿描边（金色在白底上太浅）。 */
+.modal-box input {
+  background: #FFFFFF;
+  border: 2px solid rgba(26, 29, 35, 0.14);
+  color: var(--ink);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+.modal-box input::placeholder { color: rgba(26, 29, 35, 0.34); }
+.modal-box input:focus {
+  border-color: var(--brand-green);
+  box-shadow: 0 0 0 3px rgba(14, 140, 110, 0.18), inset 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+/* ==========================================================================
+ * 无障碍：两件以前完全没做的事
+ * ========================================================================== */
+
+/* 1) 尊重系统的「减弱动态效果」。
+ *    这个 App 的动效很密——发牌飞入、飞牌、结算错峰揭晓、分数滚动、整页滑入。
+ *    对前庭功能敏感的人来说这不是「好看」，是会头晕。
+ *    用 0.01ms 而不是 0/none：这样 transitionend / animationend 仍会触发，
+ *    依赖它们的收尾逻辑（比如结算弹窗）不会卡住。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 2) 键盘焦点。
+ *    以前只有 input:focus，按钮和可点卡片用 Tab 走过去完全看不出焦点在哪，
+ *    键盘 / 开关控制用户等于在摸黑操作。
+ *    只在 :focus-visible（键盘触发）时画环，鼠标点按不会多出一圈。 */
+.btn:focus-visible,
+.gt-opp:focus-visible,
+.entry-link:focus-visible,
+.gchip:focus-visible,
+.card:focus-visible,
+[tabindex]:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgba(245, 193, 92, 0.95);
+  outline-offset: 3px;
+}
+/* 暖白弹窗里金色环对比度不够，换品牌绿 */
+.modal-box .btn:focus-visible,
+.modal-box button:focus-visible {
+  outline-color: var(--brand-green);
+}
+
+/* ==================== 新手分步引导（P3-8，v50 重做视觉） ====================
+ * ★★ 尺寸单位务必看清：本页运行在 750 宽的设计空间里（game.js 里 stageW=750，
+ *    #stage 整体 transform: scale(视口宽 / 750)），所以 CSS 里写的每个 px 都会再乘
+ *    约 0.52 才是屏幕像素。这里写 38px，iPhone 上才约 20px —— 和其它弹窗的
+ *    .modal-card h2（40px）是一个量级。
+ *
+ *    v49 初版把这里的值当成「CSS 像素」写（标题 19px、牌 34px、圆点 7px、
+ *    卡片 max-width 360px），于是落到屏幕上：标题 10px、牌 18px 宽、进度点
+ *    3.6px、整个弹窗只有半屏宽 —— 看起来像一个缩水的广告浮层。这是它丑的根因，
+ *    不是配色问题。**改这里的任何尺寸前，先确认它是设计像素。**
+ *
+ * 视觉分工：示意图区用产品主色（深绿牌桌 + 白牌）把「牌」这件事画出来，
+ * 文字区保持暖白底的阅读节奏，进度用条不用点（4 段横条在 8px 高时仍清晰）。 */
+.guide-card {
+  max-width: 620px;
+  padding: 30px 32px 26px;
+  border-radius: 32px;
+}
+/* 顶部：4 段进度条 + 跳过。
+ * 原来的 7px 小圆点在屏上只有 3.6px，等于没有；横条还能顺手表达「共 4 步」。 */
+.guide-head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 22px;
+  min-height: 40px;
+}
+.guide-dots {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+}
+.guide-dots i {
+  flex: 1;
+  height: 8px;
+  border-radius: 8px;
+  background: rgba(22, 56, 47, 0.11);
+  transition: background 0.25s ease;
+}
+.guide-dots i.done {
+  background: rgba(22, 56, 47, 0.3);
+}
+.guide-dots i.on {
+  background: linear-gradient(90deg, var(--gold-light), var(--gold-deep));
+}
+.guide-skip {
+  flex: none;
+  border: 0;
+  background: none;
+  /* 同上：24 设计px 的字在 0.52 缩放下只有 25 CSS 高的热区。
+   * padding 撑到 69 设计px，负 margin 抵掉版面位移。 */
+  padding: 24px 10px 24px 14px;
+  margin: -24px -10px -24px 0;
+  font-size: 24px;
+  color: rgba(58, 29, 0, 0.45);
+  font-family: inherit;
+  cursor: pointer;
+}
+.guide-skip:active { color: rgba(58, 29, 0, 0.75); }
+
+/* 步骤容器：滚动兜底放在这里而不是整张卡上，标题栏与按钮永远可见。
+ * min-height 是为了让 4 屏的卡片一样高 —— 各屏文字行数不同（提示条 1 行 / 2 行），
+ * 不锁高度的话弹窗会在点「下一步」时上下跳一下，很像卡顿。 */
+.guide-body {
+  flex: 1 1 auto;
+  min-height: 616px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.guide-step[hidden] { display: none; }
+.guide-step {
+  animation: guideStepIn 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes guideStepIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 示意图区：深绿牌桌 + 白牌。
+ * v49 是浅灰绿底配小白卡，对比弱到像占位符；换成主色后「扑克」这件事才立住。 */
+.guide-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  min-height: 196px;
+  padding: 22px 18px 24px;
+  margin-bottom: 24px;
+  border-radius: 24px;
+  background: radial-gradient(circle at 50% 6%, #245946 0%, #154036 52%, var(--green-deep) 100%);
+  box-shadow: inset 0 0 0 2px rgba(245, 193, 92, 0.26), 0 6px 18px rgba(15, 43, 34, 0.22);
+}
+/* 第一屏要一眼看出「1 张 / 2 张 / 3 张」是三组。
+ * 试过等宽三列：三组里第三组有 3 张牌（3×72+gap），比一列的宽度还宽，
+ * 直接顶出牌区。改成「自适应宽度 + 组间一条金色细分隔线」——
+ * 界限比留白更明确，也不受牌数影响。 */
+.guide-art-deal {
+  align-items: flex-end;
+  gap: 0;
+  padding: 20px 6px 24px;
+}
+.guide-art-deal .gset {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+.guide-art-deal .gset + .gset {
+  box-shadow: inset 2px 0 0 rgba(245, 193, 92, 0.3);
+}
+/* 一组牌 + 上方的那行「几张」标签 */
+.gset {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding-top: 32px;
+}
+.gset em {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  font-style: normal;
+  font-size: 20px;
+  text-align: center;
+  letter-spacing: 0.06em;
+  color: rgba(245, 193, 92, 0.92);
+}
+.gcard {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 96px;
+  border-radius: 12px;
+  background: linear-gradient(170deg, #FFFFFF, #FFF8E9);
+  color: var(--ink);
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.34);
+}
+.gcard b { font-weight: 700; }
+.gcard i {
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  margin-top: 6px;
+  opacity: 0.72;
+}
+.gcard.red { color: #C0392B; }
+.gcard-joker {
+  width: 122px;
+  height: 172px;
+  font-size: 48px;
+  /* 单张牌撑不满绿区时，靠一圈暖光把它「抬」起来，而不是硬放大到失真 */
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42), 0 0 0 6px rgba(245, 193, 92, 0.12),
+              0 0 48px rgba(245, 193, 92, 0.22);
+}
+.gcard-joker i {
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  margin-top: 10px;
+}
+
+/* 玩法方块（第一轮三组 / 第二轮两组）。
+ * 从胶囊标签改成「牌数 + 玩法名」两行的小牌型，信息量直接翻倍。 */
+.gtile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 152px;
+  padding: 26px 18px;
+  border-radius: 20px;
+  background: rgba(255, 247, 232, 0.09);
+  box-shadow: inset 0 0 0 2px rgba(245, 193, 92, 0.34);
+}
+.gtile b {
+  font-size: 32px;
+  line-height: 1;
+  color: var(--gold-light);
+}
+.gtile span {
+  font-size: 28px;
+  line-height: 1;
+  color: rgba(255, 247, 232, 0.88);
+}
+
+.guide-step h2 {
+  margin: 0 0 14px;
+  font-size: 40px;
+  line-height: 1.28;
+  text-align: center;
+  color: var(--warm-ink);
+}
+.guide-step p {
+  margin: 0 0 18px;
+  font-size: 28px;
+  line-height: 1.72;
+  color: var(--text-secondary);
+}
+.guide-step p:last-child { margin-bottom: 0; }
+.guide-step b {
+  color: var(--green-mid);
+  font-weight: 700;
+}
+/* 提示条：原来只给一根左边框，落屏像代码注释。
+ * 改成浅金衬底的圆角色块，才看得出「这是另外一句、要读」。 */
+.guide-tip {
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: rgba(245, 193, 92, 0.15);
+  border-left: 6px solid var(--gold);
+  font-size: 24px;
+  line-height: 1.62;
+  color: rgba(58, 29, 0, 0.74);
+}
+
+.guide-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+.guide-facts li {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.guide-facts b {
+  flex: none;
+  width: 118px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(22, 56, 47, 0.07);
+  color: var(--green-mid);
+  font-size: 24px;
+  text-align: center;
+}
+
+.guide-nav {
+  display: flex;
+  gap: 16px;
+  margin-top: 28px;
+}
+.guide-nav .btn {
+  flex: 1;
+  margin: 0;
+  white-space: nowrap;
+  padding: 0 20px;
+}
+/* 第一步没有「上一步」时必须真的不占位。
+ * v49 用的是 visibility:hidden 占位（本意是防按钮横向跳动），结果第一屏
+ * 左边空出半格、主按钮孤零零挂在右边 —— 比跳一下难看得多。
+ * .btn 的 display:inline-flex 会盖掉 [hidden] 的 UA 样式，所以这里要显式声明。 */
+.guide-nav .btn[hidden] { display: none; }
+.guide-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 22px;
+  padding: 0;
+  list-style: none;
+}
+.guide-facts li {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.guide-facts b {
+  flex: none;
+  width: 118px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(22, 56, 47, 0.07);
+  color: var(--green-mid);
+  font-size: 24px;
+  text-align: center;
+}
+
+.guide-nav {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.guide-nav .btn {
+  flex: 1;
+}
+
+/* ==================== 本局过程（回放，P3-7） ====================
+ * 结算页只给分数变化，"哪一组输的、当时什么牌"看不出来。
+ * 这里逐轮列：每组一行标题（玩法 + 赢家 + 牌型），下面每人一行（昵称 / 牌 / 加减分）。
+ * 分数用红涨绿跌，和牌桌上的口径一致。
+ *
+ * ★ 尺寸单位同 .guide-*：这里也是 750 设计空间。v49 初版整段按 CSS 像素写
+ *   （卡片 380px、正文 12px），落到屏幕上卡片只有半屏宽、字 6px 高，
+ *   挤成一小块。下面所有值都是设计像素，约等于屏幕像素 × 1.94。 */
+.replay-card {
+  max-width: 620px;
+}
+/* 上一局结算弹窗：和回放同一档宽度，两个弹窗来回点的时候不会一宽一窄地跳。 */
+.prev-result-card {
+  max-width: 620px;
+}
+/* 高度不写 vh：整个 #stage 被 transform: scale() 缩过，vh 落在缩放坐标系里
+ * 只剩屏幕上三成高度（回放那个弹窗踩过同一个坑，见 .replay-body 的注释）。
+ * 交给 .modal-card 的 max-height: 82% + 这里的 min-height: 0 自动收缩。 */
+.prev-result-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 18px;
+  padding: 0 4px;
+}
+/* 弹窗里不播结算页那套错峰入场（每行延迟 0.15s）。
+ * 那套动画是为「结算揭晓」设计的 —— 一局刚打完，逐行揭晓有仪式感。
+ * 但这里玩家是回来**查**上一局分数的，4 个人要等 0.65s 才看全，
+ * 点开弹窗先看到一片空白，只会以为卡了。
+ * 列宽也比结算页收窄一档：分数列原来 132px 只为「24 分」三个字，净胜列 92px 也只是「+4」。
+ * 弹窗比结算页窄 130px，再沿用原列宽，名字列只剩 236px ——
+ * 「阿May（弃局）」加「我」胶囊要 250px，直接被截成省略号。
+ * 但第一列必须给足头像的实际宽度（.settle-rank 56px、.champion-rank 72px）：
+ * 那两个圆是定宽定高的，列比它窄就直接溢出去压住名字，而且不报任何错。 */
+.prev-result-body .settle-row {
+  animation: none;
+  grid-template-columns: 56px minmax(0, 1fr) 100px 76px;
+  column-gap: 10px;
+}
+.prev-result-body .settle-row.champion {
+  grid-template-columns: 72px minmax(0, 1fr) 92px 84px;
+  column-gap: 10px;
+}
+/* 冠军净胜在结算页是 48px 的巨字（那是揭晓时刻的视觉高潮）。
+ * 弹窗里没有揭晓，只有回看，降到 40px 既保住冠军的分量，又不至于把列吃掉。 */
+.prev-result-body .settle-row.champion .settle-net { font-size: 40px; }
+
+/* ★ 浅底重上色：这一块是「整屏字看不清」的修复，别当成配色偏好删掉。
+ *
+ * .settle-row 是给**结算页那块墨绿底**设计的：行底 rgba(0,0,0,0.24) 压在深绿上
+ * 是一块更深的墨绿，字用 body 的暖白（#f5f0e6），对比度很足。
+ * 但「上一局结算」弹窗装在 .modal-card 里，那是暖白纸感卡片 ——
+ * 同一个 rgba(0,0,0,0.24) 落到 #FFF7E8 上变成**浅灰**，字还是暖白：
+ *   昵称      暖白 on 浅灰 ≈ 1.4:1（几乎看不见）
+ *   分数      --gold on 浅金/浅灰 ≈ 1.5:1
+ *   净胜 0    --gray-aux on 浅灰 ≈ 1.1:1（等于没写）
+ * 真机上就是整屏糊成一片。结构必须和结算页同一份（排名、冠军行、「我」胶囊
+ * 不能各画一套慢慢跑偏），但**底不同，色阶就得跟着底换** ——
+ * 浅底用玩家档案卡（.pf-stat / .pf-net）已经定好的那一套：
+ * 主文字 --warm-ink、涨 --cta-red、跌 --brand-green、中性 --text-muted。
+ * （.pf-stat.down 那行注释写着「浅底上用深绿，保证对比度」，这里是同一条结论。） */
+.prev-result-body .settle-row {
+  background: rgba(26, 29, 35, 0.05);
+  border-color: rgba(26, 29, 35, 0.09);
+}
+.prev-result-body .settle-row.champion {
+  background: linear-gradient(180deg, rgba(245, 193, 92, 0.55), rgba(232, 163, 61, 0.28));
+  border-color: rgba(190, 132, 30, 0.55);
+}
+.prev-result-body .settle-row.me {
+  background: rgba(245, 193, 92, 0.16);
+  border-color: rgba(190, 132, 30, 0.65);
+  box-shadow: inset 6px 0 0 var(--gold-deep);
+}
+/* 冠军 + 我：.settle-row.champion.me 那条渐变是按深绿底调的，浅底上要提亮一档，
+ * 「我」这一行才还能从冠军行里分出来。 */
+.prev-result-body .settle-row.champion.me {
+  background: linear-gradient(180deg, rgba(245, 193, 92, 0.66), rgba(232, 163, 61, 0.34));
+}
+.prev-result-body .settle-name { color: var(--warm-ink); }
+/* 我的名字那档金：结算页用 --gold 在深绿上是亮的，在暖白上等于没有，
+ * 换 --gold-ink（同时 .settle-row.me .settle-name 是 0,3,0，必须写到同一档才压得住）。 */
+.prev-result-body .settle-row.me .settle-name { color: var(--gold-ink); }
+/* 分数是次要信息（净胜才是结论），深一档的金既保住层级又还能读。 */
+.prev-result-body .settle-score { color: var(--gold-ink); }
+.prev-result-body .settle-net.up { color: var(--cta-red); }
+.prev-result-body .settle-net.down { color: var(--brand-green); }
+.prev-result-body .settle-net.flat { color: var(--text-muted); }
+.prev-result-body .settle-you {
+  background: rgba(245, 193, 92, 0.24);
+  border-color: rgba(190, 132, 30, 0.55);
+  color: var(--gold-ink);
+}
+/* 尾部箭头同理：白色 28% 落在暖白纸上是**看不见**的（约 1.05:1），
+ * 换成一档墨色。冠军行是金渐变底，白色箭头在那里反而刚好，所以只改普通行。 */
+.prev-result-body .settle-row:not(.champion) .settle-go { color: rgba(26, 29, 35, 0.26); }
+@media (hover: hover) {
+  .prev-result-body .settle-row:hover { border-color: rgba(26, 29, 35, 0.22); }
+  .prev-result-body .settle-row:not(.champion):hover .settle-go { color: rgba(26, 29, 35, 0.5); }
+}
+/* 暖白底上那颗头像圈的浅白描边也看不见，换成一档墨色描边 ——
+ * 同一条结论在领奖台以外的每个「浅底重上色」块里都出现过。 */
+.prev-result-body .settle-rank { border-color: rgba(26, 29, 35, 0.16); }
+/* AI 那颗在浅底上要换回浅色虚线：深蓝圆配一条墨色虚线，虚线的「断」全被底色吃掉，
+ * 看起来就是一个实心圆 —— 而虚线正是「这是 AI」的那个信号。 */
+.prev-result-body .settle-rank.is-bot { border-color: rgba(255, 255, 255, 0.6); }
+.prev-result-body .settle-rank.champion-rank { border-color: rgba(255, 255, 255, 0.9); }
+/* 尾注同理：--gray-aux 是深绿底上的辅助灰，落在暖白上只剩 1.9:1。 */
+.prev-result-body .settle-tip { color: var(--text-muted); }
+.replay-head {
+  display: flex;
+  align-items: center;
+  /* 关闭键现在是绝对定位的圆形 X（见 .modal-x），不再占 flex 位置，
+   * 所以标题自己要让出右上角那一块，否则长标题会被 X 压掉后半截。 */
+  padding-right: 76px;
+  gap: 16px;
+}
+.replay-head h2 {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 32px;
+  color: var(--green-mid);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.replay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-top: 22px;
+  /* 不写 max-height: 56vh —— vh 取的是**视口**单位，而这里整个 #stage 被
+   * transform: scale() 缩过，56vh 挂在缩放坐标系里只剩屏幕上 29% 的高度，
+   * 于是内容一多就挤成一条缝。高度交给 .modal-card 的 max-height: 82%，
+   * flex 子项会自动收缩并在这里滚动，这才是它该有的行为。 */
+}
+.replay-empty {
+  font-size: 24px;
+  color: rgba(22, 56, 47, 0.5);
+  text-align: center;
+  padding: 50px 0;
+}
+.replay-sub {
+  flex: none;
+  margin-left: auto;
+  font-size: 20px;
+  color: rgba(22, 56, 47, 0.45);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 一把一张卡。以前是「一轮一张卡」，整场十几把时会变成四十几个方块，
+  看不出把与把的边界；现在把次是卡、轮次是卡里的分段。 */
+.replay-pack {
+  border: 1px solid rgba(22, 56, 47, 0.12);
+  border-radius: 16px;
+  padding: 4px 24px 16px;
+  margin-bottom: 20px;
+}
+.replay-pack:last-child { margin-bottom: 0; }
+/* 「你点的这把」：整场回放会从第一把开始，必须让人一眼看到自己是从哪把点进来的 */
+.replay-pack.is-target {
+  border-color: rgba(176, 132, 32, 0.6);
+  box-shadow: 0 0 0 2px rgba(176, 132, 32, 0.14);
+}
+.replay-pack-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 0 4px;
+}
+.replay-pack-no {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--green-mid);
+  font-variant-numeric: tabular-nums;
+}
+.replay-pack-flag {
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: rgba(176, 132, 32, 0.14);
+  border: 1px solid rgba(176, 132, 32, 0.45);
+  color: #8A6A1F;
+  font-size: 20px;
+  font-weight: 700;
+}
+/* 每把的「我这把 +/-N」。右对齐到「你点的这把」后面，扫一眼就知道这一把的进出。 */
+.replay-pack-net {
+  margin-left: auto;
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.replay-pack-net.up { color: #C0392B; }
+.replay-pack-net.down { color: #1E7A4B; }
+.replay-pack-net.flat { color: #6B7A75; }
+.replay-round-title {
+  font-size: 20px;
+  letter-spacing: 0.06em;
+  color: rgba(22, 56, 47, 0.42);
+  padding: 8px 0 2px;
+}
+.replay-group {
+  padding: 14px 0;
+  border-top: 1px dashed rgba(22, 56, 47, 0.14);
+}
+.replay-group:first-of-type {
+  border-top: 0;
+}
+.replay-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+.replay-label {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--green-mid);
+}
+.replay-winner {
+  flex: none;
+  font-size: 24px;
+  color: #8A6A1F;
+  text-align: right;
+}
+/* 我赢的那一组：写成「我赢」并加深，扫的时候先看到自己的战果。 */
+.replay-winner.is-me { color: #A9761A; font-weight: 800; }
+.replay-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 24px;
+  padding: 6px 0;
+}
+.replay-name {
+  flex: 0 0 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(22, 56, 47, 0.78);
+}
+.replay-cards {
+  flex: 1;
+  min-width: 0;
+  font-size: 24px;
+  color: rgba(22, 56, 47, 0.58);
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.replay-delta {
+  flex: 0 0 88px;
+  text-align: right;
+  font-weight: 700;
+}
+.replay-row.is-me .replay-name { color: #8A6A1F; font-weight: 700; }
+.replay-you {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(176, 132, 32, 0.14);
+  border: 1px solid rgba(176, 132, 32, 0.42);
+  color: #8A6A1F;
+  font-size: 16px;
+  font-style: normal;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.replay-delta.up { color: #C0392B; }
+.replay-delta.down { color: #1E7D4E; }
+.replay-delta.flat { color: rgba(22, 56, 47, 0.35); font-weight: 400; }
+
+/* ---------- 结算页按钮层级 ----------
+ * 原来是三个不同色的实心/描边按钮排成两行（红 + 绿 + 幽灵），
+ * 颜色本身在传递"红色是涨、绿色是跌"的信号，拿来区分主次会互相干扰。
+ * 现在：分享=金色实心（这一页的高光动作），查看战绩=绿色描边（是导航，不是主操作），
+ * 其余一律幽灵。"开下一把"仍由 btn-primary 负责，房主看到它时它是唯一的主按钮。
+ */
+#screen-settle #btn-share {
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  color: var(--warm-ink);
+  box-shadow: 0 8px 0 #B47F22;
+}
+#screen-settle #btn-share:active { box-shadow: 0 2px 0 #B47F22; }
+
+#screen-settle #btn-replay {
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  color: var(--gray-aux);
+  box-shadow: none;
+}
+#screen-settle #btn-replay:active {
+  transform: translateY(2px);
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#screen-settle #btn-records {
+  background: transparent;
+  border: 2px solid rgba(63, 214, 176, 0.5);
+  color: #63E3BE;
+  box-shadow: none;
+}
+#screen-settle #btn-records:active {
+  transform: translateY(2px);
+  box-shadow: none;
+  background: rgba(63, 214, 176, 0.10);
+}
+
+/* ---------------------------------------------------------------------------
+ * 安装引导条 + 忘记密码说明（2026-10-30 全量 review 新增）
+ *
+ * 尺寸跟在同一个设计空间里（750 宽），和 .auth-note / .entry-label 同一档，
+ * 不写 px：整套布局是按 --pt-scale 反算的，这里写死 px 会在小屏上大一倍。
+ * 刻意**不用 flex gap**：全站 104 处 gap 在 Chromium<84 / Safari<14.1 上全失效
+ * （review 里的兼容项），新代码不再加新的欠账，一律用 margin。
+ * ------------------------------------------------------------------------- */
+
+/* 首页：一条窄条，不抢「创建房间」的视觉重心。
+   默认 hidden，只有真能装（beforeinstallprompt 收到 / iOS Safari）才显示。 */
+.install-bar {
+  width: 100%;
+  max-width: 620px;
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  border: 1px solid rgba(245, 193, 92, 0.26);
+  border-radius: 18px;
+  background: rgba(30, 90, 68, 0.42);
+  overflow: hidden;
+}
+.install-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  padding: 8px 6px 8px 18px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.install-main:active { background: rgba(255, 255, 255, 0.06); }
+.install-ico { width: 36px; height: 36px; flex: 0 0 36px; margin-right: 14px; }
+/* 字号从这里往上抬过一档（20→24 / 19→26）：横屏舞台缩放只有 0.52，
+ * 20 设计 px 落到 10.4 CSS px，低于「能读但不费劲」的 11px 下限
+ * （probe-safearea、probe-landscape-screens 都会红）。
+ * 文案只有 13 个字，加宽 20% 不会挤成三行 —— 这条和 v82 的准备态无关，
+ * 是同一个探针在新一轮里被顺带量出来的旧账。 */
+.install-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 27px;
+  line-height: 1.3;
+  color: rgba(236, 241, 248, 0.92);
+}
+.install-go {
+  flex: 0 0 auto;
+  margin-left: 14px;
+  padding: 6px 16px;
+  border: 1px solid rgba(245, 193, 92, 0.5);
+  border-radius: 999px;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--gold);
+  white-space: nowrap;
+}
+/* 关闭按钮独立一列，并用左边框把它和主操作分开 —— 免得点「安装」误点到「×」 */
+.install-x {
+  flex: 0 0 auto;
+  align-self: stretch;
+  /* 同 .audio-toggle--sm：64 设计px 在小窗口上只有 29 CSS px，抬到 76 → 34 */
+  width: 76px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.09);
+  background: none;
+  font-family: inherit;
+  font-size: 32px;
+  line-height: 1;
+  color: rgba(184, 192, 204, 0.75);
+  cursor: pointer;
+}
+.install-x:active { background: rgba(255, 255, 255, 0.08); }
+/* iOS 那种「先展开步骤」的第二行：整行铺满，不参与上面那一排的居中 */
+.install-steps {
+  flex: 0 0 100%;
+  margin: 0;
+  padding: 0 18px 16px;
+  font-size: 19px;
+  line-height: 1.65;
+  color: rgba(236, 241, 248, 0.74);
+  text-align: left;
+}
+
+/* 横屏首页是两列网格，每个子元素都显式落格；不补这一条会被自动流放到
+   「第 1 列下面」那种空位里，看着像凭空多出一块。 */
+.ls #screen-home .home-inner > .install-bar {
+  grid-column: 2;
+  grid-row: 5;
+  max-width: none;
+  margin-top: 12px;
+}
+
+/* 登录页：忘记密码的就地说明。做成可点开的按钮而不是常驻文字，
+   是因为绝大多数人不需要它，常驻会把登录卡撑高、把「注册」挤到折线以下。 */
+.auth-forgot {
+  /* 76 设计px ≈ 39 屏幕px（390 宽时 scale≈0.52）。
+   * 一开始只写了 padding，量出来点击区只有 23 屏幕px —— 手指按不准，
+   * 而这是「忘了密码」唯一的入口，点不开就等于没有。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 76px;
+  margin: 14px auto 0;
+  padding: 0 20px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 20px;
+  color: rgba(245, 193, 92, 0.9);
+  text-decoration: underline;
+  text-underline-offset: 5px;
+  cursor: pointer;
+}
+.auth-forgot-note {
+  margin: 6px 0 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 20px;
+  line-height: 1.65;
+  color: rgba(236, 241, 248, 0.78);
+  text-align: left;
+}
+
+/* ---------- 建房：本局局数选择（3/5/10/15/30） ----------
+ * 五个档位横排，选中态用牌桌绿 + 白字，未选中走暖白纸底的淡墨框。
+ * 为什么不用 <select>：手机上原生 select 会把一次点击变成「弹面板 → 找选项 →
+ * 确认」三步操作，而这里只有五个固定值，摊平多花的高度远比三次点击便宜。
+ * 单位「局」单独一行小字：牌友的第一反应是「几把」，不标单位会被读成轮数。 */
+.create-box .create-desc {
+  margin: 0 0 22px;
+  font-size: 24px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.hand-limit-row {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 28px;
+}
+.hand-limit-chip {
+  flex: 1;
+  min-width: 0;
+  height: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 3px solid rgba(58, 29, 0, 0.14);
+  border-radius: 18px;
+  background: rgba(58, 29, 0, 0.04);
+  font-family: inherit;
+  color: var(--warm-ink);
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.hand-limit-chip .hl-num { font-size: 42px; font-weight: 700; line-height: 1; }
+.hand-limit-chip .hl-unit { font-size: 20px; color: var(--text-muted); line-height: 1; }
+.hand-limit-chip.is-on {
+  border-color: var(--brand-green);
+  background: var(--green-bright);
+  color: #FFFFFF;
+  box-shadow: 0 6px 18px rgba(10, 107, 84, 0.28);
+}
+.hand-limit-chip.is-on .hl-unit { color: rgba(255, 255, 255, 0.82); }
+.hand-limit-chip:active { transform: scale(0.97); }
+.hand-limit-chip:focus-visible {
+  outline: 3px solid var(--gold-ink);
+  outline-offset: 3px;
+}

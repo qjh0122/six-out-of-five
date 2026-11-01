@@ -1,0 +1,77 @@
+{
+  "pa0000000000001": {
+    "playerId": "pa0000000000001",
+    "nickname": "玩家A",
+    "games": 12,
+    "wins": 7,
+    "losses": 4,
+    "draws": 1,
+    "totalNet": 23,
+    "currentStreak": 2,
+    "longestStreak": 3,
+    "longestLoseStreak": 2,
+    "bestNet": 18,
+    "aiGames": 3,
+    "aiRecent": [],
+    "updatedAt": 1793000000000,
+    "recent": [
+      {
+        "endedAt": 1793000000000,
+        "net": 6,
+        "roomId": "000001",
+        "playerCount": 4,
+        "endReason": "handLimit"
+      },
+      {
+        "endedAt": 1792999000000,
+        "net": -3,
+        "roomId": "000002",
+        "playerCount": 3,
+        "endReason": "handLimit"
+      }
+    ],
+    "account": {
+      "name": "player_a",
+      "salt": "00000000000000000000000000000000",
+      "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "createdAt": 1792900000000,
+      "lastLoginAt": 1793000000000,
+      "disabled": false,
+      "tv": 0
+    }
+  },
+  "pb0000000000002": {
+    "playerId": "pb0000000000002",
+    "nickname": "玩家B",
+    "games": 5,
+    "wins": 2,
+    "losses": 3,
+    "draws": 0,
+    "totalNet": -11,
+    "currentStreak": -1,
+    "longestStreak": 2,
+    "longestLoseStreak": 2,
+    "bestNet": 9,
+    "aiGames": 0,
+    "aiRecent": [],
+    "updatedAt": 1793000000000,
+    "recent": [
+      {
+        "endedAt": 1793000000000,
+        "net": -5,
+        "roomId": "000003",
+        "playerCount": 5,
+        "endReason": "dissolve"
+      }
+    ],
+    "account": {
+      "name": "player_b",
+      "salt": "00000000000000000000000000000000",
+      "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "createdAt": 1792950000000,
+      "lastLoginAt": 1793000000000,
+      "disabled": false,
+      "tv": 0
+    }
+  }
+}

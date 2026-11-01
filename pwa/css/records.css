@@ -1,0 +1,815 @@
+/* ============================================================================
+   六选五 · 战绩页（L0 本机战绩）
+   ----------------------------------------------------------------------------
+   依据：docs/proto-records-spec.md（逐元素数值）+ docs/proto-records.html（原型）
+   坐标系：750 × 1624 设计像素（与 game.js CONFIG.DESIGN_WIDTH 一致）
+   零图片：全部质感用 CSS 渐变 / 内联 SVG / 字符，无外链字体、无 CDN
+   类名统一 rp- 前缀，避免与 style.css 里的 .btn / .slot / .settle-row 等短名相撞
+   ============================================================================ */
+
+#screen-records {
+  /* 顶/底去掉 .screen 默认的 44 / 120：状态栏由 --sa-top 撑开，页脚自带 70 下边距 */
+  padding: var(--sa-top, 0px) var(--sa-right, 0px) var(--sa-bottom, 0px) var(--sa-left, 0px);
+  color: var(--warm-white);
+  /* 信息页：牌桌绿家族 + 两团极淡金光晕（v2 §2.1），三层顺序不能反 */
+  background:
+    radial-gradient(620px 320px at 92% -80px, rgba(245, 193, 92, 0.15), transparent 72%),
+    radial-gradient(760px 420px at 6% -120px, rgba(245, 193, 92, 0.09), transparent 74%),
+    radial-gradient(120% 58% at 50% 0%, var(--green-bright) 0%, var(--green-mid) 44%, var(--green-deep) 100%);
+}
+
+/* ---------- 标题栏（112） ---------- */
+.rp-nav {
+  position: relative;
+  flex: 0 0 112px;
+  height: 112px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+}
+.rp-back {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  /* 热区兜底：320 窄屏 / 横屏下按 --tap-min 放大到 ≥44 物理 px（图标仍是 34） */
+  width: max(88px, var(--tap-min, 88px));
+  height: max(88px, var(--tap-min, 88px));
+  min-width: max(88px, var(--tap-min, 88px));
+  min-height: max(88px, var(--tap-min, 88px));
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.12s ease-out;
+}
+.rp-back svg { width: 34px; height: 34px; display: block; }
+.rp-back:active { background: rgba(255, 255, 255, 0.10); } /* 导航键不做位移，避免整页在动的错觉 */
+.rp-title {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  line-height: 1;
+  background: linear-gradient(180deg, #FFEBAA 0%, #F7C862 52%, var(--gold-deep) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.42);
+}
+
+/* ---------- 滚动内容区（只有它滚，标题栏与页脚固定） ---------- */
+.rp-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;   /* 滑到边界不把滚动传给外层 */
+  -webkit-overflow-scrolling: touch;
+  padding: 24px var(--screen-pad-x) 0;
+  scrollbar-width: none;
+  /* 底部 46 渐隐：暗示"下面还有" */
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 46px), transparent 100%);
+          mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 46px), transparent 100%);
+}
+.rp-scroll::-webkit-scrollbar { width: 0; height: 0; }
+
+/* ---------- 汇总主卡 ---------- */
+.rp-sum {
+  --rp-glow: 255, 93, 93;
+  position: relative;
+  overflow: hidden;
+  padding: 28px 32px 26px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+}
+.rp-sum.up { --rp-glow: 255, 93, 93; }
+.rp-sum.down { --rp-glow: 61, 220, 132; }
+.rp-sum.flat { --rp-glow: 245, 193, 92; }
+.rp-sum::after {
+  content: '';
+  position: absolute;
+  right: -90px;
+  top: -120px;
+  width: 420px;
+  height: 330px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--rp-glow), 0.18), transparent 66%);
+  pointer-events: none;
+}
+.rp-sum-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--gray-aux);
+  letter-spacing: 2px;
+}
+.rp-sum-value {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 88px;
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+  color: var(--up-red);
+}
+.rp-sum.down .rp-sum-value { color: var(--down-green); }
+.rp-sum.flat .rp-sum-value { color: var(--gray-aux); }
+.rp-unit { font-size: 28px; font-weight: 700; opacity: 0.72; letter-spacing: 0; }
+.rp-sum-meta {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 28px;
+  font-weight: 500;
+  color: rgba(255, 247, 232, 0.78);
+}
+.rp-meta-item { display: inline-flex; align-items: baseline; gap: 6px; }
+.rp-sum-meta b {
+  font-size: 32px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--warm-white);
+  letter-spacing: 0.5px;
+}
+.rp-vsep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.16); flex: 0 0 1px; }
+
+/* ---------- 三宫格（胜 / 负 / 平，顺序固定） ---------- */
+.rp-grid {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.rp-gcard {
+  --rp-gc: var(--gray-aux);
+  padding: 20px 8px 18px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.rp-gcard.win { --rp-gc: var(--up-red); }
+.rp-gcard.lose { --rp-gc: var(--down-green); }
+.rp-gcard.flat { --rp-gc: var(--gray-aux); }
+.rp-glabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--gray-aux);
+  letter-spacing: 1px;
+}
+.rp-gdot { width: 12px; height: 12px; border-radius: 50%; background: var(--rp-gc); }
+.rp-gnum {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1.08;
+  font-variant-numeric: tabular-nums;
+  color: var(--rp-gc);
+}
+
+/* ---------- 纪录条（单场最高 / 最长连胜 / 最长连败） ----------
+   与上面的三宫格刻意区分：三宫格是「场次统计」（三张独立卡、48px 大数字），
+   这里是一块整面板 + 发丝线分栏（40px、更暗的底、金色描边），
+   读起来像「纪录」而不是「又一行统计」。 */
+.rp-bests {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(245, 193, 92, 0.16);
+  overflow: hidden;
+}
+.rp-best {
+  min-width: 0;
+  padding: 18px 8px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.rp-best + .rp-best { box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.10); }
+.rp-best-k {
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  line-height: 1.2;
+  color: var(--gray-aux);
+  white-space: nowrap;
+}
+.rp-best-v {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.06;
+  font-variant-numeric: tabular-nums;
+  color: var(--warm-white);
+}
+.rp-best-v b { font-weight: 800; } /* 数字永远是 b，单位是小号 i，视觉重量分开 */
+.rp-best-v i {
+  font-size: 20px;
+  font-style: normal;
+  font-weight: 600;
+  opacity: 0.6;
+  letter-spacing: 0;
+}
+.rp-best-v.up { color: var(--up-red); }
+.rp-best-v.down { color: var(--down-green); }
+.rp-best-v.flat { color: var(--warm-white); }
+
+/* ---------- 中段：胜/负/平 三卡 + 纪录条 ----------
+ *
+ * 这里原本是「KPI 列 ＋ 牌风雷达」两列（竖屏上下排、横屏并排）。
+ * 雷达撤掉之后只剩一列：三卡与纪录条各占整行。
+ * 390 宽下每张卡 207 设计像素，横屏 612 的栏宽下是 193 —— 两个朝向的卡
+ * 几乎一样大，不需要再为朝向单独调尺寸。
+ */
+.rp-kpi {
+  margin-top: 16px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* 三卡与纪录条原本各自带 margin-top，搬进 .rp-kpi 之后改由 gap 统一。
+   两个间距同时存在会变成 20 + 16 = 36 设计像素 —— 竖屏看不出来，
+   横屏正好把「最近 10 局」挤出可视区。 */
+.rp-kpi .rp-grid,
+.rp-kpi .rp-bests { margin-top: 0; }
+
+/* ---------- 最近 10 局趋势条 ---------- */
+.rp-trend { margin-top: 22px; }
+.rp-trend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.rp-trend-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: rgba(255, 247, 232, 0.92);
+  letter-spacing: 1px;
+}
+.rp-legend { display: flex; align-items: center; gap: 16px; font-size: 20px; color: var(--gray-aux); }
+.rp-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.rp-lg { width: 16px; height: 16px; border-radius: 8px; }
+.rp-lg-win { background: var(--up-red); }
+.rp-lg-lose { background: var(--down-green); }
+.rp-lg-flat { background: rgba(255, 255, 255, 0.24); }
+.rp-trend-bar { display: flex; justify-content: space-between; align-items: center; }
+.rp-trend-bar.fewer { justify-content: flex-end; gap: 14.4px; }
+.rp-t {
+  width: 54px;
+  height: 54px;
+  border-radius: 12px;
+  flex: 0 0 54px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 800;
+  font-style: normal;
+  color: rgba(26, 29, 35, 0.42);
+}
+.rp-t.win {
+  background: linear-gradient(180deg, #FF7676, var(--up-red));
+  box-shadow: 0 3px 0 rgba(150, 26, 26, 0.5);
+}
+.rp-t.lose {
+  background: linear-gradient(180deg, #63EBA0, var(--down-green));
+  box-shadow: 0 3px 0 rgba(18, 104, 64, 0.5);
+}
+.rp-t.flat {
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 247, 232, 0.62);
+  font-size: 24px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.rp-t.empty { background: transparent; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.10); }
+.rp-trend-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 20px;
+  color: rgba(255, 247, 232, 0.34);
+  letter-spacing: 1px;
+}
+
+/* ---------- 最近对局列表 ---------- */
+.rp-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 32px 0 14px;
+}
+.rp-list-head h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--warm-white);
+  letter-spacing: 1px;
+}
+.rp-list-count { font-size: 24px; color: var(--gray-aux); font-variant-numeric: tabular-nums; }
+
+/* ---------- 人机对局（含 AI 的场次不计入战绩与排行榜） ----------
+ * 列表上方一行说明 + 行内徽标，「说明」和「被判定的行」用同一个形状，
+ * 看见徽标就知道这行是什么，不需要再读一遍文字。
+ * 不做成横幅：这一页的主角是汇总数字和净胜，提示只需要被看见，不需要被强调。 */
+.rp-ai-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -2px 0 14px;
+  font-size: 24px;
+  color: var(--gray-aux);
+}
+.rp-ai-chip,
+.rp-row-ai {
+  flex: none;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  color: #CBE7DA;
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+/* 人机局整行降一档亮度：仍然可读，但不该和真实战绩抢读数。
+ * 净胜的红/绿保留 —— 那是这一局的结果，只是这一局不算数。 */
+.rp-row.is-ai .rp-time { color: rgba(255, 247, 232, 0.72); }
+.rp-row.is-ai .rp-net { opacity: 0.62; }
+
+.rp-list {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+}
+.rp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 18px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.rp-row:first-child { border-top: 0; }
+.rp-row-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.rp-time {
+  font-size: 28px;
+  font-weight: 700;
+  color: rgba(255, 247, 232, 0.94);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.rp-people {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  font-size: 20px;
+  color: var(--gray-aux);
+  font-variant-numeric: tabular-nums;
+}
+.rp-net {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  padding-left: 20px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-aux);
+}
+.rp-net.up { color: var(--up-red); }
+.rp-net.down { color: var(--down-green); }
+.rp-net.flat { color: var(--gray-aux); }
+/* 第二行：结束原因 +「看过程」。原来 rp-sub 自己占 grid-column: 1，
+ * 现在多了一个按钮，所以外包一层 flex 行来管 grid 位置。 */
+.rp-sub-wrap {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.rp-sub {
+  margin-top: 0;
+  font-size: 24px;
+  color: var(--gray-aux);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「看过程」：回放留存（P3-7 剩项）。字要比正文亮一档，否则在一堆灰字里找不到 */
+.rp-replay {
+  flex: none;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--gold);
+  cursor: pointer;
+  /* 热区 vs 视觉：文字只有 12 屏幕px 高，必须靠 padding 撑出可点范围；
+   * 负 margin 抵掉多出来的占位，保证这一行的高度不变。
+   * 原来 `padding: 2px 0` 时 360×640（缩放 0.48）上是 29.3 CSS —— 差 0.7 够不到 30。
+   * 撑到 24px 后稳定过 30 CSS，一直到 scale 0.44 的下限。 */
+  padding: 24px 10px;
+  margin: -24px -10px;
+}
+.rp-replay::after { content: ' ›'; }
+.rp-replay:active { opacity: 0.7; }
+
+/* ---------- 页脚（固定屏底，不随列表滚动） ---------- */
+.rp-foot {
+  flex: 0 0 auto;
+  width: 100%;
+  padding: 26px var(--screen-pad-x) 70px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  background: linear-gradient(180deg, rgba(15, 43, 34, 0) 0%, rgba(15, 43, 34, 0.88) 26%, rgba(15, 43, 34, 0.98) 100%);
+  position: relative;
+  z-index: 2;
+}
+.rp-note {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 24px;
+  line-height: 1.4;
+  color: rgba(184, 192, 204, 0.86);
+  text-align: center;
+}
+.rp-note svg { width: 22px; height: 22px; flex: 0 0 22px; }
+.rp-clear {
+  width: 288px;
+  max-width: 100%;
+  min-height: max(88px, var(--tap-min, 88px));
+  padding: 0;
+  border: 2px solid rgba(255, 93, 93, 0.45);
+  border-radius: 20px;
+  background: rgba(255, 93, 93, 0.06);
+  color: var(--danger-ghost);
+  font-family: inherit;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: transform 0.1s ease-out, background 0.15s ease-out;
+}
+.rp-clear:active { transform: translateY(2px); background: rgba(255, 93, 93, 0.15); }
+
+/* ---------- 空状态 ---------- */
+.rp-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 60px 150px;
+  text-align: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.rp-empty-art { width: 188px; height: 188px; display: block; flex: 0 0 auto; }
+.rp-empty-title {
+  margin: 36px 0 0;
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--warm-white);
+  letter-spacing: 1px;
+}
+.rp-empty-sub {
+  margin: 14px 0 0;
+  font-size: 24px;
+  line-height: 1.5;
+  color: var(--gray-aux);
+}
+.rp-empty-cta {
+  width: 480px;
+  max-width: 100%;
+  min-height: max(112px, var(--tap-min, 112px));
+  margin: 54px 0 0;
+  padding: 0 36px;
+  border-radius: 28px;
+  font-size: 32px;
+  letter-spacing: 2px;
+}
+
+/* ---------- 清除确认弹窗（复用 .modal / .modal-box 暖白体系） ---------- */
+.rp-clear-box {
+  max-width: 620px;
+  padding: 52px 40px 36px;
+  border-radius: 28px;
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+}
+.rp-clear-box::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 8px;
+  background: linear-gradient(90deg, var(--gold-light), var(--gold-deep));
+}
+.rp-clear-box h3 {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--warm-ink);
+  letter-spacing: 1px;
+}
+.rp-clear-box p {
+  margin: 20px 0 0;
+  font-size: 28px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.rp-warn {
+  margin: 26px 0 0;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(214, 40, 40, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(214, 40, 40, 0.18);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--cta-red-deep);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.rp-warn svg { width: 24px; height: 24px; flex: 0 0 24px; }
+
+/* 云端清除开关：默认勾上。
+ * 用户点「清除记录」时脑子里想的是「把我这个号的数据清掉」；只删本机不动服务器，
+ * 回到排行榜还看得见战绩 —— 那正是这次要修的 bug。想留云端的人可以取消勾选。
+ * 尺寸同样按 750 设计空间写（见 README 置顶警告）。 */
+.rp-opt {
+  position: relative;
+  margin: 20px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: rgba(12, 42, 34, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(12, 42, 34, 0.12);
+  cursor: pointer;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.rp-opt input { position: absolute; opacity: 0; width: 0; height: 0; }
+.rp-opt-box {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: inset 0 0 0 2px rgba(12, 42, 34, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.rp-opt-box svg { width: 24px; height: 24px; opacity: 0; transition: opacity 0.12s; }
+.rp-opt input:checked + .rp-opt-box { background: var(--gold); box-shadow: inset 0 0 0 2px var(--gold-deep); }
+.rp-opt input:checked + .rp-opt-box svg { opacity: 1; }
+.rp-opt input:focus-visible + .rp-opt-box { box-shadow: inset 0 0 0 2px var(--gold-deep), 0 0 0 4px rgba(245, 193, 92, 0.45); }
+.rp-opt.is-off { opacity: 0.5; cursor: default; }
+/* 19 个字的短句按 24px 排会顶到右侧留白（实测在 390 宽屏上刚好贴边），
+ * 降到 22px 并允许折行：宁可两行，也不要贴着边框。 */
+.rp-opt-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 20px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+.rp-clear-box .modal-actions { margin-top: 34px; }
+.rp-clear-box .modal-actions .btn {
+  flex: 1 1 0;
+  min-height: 96px;
+  border-radius: 24px;
+  font-size: 28px;
+}
+
+/* ============================================================================
+   compact 短屏压缩（stageH < 1500 时由 game.js 给 #stage 加 .compact-v）
+   命中 320×568 / 360×640 竖屏与横屏 1440；不改 DOM，只覆盖数值
+   ============================================================================ */
+.compact-v .rp-sum { padding: 22px 28px 20px; }
+.compact-v .rp-sum-value { font-size: 76px; }
+.compact-v .rp-sum-meta { font-size: 24px; }
+.compact-v .rp-sum-meta b { font-size: 28px; }
+.compact-v .rp-gcard { padding: 16px 8px 14px; }
+.compact-v .rp-gnum { font-size: 40px; }
+.compact-v .rp-glabel { font-size: 20px; }
+.compact-v .rp-trend-title { font-size: 24px; }
+.compact-v .rp-legend { font-size: 20px; }
+.compact-v .rp-t {
+  width: 46px;
+  height: 46px;
+  flex-basis: 46px;
+  border-radius: 12px;
+}
+.compact-v .rp-row { padding: 14px 20px; }
+.compact-v .rp-time { font-size: 28px; }
+.compact-v .rp-net { font-size: 32px; }
+.compact-v .rp-sub { font-size: 20px; }
+.compact-v .rp-ai-note { font-size: 20px; }
+.compact-v .rp-list-head { margin: 24px 0 10px; }
+.compact-v .rp-foot { padding: 20px var(--screen-pad-x) 56px; gap: 16px; }
+.compact-v .rp-empty { padding: 0 60px 96px; }
+.compact-v .rp-empty-cta { margin-top: 34px; }
+
+/* ============================ 排行榜 ============================ */
+.rank-tip {
+  padding: 120px 40px;
+  text-align: center;
+  font-size: 24px;
+  color: var(--gray-aux);
+}
+.rank-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 24px;
+}
+.rank-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 20px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.rank-row:first-child { border-top: 0; }
+.rank-row .rank-no {
+  flex: 0 0 52px;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 800;
+  color: rgba(255, 247, 232, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+.rank-row.is-top .rank-no { color: var(--gold); }
+.rank-row .rank-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 28px;
+  font-weight: 600;
+  color: rgba(255, 247, 232, 0.94);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rank-row .rank-meta {
+  flex: 0 0 auto;
+  font-size: 20px;
+  color: var(--gray-aux);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rank-row .rank-net {
+  flex: 0 0 96px;
+  text-align: right;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-aux);
+}
+.rank-row .rank-net.up { color: var(--up-red); }
+.rank-row .rank-net.down { color: var(--down-green); }
+.rank-row .rank-net.flat { color: var(--gray-aux); }
+
+/* ---------- 整行可点：点开该玩家的云端档案 ----------
+ * 排行榜以前和一份纯展示名单长得一模一样，没有任何「可以点」的暗示。
+ * 加了 data-pid 却没人点，等于没加 —— 箭头是那唯一的暗示，
+ * :active 是点下去之后那 100ms 的必要回应（手机上尤其重要，否则像没点着）。
+ * 只选 #rank-list 里的行：榜尾的 .rank-gap（省略号）不是行，不可点。 */
+#rank-list .rank-row { cursor: pointer; }
+#rank-list .rank-row:active { background: rgba(255, 255, 255, 0.06); }
+#rank-list .rank-row.is-me:active { background: rgba(245, 193, 92, 0.18); }
+.rank-row .rank-go {
+  flex: 0 0 auto;
+  margin-left: -8px;
+  font-size: 32px;
+  line-height: 1;
+  color: rgba(255, 247, 232, 0.26);
+}
+
+/* ---------- 我的那一行 ----------
+ * 排在前 50 就高亮自己那一行；排在 50 开外则贴在榜尾，中间用省略号隔开。
+ * 以前只给 top50，第 51 名往后打开榜单看到的是一份「和我无关」的名单。 */
+.rank-row.is-me {
+  background: rgba(245, 193, 92, 0.10);
+  box-shadow: inset 4px 0 0 var(--gold);
+}
+.rank-row.is-me .rank-name { color: var(--gold); }
+.rank-row.is-me .rank-no { color: var(--gold); }
+.rank-you {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: rgba(245, 193, 92, 0.18);
+  border: 1px solid rgba(245, 193, 92, 0.5);
+  color: var(--gold);
+  font-size: 20px;
+  font-style: normal;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.rank-gap {
+  padding: 14px 24px;
+  text-align: center;
+  color: rgba(255, 247, 232, 0.32);
+  font-size: 24px;
+  letter-spacing: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.10);
+}
+
+.compact-v .rank-row { padding: 16px 20px; gap: 14px; }
+.compact-v .rank-row .rank-name { font-size: 28px; }
+.compact-v .rank-row .rank-net { font-size: 32px; flex-basis: 84px; }
+
+/* ---------- 前三名「看台」 ----------
+ * 目的不是花哨，是让人一眼分清「这是榜单的前三名」和「这是第 7 名那一行」。
+ * 之前前三名只是名次数字变金 + emoji 奖牌，和下面的行几乎一样重，整页读起来是平的。
+ *
+ * 全部带 :not(.is-me)：我的那一行有自己的金条高亮（.rank-row.is-me），
+ * 不能被名次底色盖掉 —— 这是"我排第一"时最容易出错的一处。
+ */
+#rank-list .rank-row:nth-child(1):not(.is-me) {
+  background: linear-gradient(180deg, rgba(245, 193, 92, 0.16), rgba(245, 193, 92, 0.03));
+  border-top-color: transparent;
+}
+#rank-list .rank-row:nth-child(2):not(.is-me) {
+  background: linear-gradient(180deg, rgba(226, 234, 240, 0.09), rgba(226, 234, 240, 0.02));
+}
+#rank-list .rank-row:nth-child(3):not(.is-me) {
+  background: linear-gradient(180deg, rgba(206, 142, 92, 0.12), rgba(206, 142, 92, 0.03));
+}
+#rank-list .rank-row:nth-child(-n+3) {
+  padding: 24px 24px;
+}
+#rank-list .rank-row:nth-child(-n+3) .rank-no {
+  flex-basis: 60px;
+  font-size: 32px;
+}
+#rank-list .rank-row:nth-child(1) .rank-name {
+  font-size: 32px;
+  font-weight: 700;
+  color: #FFE7B8;
+}
+#rank-list .rank-row:nth-child(-n+3) .rank-net {
+  font-size: 40px;
+}
+/* 前三名和后面之间画一条分界，避免"第 4 名看起来也像看台" */
+#rank-list .rank-row:nth-child(3) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}

@@ -1,0 +1,69 @@
+# ============================================================================
+# 六选五 · 忽略规则（公开仓库版 · 2026-11-01）
+#
+# 原则：凡「只在本机有意义」「含真实玩家数据」「可再生成」的一律不进来。
+# 改完自查：git status --ignored --short | head -40
+# 设计依据见 docs/repo-public-plan.md §3
+# ============================================================================
+
+# ---------- 1. 依赖 ----------
+node_modules/
+.pnpm-store/
+
+# ---------- 2. 秘密：永不入库，只走环境变量 ----------
+# 备份导出密钥：?full=1 全量导出与 /api/admin/* 共用它。
+# 历史里曾以 48 字符形态存在于 14 个提交（已确认为泄露），一律轮换 +
+# 改用 BACKUP_KEY 环境变量；本机文件仅作兜底，绝不 git add。
+server/backup-key.txt
+# 令牌签名密钥（默认落在数据目录，即项目外）；这里兜一层防手改路径
+auth-secret.txt
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ---------- 3. 真实玩家数据 ----------
+# 真实档案一律不入库：profile.js 支持 DATA_DIR / SEED_FILE 指向项目外。
+# 结构样例 profiles.example.json 必须保留（下面有 ! 例外），它是
+# 「这个文件长什么样」的唯一公开答案，也是 persist.test.js 的校验目标。
+server/data/*.json
+!server/data/profiles.example.json
+# 损坏留档（profile.js 会改名成 *.corrupt-<ts>）、写盘中间文件
+*.corrupt-*
+server/data/*.tmp
+# 头像照片目录（P1b，默认关闭）
+server/data/avatars/
+
+# ---------- 4. 线上快照 / 探针输出：含账号盐与哈希 ----------
+.live-*.json
+*.live.json
+tmp-shots/
+probe-out/
+
+# ---------- 5. 内部工作台记录：开发日记 + 平台标记 + 线上快照 ----------
+# 含真人昵称、对话细节、线上主机与 sharecode 默认值，公开仓库一律不要
+.workbuddy/
+.wbapp_*.genie
+
+# ---------- 6. 构建产物 ----------
+# 原型单文件产物（scripts/build-proto.js 生成，450K）：需要时跑一次即可，
+# CI 用 build-proto.js --check 保证产物与源不漂
+dist/
+*.tgz
+
+# ---------- 7. 日志 ----------
+*.log
+npm-debug.log*
+logs/
+
+# ---------- 8. 编辑器 / 操作系统临时文件 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
