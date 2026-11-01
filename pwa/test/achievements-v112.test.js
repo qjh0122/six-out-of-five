@@ -2,7 +2,7 @@
  * 成就系统 v112 改版的守卫（node pwa/test/achievements-v112.test.js）
  *
  * 这一版改的全是**口径**，而口径错起来一律不报错：
- *   · 小牌型记到了大牌对撞的分母里 → 「强者运强」的胜率被一群爆点稀释；
+ *   · 小牌型记到了大牌对撞的分母里 → 「遇强则强」的胜率被一群爆点稀释；
  *   · 整把三条算在「一轮」上 → 一局里被计两次，或者第一轮就把结果定了；
  *   · 展示模式没标 → 玩家看到「停在 20/20」的进度条，以为系统不记了。
  *
@@ -138,13 +138,14 @@ console.log('\n[4] 展示口径：只有六条画进度条');
   const prog = res.list.filter(function (x) { return x.mode === 'progress'; }).map(function (x) { return x.name; });
   eq(prog.join(','), '常客,老油条,势不可挡,十连胜,背到极点,衰神附体', '进度条成就正好这六条（顺序也钉住）');
   const counts = res.list.filter(function (x) { return x.mode === 'count'; });
-  eq(counts.length, 33 - 6, '其余 27 条都是次数口径（v114 去重 5 条 + 补 4 条通赔）');
+  eq(counts.length, 35 - 6, '其余 29 条都是次数口径（v114 去重 + 通赔；v115 对撞重排成 8 条）');
   ok(counts.every(function (x) { return x.need >= 1; }), '次数口径的成就都有解锁门槛');
-  /* 用户点名的例子：牌桌屠夫阈值 20，但**展示**的是累计次数，不是 0/20。
-   * 门槛和展示是两件事 —— 门槛决定星亮不亮，展示决定玩家看到什么数字。 */
-  var butcher = res.list.filter(function (x) { return x.name === '牌桌屠夫'; })[0];
-  ok(butcher && butcher.mode === 'count' && butcher.need === 20,
-    '★ 牌桌屠夫：门槛 20 但按次数展示（不是 0 / 20 的进度）');
+  /* 用户点名的例子：门槛 10 次，但**展示**的是累计次数，不是 0/10 的进度。
+   * 门槛和展示是两件事 —— 门槛决定星亮不亮，展示决定玩家看到什么数字。
+   * （v115 换了例子：原例「牌桌屠夫」重排后门槛降到 1，已经说明不了这件事了。） */
+  var strong = res.list.filter(function (x) { return x.name === '遇强则强'; })[0];
+  ok(strong && strong.mode === 'count' && strong.need === 10,
+    '★ 遇强则强：门槛 10 次但按次数展示（不是 0 / 10 的进度）');
 }
 {
   /* 牌型卡带出现率：十点半 3 次 / 20 次参与 = 15% */
