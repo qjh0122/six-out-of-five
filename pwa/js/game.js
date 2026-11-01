@@ -61,10 +61,12 @@
    *   - ?mode=local 演示模式保留按标签页独立（同一浏览器开多个标签页当多个玩家），
    *     但它同样需要账号——服务端不接受未登录的请求。
    * 房间数据在 RoomStore 用 localStorage（跨标签页共享）。 */
-  var SS_UID = 'weile_myid';
-  /* 昵称仍存 localStorage（不是 sessionStorage）：后者生命周期只有当前标签页，
+  /* 物理键一律来自 Storage（js/storage.js）—— 键名只允许在那里出现一次。
+   * 昵称仍存 local（不是 session）：后者生命周期只有当前标签页，
    * iOS 从主屏打开或页面被系统回收后重开就清空，正是「昵称设好又没了」的原因。 */
-  var LS_NICK = 'lxw_nickname_v1';
+  var ST = (typeof LXW !== 'undefined' && LXW.Store) ? LXW.Store : null;
+  var SS_UID = ST ? ST.KEYS.MY_ID : 'lxw_myid_v1';
+  var LS_NICK = ST ? ST.KEYS.NICK : 'lxw_nickname_v1';
 
   function demoMultiTab() {
     // 演示 / 本地联调：?mode=local 或直接双击（file://）
@@ -81,9 +83,8 @@
      * 保留「按标签页生成一个临时 id」的老行为，否则本地演示会被登录墙彻底堵死。
      * 生产路径上这个分支进不去（URL 里没有 mode=local 且不是 file://）。 */
     if (demoMultiTab()) {
-      var sid = null;
-      try { sid = sessionStorage.getItem(SS_UID); } catch (e) {}
-      if (!sid) { sid = uid(); try { sessionStorage.setItem(SS_UID, sid); } catch (e) {} }
+      var sid = ST ? ST.read(SS_UID, '', 'session') : '';
+      if (!sid) { sid = uid(); if (ST) ST.write(SS_UID, sid, 'session'); }
       return sid;
     }
     if (typeof AuthStore !== 'undefined') {
@@ -96,21 +97,22 @@
    * 改名会随 createRoom 一起写回云端档案（服务端 profiles.ensure）。 */
   function getNickname() {
     if (demoMultiTab()) {
-      try { return sessionStorage.getItem('weile_nickname') || ''; } catch (e) { return ''; }
+      return ST ? ST.read(ST.KEYS.NICK_SESSION, '') : '';
     }
-    var n = '';
-    try { n = localStorage.getItem(LS_NICK) || ''; } catch (e) {}
+    var n = ST ? ST.read(LS_NICK, '') : '';
     if (!n && typeof AuthStore !== 'undefined') n = AuthStore.nickname();
     return n || '';
   }
   function setNickname(n) {
     var v = n || '';
     if (demoMultiTab()) {
-      try { sessionStorage.setItem('weile_nickname', v); } catch (e) {}
+      if (ST) ST.write(ST.KEYS.NICK_SESSION, v, 'session');
       return;
     }
-    try { localStorage.setItem(LS_NICK, v); } catch (e) {}
-    try { sessionStorage.setItem('weile_nickname', v); } catch (e) {} // 兼容仍在读 sessionStorage 的旧逻辑
+    if (ST) ST.write(LS_NICK, v);
+    /* 生产路径同时写一份 session：放在这个标签页里，SW 接管后自动 reload 时
+     * 首帧要立刻显示昵称（local 会读，但输入框里那半句还没提交的草稿只有 session 有）。 */
+    if (ST) ST.write(ST.KEYS.NICK_SESSION, v, 'session');
     if (typeof AuthStore !== 'undefined') AuthStore.setNickname(v);
   }
 
@@ -125,23 +127,83 @@
     return ph === StateMachine.PHASE.ROUND1_SPLIT || ph === StateMachine.PHASE.ROUND2_SPLIT;
   };
 
+  /* ── 应用状态（v111 整理）────────────────────────────────────────────
+   *
+   * **为什么还是扁平结构，没有改成 state.session / state.room / state.split**
+   *
+   * 分类本身有价值（下三段就是这么分的），但「套一层对象」要给 250 处调用点
+   * 全改成 `state.split.groups`，任何一处漏改都是运行时炸而不是编译期报错 ——
+   * v108 拆 game.js 的教训摆在那儿：只搬定义、不动调用点，才敢说零行为变化。
+   * 这里要解决的真正问题是「跨屏污染」，而它的成因是**没人负责清**，
+   * 不是字段没分组。所以这一轮做的是两件有判别力的事：
+   *   1. 每个字段写进字面量（以前 justDealt / absorbSig / dissolveWasActive
+   *      是首次赋值时动态挂上的，看代码的人根本不知道有这个字段）；
+   *   2. 三个时机各有一个具名重置函数（见下面的 resetSplitState 等），
+   *      并由 pwa/test/state-reset.test.js 守着「每加一个字段都必须归位」。
+   *
+   * 分三组的判据是**生命周期**，不是模块：
+   *   · session —— 这次打开页面期间有效（登录身份、当前屏、页面来处）
+   *   · room    —— 跟着房间走（进房建、退房清）
+   *   · split   —— 跟着当前这一轮分牌走（每轮重开）
+   */
   var state = {
-    myId: null,
+    /* ---- session：本次打开 ---- */
+    myId: null,          // 登录后由账号决定；退出登录才清（不随进退房清）
+    screen: '',          // 当前页面（'records' 时房间订阅不改写界面）
+    recordsFrom: 'home', // 战绩页来处：home / settle（返回时回到来处）
+    suppressTap: false,  // 刚拖完一张牌，压掉浏览器补发的那次 click
+
+    /* ---- room：当前房间 ---- */
     roomId: null,
     room: null,
-    unsub: null,
-    activeGroup: null, // 当前落点组（点手牌就直接进这里），随轮次重置
-    suppressTap: false, // 刚拖完一张牌，压掉浏览器补发的那次 click
+    unsub: null,          // 房间订阅的解绑函数（退房必须调，否则上一个房间继续推）
+    resultSeqShown: 0,    // 这一轮已经揭晓到第几组（逐组错峰）
+    lastMeScore: null,    // 上一屏「我」的净胜，用来判断结算是否变化
+    settleCelebrated: false, // 本把的特写/庆祝是否已放过
+    recordKey: null,      // 本局是否已写过本机记录（内存双保险，配合 Records 幂等）
+    dissolveWasActive: false, // 上一次快照里「结束本局」提案是否在进行（提案消失时提示一次）
+
+    /* ---- split：当前这一轮的分牌 ---- */
     groups: {},        // 当前轮分组草稿
     draftKey: null,    // 草稿归属键「场次:轮次」，见 draftKeyOf()
+    activeGroup: null, // 当前落点组（点手牌就直接进这里），随轮次重置
     reviseRound: -1,   // 本轮正在「改一次」时为该轮次号，否则 -1
-    resultSeqShown: 0,
-    lastMeScore: null,
-    settleCelebrated: false,
-    screen: '',        // 当前页面（'records' 时房间订阅不改写界面）
-    recordsFrom: 'home', // 战绩页来处：home / settle（返回时回到来处）
-    recordKey: null    // 本局是否已写过本机记录（内存双保险，配合 Records 幂等）
+    justDealt: false,  // 刚发牌（用来只播一次发牌音效）
+    absorbSig: null    // 已吸收过的 history 签名（防重复吸收）
   };
+
+  var STATE_DEFAULT = {
+    screen: '', recordsFrom: 'home', suppressTap: false,
+    roomId: null, room: null, unsub: null, resultSeqShown: 0,
+    lastMeScore: null, settleCelebrated: false, recordKey: null, dissolveWasActive: false,
+    groups: {}, draftKey: null, activeGroup: null, reviseRound: -1, justDealt: false, absorbSig: null
+  };
+
+  /* 三个重置时机。**每加一个 state 字段，必须同时加进对应的 reset 与 STATE_DEFAULT**，
+   * 否则 state-reset.test.js 会红 —— 这条守卫是这次整理留下的唯一长期资产。 */
+  function resetSplitState() {
+    state.groups = emptyGroups();
+    state.draftKey = null;
+    state.activeGroup = null;
+    state.reviseRound = -1;
+    state.justDealt = false;
+    state.absorbSig = null;
+  }
+  function resetRoomState() {
+    state.roomId = null;
+    state.room = null;
+    state.unsub = null;   // 解绑由调用方先做（cleanupRoom 里先 unsub() 再进这里）
+    state.resultSeqShown = 0;
+    state.lastMeScore = null;
+    state.settleCelebrated = false;
+    state.recordKey = null;
+    state.dissolveWasActive = false;
+  }
+  function resetSessionState() {
+    state.screen = '';
+    state.recordsFrom = 'home';
+    state.suppressTap = false;
+  }
 
   /* 建房弹窗里当前选中的把数。只在「建房 → 关弹窗」这一小段时间有意义，
    * 但必须放在模块层（不是弹窗 DOM 的 data 上）：请求发出后弹窗已经关了，
@@ -194,10 +256,11 @@
   function ensureDraft(room) {
     var key = StateMachine.handKey(room);
     if (state.draftKey !== key) {
+      /* 新一手 → 分牌级状态整体归位（v111）。以前是逐行手写，只清了 5 个字段；
+       * 现在一个函数管全，新加字段只要进 resetSplitState 就不会漏。 */
+      resetSplitState();
       state.justDealt = (room.round === 1); // 新一手才播发牌动效
       state.draftKey = key;
-      state.reviseRound = -1;
-      state.groups = emptyGroups();
       state.activeGroup = StateMachine.nextOpenGroup(room.round, state.groups, null);
       // 牌区/顶栏的「内容没变就不重绘」缓存也一起作废，避免换手后误判成同一屏
       lastSlotsHtml = null;
@@ -824,7 +887,7 @@
     var total = 0;
     Object.keys(state.groups).forEach(function (k) { total += (state.groups[k] || []).length; });
     if (total === 0) return;
-    state.groups = emptyGroups();
+    resetSplitState();
     state.activeGroup = StateMachine.nextOpenGroup(round, state.groups, null);
     Sfx.play('deal', 0.97);
     flash('已清空，重新分');
@@ -2903,13 +2966,11 @@
   function cleanupRoom() {
     if (state.unsub) { state.unsub(); state.unsub = null; }
     closeProfile();                 // 离开房间时顺手收起战绩卡（在途请求随序号失效）
-    state.room = null;
-    state.roomId = null;
-    state.draftKey = null;
-    state.reviseRound = -1;
-    state.groups = emptyGroups();
-    state.activeGroup = null;
-    state.resultSeqShown = 0;
+    /* 房间级 + 分牌级字段一次性归位（v111）。
+     * 以前这里是逐行手写的，漏过三个：justDealt / absorbSig / dissolveWasActive ——
+     * 它们不在字面量里，是靠首次赋值挂上去的，所以「该清哪些」根本没清单可对照。 */
+    resetRoomState();
+    resetSplitState();
     /* 逐组结算的计时器要在这里停掉：停表时机是「离开这一屏」，
      * 不停的话它会在下一个房间/结算页上把上一局的结算弹窗又弹起来。 */
     stopResultSeq();
@@ -2921,10 +2982,10 @@
     /* 组槽牌型记忆一起清：换房/新局重进时，上一局的「牛牛」若没清掉，
      * 新局第一次成手会被判成「没变」，成手脉冲就少放一次。 */
     resetSlotTypeSeen(-1);
-    state.lastMeScore = null;
-    state.settleCelebrated = false;
-    state.recordKey = null;
-    state.screen = ''; // 离开房间时不能停留在战绩页（否则房间订阅重渲染会被拦住）
+    /* 离开房间时不能停留在战绩页（否则房间订阅重渲染会被拦住）。
+     * 注意 suppressTap 也在这里归位：它只在「拖牌后那一次 click」有意义，
+     * 留到下一个房间会让第一次点击被吞掉。 */
+    resetSessionState();
   }
 
   /* ---------------------------- 建房：先选本局把数 ----------------------------
@@ -2946,21 +3007,19 @@
    *     拿一个已下架的档位去建房会被服务端拒，玩家只看到「创建失败」）
    *   · 读写都包 try：隐私模式下 localStorage 会抛，抛了就当没记忆，不能因此开不了房
    */
-  var HAND_LIMIT_KEY = 'lxw_hand_limit_v1';
+  var HAND_LIMIT_KEY = ST ? ST.KEYS.HAND_LIMIT : 'lxw_hand_limit_v1';
 
   function readSavedLimit() {
-    try {
-      var raw = localStorage.getItem(HAND_LIMIT_KEY);
-      if (!raw) return 0;
-      var n = Number(raw);
-      /* 必须是列表里的档位。这里不做「取最近的合法值」那种聪明事 ——
-       * 猜错了玩家会打到一个自己没选的把数上，比回落默认更糟。 */
-      return (CONFIG.HAND_LIMITS || []).indexOf(n) >= 0 ? n : 0;
-    } catch (e) { return 0; }
+    var raw = ST ? ST.read(HAND_LIMIT_KEY, '') : '';
+    if (!raw) return 0;
+    var n = Number(raw);
+    /* 必须是列表里的档位。这里不做「取最近的合法值」那种聪明事 ——
+     * 猜错了玩家会打到一个自己没选的把数上，比回落默认更糟。 */
+    return (CONFIG.HAND_LIMITS || []).indexOf(n) >= 0 ? n : 0;
   }
 
   function saveLimit(n) {
-    try { localStorage.setItem(HAND_LIMIT_KEY, String(n)); } catch (e) { /* 隐私模式：当没记住 */ }
+    if (ST) ST.write(HAND_LIMIT_KEY, String(n)); // 写不进（隐私模式）就当没记住
   }
 
   function openCreateModal() {
@@ -3946,10 +4005,10 @@
   /* ---------------------------- 事件绑定与初始化 ---------------------------- */
   function bindEvents() {
     /* 这一层只负责「把每一屏的事件交给它自己的函数」，不再写具体绑定。
-     * 570 行的单个函数里，改战绩页要上下翻过牌桌、弹窗、视口三类代码；
-     * 拆开之后，改哪一屏就只读哪一屏。
-     * 注意：它们全是 bindEvents 内部的嵌套函数，闭包与作用域一点没动 ——
-     * 这次拆的是「读的人要翻多大范围」，不是运行时的结构。 */
+     * v79 把 570 行的单函数拆成了 12 个分屏 binder，定位成本降了但函数没变短 ——
+     * 因为它把 17 个函数装在自己肚子里（仍然 786 行）。
+     * v111 把它们抬到模块级（见下一段），于是这里变成一张目录：
+     * 改哪一屏，只读下面那一段里的哪一个函数。 */
     bindTableControls();
     bindGuide();
     setupInstallGuide();
@@ -3962,734 +4021,744 @@
     bindSettleActions();
     bindKeyboard();
     bindViewportAndLifecycle();
+  }
 
-    /* 引导的步进状态与三个渲染函数必须住在这里：bindGuide() 要改它，
-     * bindKeyboard()（Esc）和 popstate 要关它。塞进 bindGuide 内部就够不到了。 */
-    /* ---------------------- 新手分步引导（P3-8） ----------------------
-     * 4 屏、一屏一句。原来的「玩法规则」是一整屏密集文字，写法没问题，
-     * 但新玩家第一次上手读不下去 —— 而十点半的口径、王的三重身份，
-     * 恰恰是最需要一句一句讲清的地方。
-     *
-     * 分工：引导负责「让人看懂」，完整规则负责「查细节」，两者不互相替代。
-     * 最后一屏的按钮变成「看完整规则」，从这里跳过去。 */
-    var GUIDE_TOTAL = 4;
-    var guideStep = 0;
+  /* ---------------------- 事件绑定的分屏函数（v111 抬到模块级）----------------------
+   *
+   * 它们原来是 `bindEvents()` 内部的嵌套函数。分屏之后「读」的问题解决了，
+   * 但函数本身没短：bindEvents 仍然是 786 行，因为它把 17 个函数**装**在肚子里。
+   *
+   * 这一轮只做一件事：把它们抬到模块作用域（纯移动 + 去掉 2 格缩进），
+   * 于是 bindEvents 变成一张「哪一屏交给谁」的目录。
+   * 为什么不顺手拆成多个文件：这些函数几乎都直接读写 game.js 的 state /
+   * 渲染缓存 / 弹窗栈，拆文件就得像 v108 那样逐个建注入契约，收益远小于风险。
+   *
+   * 三个共享状态跟着抬上来，否则抬出去的函数读不到：
+   *   GUIDE_TOTAL / guideStep —— 引导步进；achBackScreen —— 成就页返回目标。
+   */
+  var GUIDE_TOTAL = 4;
+  var guideStep = 0;
+  var achBackScreen = 'screen-home';
 
-    function renderGuide() {
-      var steps = document.querySelectorAll('#guide-body .guide-step');
-      for (var i = 0; i < steps.length; i++) {
-        if (i === guideStep) steps[i].removeAttribute('hidden');
-        else steps[i].setAttribute('hidden', '');
+  /* ---------------------- 新手分步引导（P3-8） ----------------------
+   * 4 屏、一屏一句。原来的「玩法规则」是一整屏密集文字，写法没问题，
+   * 但新玩家第一次上手读不下去 —— 而十点半的口径、王的三重身份，
+   * 恰恰是最需要一句一句讲清的地方。
+   *
+   * 分工：引导负责「让人看懂」，完整规则负责「查细节」，两者不互相替代。
+   * 最后一屏的按钮变成「看完整规则」，从这里跳过去。 */
+
+  function renderGuide() {
+    var steps = document.querySelectorAll('#guide-body .guide-step');
+    for (var i = 0; i < steps.length; i++) {
+      if (i === guideStep) steps[i].removeAttribute('hidden');
+      else steps[i].setAttribute('hidden', '');
+    }
+    var dots = $('#guide-dots');
+    if (dots) {
+      /* 三态：已过 / 当前 / 未到。原来只有 on 一档，进度条看不出「还剩几步」 */
+      var dh = '';
+      for (var j = 0; j < GUIDE_TOTAL; j++) {
+        var dc = j === guideStep ? 'on' : (j < guideStep ? 'done' : '');
+        dh += '<i class="' + dc + '"></i>';
       }
-      var dots = $('#guide-dots');
-      if (dots) {
-        /* 三态：已过 / 当前 / 未到。原来只有 on 一档，进度条看不出「还剩几步」 */
-        var dh = '';
-        for (var j = 0; j < GUIDE_TOTAL; j++) {
-          var dc = j === guideStep ? 'on' : (j < guideStep ? 'done' : '');
-          dh += '<i class="' + dc + '"></i>';
-        }
-        dots.innerHTML = dh;
+      dots.innerHTML = dh;
+    }
+    /* 第一步没有「上一步」，就真的把它藏掉（display:none），让主按钮占满整行。
+     * 早先用 visibility:hidden 占位是为了防按钮横向跳动，代价是第一屏左半边空着，
+     * 一个红按钮孤零零挂在右边，看着像布局塌了。 */
+    var prev = $('#guide-prev');
+    if (prev) prev.hidden = guideStep === 0;
+    var next = $('#guide-next');
+    if (next) next.textContent = guideStep === GUIDE_TOTAL - 1 ? '看完整规则' : '下一步';
+    /* 每步正文长短不同，换步之后重新判断要不要渐隐 */
+    syncScrollFade(document.querySelector('#guide-body'));
+  }
+
+  function openGuide() {
+    guideStep = 0;
+    renderGuide();
+    showModalEl('guide-modal');
+    pushModalState();
+    Sfx.play('select');
+  }
+
+  function closeGuide() {
+    hideModalEl('guide-modal');
+    if (ST) ST.write(ST.KEYS.GUIDE_SEEN, '1'); // 隐私模式写不进也无所谓：下次再看一遍引导
+  }
+
+  /* 对局主操作：建房 / 加入 / 准备 / 补 AI / 解散 / 离开 / 提交 / 分牌拖拽 / 结算弹窗按钮 */
+  function bindTableControls() {
+    /* 建房不再直接发请求：先弹「本局打几把」，选完才开房（默认 10）。 */
+    $('#btn-create').addEventListener('click', openCreateModal);
+    $('#btn-create-confirm').addEventListener('click', onCreateConfirm);
+    $('#btn-create-cancel').addEventListener('click', closeCreateModal);
+    $('#btn-join').addEventListener('click', onJoin);
+    $('#btn-ready').addEventListener('click', onReady);
+    $('#btn-add-bot').addEventListener('click', onAddBot);
+    $('#btn-dissolve').addEventListener('click', onProposeDissolve);
+    $('#btn-dissolve-agree').addEventListener('click', function () { onVoteDissolve(true); });
+    $('#btn-dissolve-reject').addEventListener('click', function () { onVoteDissolve(false); });
+    $('#btn-dissolve-cancel').addEventListener('click', function () { onCancelDissolve(); });
+    $('#btn-leave').addEventListener('click', onLeave);
+    $('#btn-submit').addEventListener('click', onSubmit);
+    /* 结算弹窗这颗按钮 = 「下一组」/「继续游戏」。它**不是关闭**：
+     * 一幕一组时，点掉当前这一幕应该看到下一幕，而不是把整轮结算都关掉。
+     * 倒数计时走的是同一个函数（advanceResult），所以「自动」和「手点」
+     * 不会有两条不一样的路。 */
+    $('#btn-result-close').addEventListener('click', function () { advanceResult(); });
+    /* 特写幕：点一下就结束（不是「点一下跳过这一幕」）。
+     * 一局 5 次结算、每次最多 1.7 秒，连出两次大牌型就是 3.4 秒强制观看；
+     * 但也不能点掉内容 —— 跳过只把幕收掉，立刻画这一幕的结算卡。 */
+    var patBox = $('#pattern-fx');
+    if (patBox) {
+      patBox.addEventListener('click', function () { if (pat.timer) endPatternFx(); });
+    }
+    $('#btn-rb-close').addEventListener('click', function () { closeBreakCard(); render(); });
+    /* 点遮罩也关：这张卡是「过渡通知」，不是给人做决定的地方 ——
+     * 挡住不让关，只会让人以为牌桌卡死了。 */
+    $('#round-break-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) { closeBreakCard(); render(); }
+    });
+    /* 卡上点名字也能看档案：和结算页、排行榜同一套手势 */
+    $('#rb-body').addEventListener('click', function (e) {
+      var row = e.target.closest ? e.target.closest('.rb-row') : null;
+      if (row && row.dataset.pid) openProfile(row.dataset.pid);
+    });
+    $('#btn-next').addEventListener('click', onNextRound);
+    $('#btn-revise').addEventListener('click', onRevise);
+    // 分牌：标签选组 + 点手牌直落（主路径），拖拽进组（可选路径）
+    $('#group-chips').addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.gchip') : null;
+      if (!chip) return;
+      if (chip.dataset.clear) { onClearGroups(); return; }
+      setActiveGroup(chip.dataset.group);
+    });
+    $('#hand').addEventListener('pointerdown', onHandPointerDown);
+    // 槽里的牌也支持拖拽（拖到别的组=换组，拖回手牌区=收回）；委托，因为 innerHTML 会重写
+    $('#slots').addEventListener('pointerdown', onHandPointerDown);
+    document.addEventListener('pointermove', onHandPointerMove);
+    document.addEventListener('pointerup', onHandPointerUp);
+    document.addEventListener('pointercancel', onHandPointerCancel);
+
+    /* 槽位点击走委托：整块 innerHTML 会被重写，绑在节点上的监听会跟着一起没 */
+    $('#slots').addEventListener('click', function (e) {
+      if (!state.room) return;
+      // 拖槽牌松手后浏览器补发的 click 要吞掉，否则「拖走/收回」又被当成一次点击再触发
+      if (state.suppressTap) { state.suppressTap = false; return; }
+      var box = e.target.closest ? e.target.closest('.card-box') : null;
+      if (!box) return;
+      var key = box.dataset.group;
+      if (!key) return;
+      if (box.dataset.cardId) {
+        var card = cardFromId(state.room, box.dataset.cardId);
+        if (card) onSlotCardTap(key, card);
+      } else {
+        onSlotTap(key);
       }
-      /* 第一步没有「上一步」，就真的把它藏掉（display:none），让主按钮占满整行。
-       * 早先用 visibility:hidden 占位是为了防按钮横向跳动，代价是第一屏左半边空着，
-       * 一个红按钮孤零零挂在右边，看着像布局塌了。 */
-      var prev = $('#guide-prev');
-      if (prev) prev.hidden = guideStep === 0;
-      var next = $('#guide-next');
-      if (next) next.textContent = guideStep === GUIDE_TOTAL - 1 ? '看完整规则' : '下一步';
-      /* 每步正文长短不同，换步之后重新判断要不要渐隐 */
-      syncScrollFade(document.querySelector('#guide-body'));
+    });
+    // 声音开关：首页角落 + 房间页各一个，都是静态节点，直接绑即可
+    var audioBtns = document.querySelectorAll('[data-audio-toggle]');
+    for (var ai = 0; ai < audioBtns.length; ai++) {
+      audioBtns[ai].addEventListener('click', onToggleAudio);
     }
+    $('#btn-back-room').addEventListener('click', onLeave);
+    $('#btn-copy').addEventListener('click', onCopy);
+    $('#btn-dissolve-game').addEventListener('click', onProposeDissolve);
+    /* 对局页以前没有「离开」入口：想退出只能关掉页面，等 90 秒被判弃局。
+     * 「发起解散」和「自己离开」是两件事——解散要全员同意，离开只用自己决定。 */
+    $('#btn-leave-game').addEventListener('click', onLeave);
+  }
 
-    function openGuide() {
-      guideStep = 0;
-      renderGuide();
-      showModalEl('guide-modal');
-      pushModalState();
-      Sfx.play('select');
-    }
-
-    function closeGuide() {
-      hideModalEl('guide-modal');
-      try { localStorage.setItem('lxw_guide_seen_v1', '1'); } catch (e) { /* 隐私模式 */ }
-    }
-
-    /* 对局主操作：建房 / 加入 / 准备 / 补 AI / 解散 / 离开 / 提交 / 分牌拖拽 / 结算弹窗按钮 */
-    function bindTableControls() {
-      /* 建房不再直接发请求：先弹「本局打几把」，选完才开房（默认 10）。 */
-      $('#btn-create').addEventListener('click', openCreateModal);
-      $('#btn-create-confirm').addEventListener('click', onCreateConfirm);
-      $('#btn-create-cancel').addEventListener('click', closeCreateModal);
-      $('#btn-join').addEventListener('click', onJoin);
-      $('#btn-ready').addEventListener('click', onReady);
-      $('#btn-add-bot').addEventListener('click', onAddBot);
-      $('#btn-dissolve').addEventListener('click', onProposeDissolve);
-      $('#btn-dissolve-agree').addEventListener('click', function () { onVoteDissolve(true); });
-      $('#btn-dissolve-reject').addEventListener('click', function () { onVoteDissolve(false); });
-      $('#btn-dissolve-cancel').addEventListener('click', function () { onCancelDissolve(); });
-      $('#btn-leave').addEventListener('click', onLeave);
-      $('#btn-submit').addEventListener('click', onSubmit);
-      /* 结算弹窗这颗按钮 = 「下一组」/「继续游戏」。它**不是关闭**：
-       * 一幕一组时，点掉当前这一幕应该看到下一幕，而不是把整轮结算都关掉。
-       * 倒数计时走的是同一个函数（advanceResult），所以「自动」和「手点」
-       * 不会有两条不一样的路。 */
-      $('#btn-result-close').addEventListener('click', function () { advanceResult(); });
-      /* 特写幕：点一下就结束（不是「点一下跳过这一幕」）。
-       * 一局 5 次结算、每次最多 1.7 秒，连出两次大牌型就是 3.4 秒强制观看；
-       * 但也不能点掉内容 —— 跳过只把幕收掉，立刻画这一幕的结算卡。 */
-      var patBox = $('#pattern-fx');
-      if (patBox) {
-        patBox.addEventListener('click', function () { if (pat.timer) endPatternFx(); });
-      }
-      $('#btn-rb-close').addEventListener('click', function () { closeBreakCard(); render(); });
-      /* 点遮罩也关：这张卡是「过渡通知」，不是给人做决定的地方 ——
-       * 挡住不让关，只会让人以为牌桌卡死了。 */
-      $('#round-break-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) { closeBreakCard(); render(); }
-      });
-      /* 卡上点名字也能看档案：和结算页、排行榜同一套手势 */
-      $('#rb-body').addEventListener('click', function (e) {
-        var row = e.target.closest ? e.target.closest('.rb-row') : null;
-        if (row && row.dataset.pid) openProfile(row.dataset.pid);
-      });
-      $('#btn-next').addEventListener('click', onNextRound);
-      $('#btn-revise').addEventListener('click', onRevise);
-      // 分牌：标签选组 + 点手牌直落（主路径），拖拽进组（可选路径）
-      $('#group-chips').addEventListener('click', function (e) {
-        var chip = e.target.closest ? e.target.closest('.gchip') : null;
-        if (!chip) return;
-        if (chip.dataset.clear) { onClearGroups(); return; }
-        setActiveGroup(chip.dataset.group);
-      });
-      $('#hand').addEventListener('pointerdown', onHandPointerDown);
-      // 槽里的牌也支持拖拽（拖到别的组=换组，拖回手牌区=收回）；委托，因为 innerHTML 会重写
-      $('#slots').addEventListener('pointerdown', onHandPointerDown);
-      document.addEventListener('pointermove', onHandPointerMove);
-      document.addEventListener('pointerup', onHandPointerUp);
-      document.addEventListener('pointercancel', onHandPointerCancel);
-
-      /* 槽位点击走委托：整块 innerHTML 会被重写，绑在节点上的监听会跟着一起没 */
-      $('#slots').addEventListener('click', function (e) {
-        if (!state.room) return;
-        // 拖槽牌松手后浏览器补发的 click 要吞掉，否则「拖走/收回」又被当成一次点击再触发
-        if (state.suppressTap) { state.suppressTap = false; return; }
-        var box = e.target.closest ? e.target.closest('.card-box') : null;
-        if (!box) return;
-        var key = box.dataset.group;
-        if (!key) return;
-        if (box.dataset.cardId) {
-          var card = cardFromId(state.room, box.dataset.cardId);
-          if (card) onSlotCardTap(key, card);
-        } else {
-          onSlotTap(key);
-        }
-      });
-      // 声音开关：首页角落 + 房间页各一个，都是静态节点，直接绑即可
-      var audioBtns = document.querySelectorAll('[data-audio-toggle]');
-      for (var ai = 0; ai < audioBtns.length; ai++) {
-        audioBtns[ai].addEventListener('click', onToggleAudio);
-      }
-      $('#btn-back-room').addEventListener('click', onLeave);
-      $('#btn-copy').addEventListener('click', onCopy);
-      $('#btn-dissolve-game').addEventListener('click', onProposeDissolve);
-      /* 对局页以前没有「离开」入口：想退出只能关掉页面，等 90 秒被判弃局。
-       * 「发起解散」和「自己离开」是两件事——解散要全员同意，离开只用自己决定。 */
-      $('#btn-leave-game').addEventListener('click', onLeave);
-    }
-
-    /* 新手引导的四个按钮 + 首次自动弹一次（步进状态在 bindEvents 作用域里，见上） */
-    function bindGuide() {
-      $('#btn-rules').addEventListener('click', openGuide);
-      $('#guide-skip').addEventListener('click', closeGuide);
-      $('#guide-prev').addEventListener('click', function () {
-        if (guideStep > 0) { guideStep--; renderGuide(); Sfx.play('select'); }
-      });
-      $('#guide-next').addEventListener('click', function () {
-        if (guideStep < GUIDE_TOTAL - 1) {
-          guideStep++;
-          renderGuide();
-          Sfx.play('select');
-          return;
-        }
-        /* 引导与完整规则互斥：先关引导，再用统一入口打开规则层。
-         * 规则层此刻本来就是关着的，所以 showModalEl 走的是「从关到开」那一下，焦点归还目标会正常记下。 */
-        closeGuide();
-        showModalEl('rules-modal');
-        pushModalState();
-      });
-
-      /* 首次进首页自动弹一次。
-       * 延迟 1.2 秒而不是立刻：先让首屏渲染和首页动画走完，上来就盖一层弹窗很凶。
-       * 已经清过缓存的老玩家也会被弹一次，这是可接受的代价 —— 一次点击就能关掉。 */
-      try {
-        if (!localStorage.getItem('lxw_guide_seen_v1')) {
-          setTimeout(function () {
-            if (state.roomId) return;                                        // 已经在房间里就不打扰
-            if (!$('#guide-modal').classList.contains('hidden')) return;      // 已经开着（用户手动点了）
-            openGuide();
-          }, 1200);
-        }
-      } catch (e) { /* 隐私模式禁 storage：不自动弹，但「玩法规则」按钮照常可用 */ }
-
-      $('#btn-rules-close').addEventListener('click', function () {
-        hideModalEl('rules-modal');
-      });
-    }
-
-    /* 安装引导条：三种环境的行为各在各的分支里，这里只做绑定 */
-    function setupInstallGuide() {
-      /* ---------------------------- PWA 安装引导 ----------------------------
-       * 以前完全没有这一块：页面能装成 App（manifest + SW + 图标都齐），
-       * 但界面上没有任何入口，玩家永远只会把它当网页用，每次都要重新打开链接。
-       *
-       * 三种情况分开处理，因为「怎么装」在两端的答案完全不同：
-       *   · Chrome / Edge：收到 beforeinstallprompt（index.html 头部已提前接住），
-       *     点「安装」直接弹系统安装框 —— 这是一条真正的一键路径；
-       *   · iOS Safari：没有这个事件，也不允许页面主动触发安装，
-       *     只能告诉用户「分享 → 添加到主屏幕」。所以按钮文案改成「怎么做」，点开展开步骤；
-       *   · 微信内置浏览器：装不了（它自己的 X5 内核），干脆不显示，免得教用户做一件做不到的事。
-       * 已经装过（独立窗口运行）就永远不显示。 */
-      (function setupInstallGuide() {
-        var bar = $('#install-bar');
-        var textEl = $('#install-text');
-        var goEl = $('#install-go');
-        var stepsEl = $('#install-steps');
-        if (!bar || !textEl || !goEl) return;
-
-        var DISMISS_KEY = 'lxw_install_dismissed_v1';
-        var DISMISS_MS = 30 * 24 * 60 * 60 * 1000;   // 「不再提示」按 30 天算，不是永久
-
-        function standalone() {
-          try {
-            if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
-          } catch (e) { /* 老内核没有 matchMedia 也不影响后面的 navigator.standalone */ }
-          return navigator.standalone === true;   // iOS 专有：从主屏幕图标启动
-        }
-        function ua() { return navigator.userAgent || ''; }
-        function isWeChat() { return /MicroMessenger/i.test(ua()); }
-        function isIOS() {
-          if (/iPad|iPhone|iPod/.test(ua())) return true;
-          /* iPadOS 13+ 的 UA 伪装成 macOS，只能靠「有触摸」来认 */
-          return /Macintosh/.test(ua()) && navigator.maxTouchPoints > 1;
-        }
-        function dismissed() {
-          try {
-            var t = Number(localStorage.getItem(DISMISS_KEY)) || 0;
-            return t > 0 && (Date.now() - t) < DISMISS_MS;
-          } catch (e) { return false; }
-        }
-
-        var mode = '';   // 'prompt' | 'ios'
-
-        function render() {
-          if (!mode || standalone() || dismissed()) { bar.classList.add('hidden'); return; }
-          if (mode === 'prompt') {
-            textEl.textContent = '添加到桌面，下次一点就开';
-            goEl.textContent = '安装';
-            goEl.classList.remove('hidden');
-          } else {
-            textEl.textContent = '添加到主屏幕，像 App 一样打开';
-            goEl.textContent = '怎么做';
-            goEl.classList.remove('hidden');
-          }
-          bar.classList.remove('hidden');
-        }
-
-        /* 展开 / 收起「分享 → 添加到主屏幕」的分步说明。
-         * force=true 表示直接展开（用于 prompt() 被浏览器拒绝时的兜底）。 */
-        function showSteps(force) {
-          if (!stepsEl) return;
-          var open = force === true || stepsEl.classList.contains('hidden');
-          stepsEl.textContent = open
-            ? '① 点浏览器底部工具栏的「分享」图标（方框 + 向上箭头）；'
-              + '② 在弹出菜单里往下找「添加到主屏幕」；③ 点右上角「添加」。'
-            : '';
-          stepsEl.classList.toggle('hidden', !open);
-          textEl.textContent = open ? '加到桌面只要三步：' : '添加到主屏幕，像 App 一样打开';
-        }
-
-        function usePrompt() {
-          var ev = window.__lxwInstallPrompt;
-          if (!ev || typeof ev.prompt !== 'function') return false;
-          var ret = null;
-          try { ret = ev.prompt(); } catch (e) { return false; }
-          /* ★ prompt() 在 Chrome 里是「返回 Promise、被拒绝时抛 NotAllowedError」。
-           * 只包 try/catch 抓不到那种异步拒绝 —— 它会变成一条未处理的 Promise 拒绝
-           *（实测：headless 里点一下就冒一条 NotAllowedError，还会被 errorReport 上报）。
-           * 拒绝通常意味着「这次点击没被算作用户手势」，此时退回文字步骤，别让按钮点了没反应。 */
-          if (ret && typeof ret.catch === 'function') {
-            ret.catch(function () { showSteps(true); });
-          }
-          /* userChoice 只有 Chrome 系给。选「稍后」不要当成永久拒绝 ——
-           * 只在本次会话里收起，下次打开还能再提示一次。 */
-          if (ev.userChoice && typeof ev.userChoice.then === 'function') {
-            ev.userChoice.then(function (choice) {
-              if (choice && choice.outcome === 'accepted') window.__lxwInstallPrompt = null;
-              bar.classList.add('hidden');
-            }).catch(function () { /* 拿不到选择结果就什么都不做 */ });
-          } else {
-            bar.classList.add('hidden');
-          }
-          return true;
-        }
-
-        $('#btn-install').addEventListener('click', function () {
-          Sfx.play('select');
-          if (mode === 'prompt' && usePrompt()) return;
-          /* iOS（或还没拿到事件）：展开文字步骤，再点一次收起 */
-          showSteps(false);
-        });
-        $('#btn-install-x').addEventListener('click', function () {
-          bar.classList.add('hidden');
-          try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch (e) { /* 隐私模式：下次还会出现 */ }
-        });
-
-        /* 事件可能比脚本晚到（SW 装好之后才满足安装条件），所以监听而不是只在启动时查一次 */
-        window.addEventListener('lxw:installable', function () {
-          mode = 'prompt';
-          render();
-        });
-        window.addEventListener('appinstalled', function () {
-          mode = '';
-          bar.classList.add('hidden');
-          try { localStorage.removeItem(DISMISS_KEY); } catch (e) { /* 无所谓 */ }
-          flash('已添加到桌面');
-        });
-
-        if (standalone()) return;                 // 已经装过了，什么都不用做
-        if (isWeChat()) return;                   // 微信里装不了，别教用户做白工
-        if (window.__lxwInstallPrompt) mode = 'prompt';
-        /* iOS 上任何浏览器都没有 beforeinstallprompt，统一走「分享 → 添加到主屏幕」那一套；
-         * 安卓上没拿到事件 = 还不满足安装条件（比如没走 HTTPS），先不显示，免得点了一下没反应。 */
-        else if (isIOS()) mode = 'ios';
-        else return;
-        render();
-      })();
-    }
-
-    /* 玩家战绩卡 / 通用确认框 / 爆点拦截框 */
-    function bindProfileCards() {
-      /* 玩家战绩卡（三处入口共用一张卡）：
-       *   房间页座位卡 / 对局页对手座位卡 / 结束页玩家行 —— 都是委托监听，避免重渲染丢绑定 */
-      $('#btn-profile-close').addEventListener('click', closeProfile);
-      $('#profile-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closeProfile();   // 点遮罩关闭
-      });
-      $('#room-players').addEventListener('click', function (e) {
-        /* 座位卡上的行为只有一条规则：点谁 = 看谁的战绩，**包括自己**。
-         * 以前是「点自己 = 改昵称、点别人 = 看战绩」—— 同一张卡两种行为，
-         * 玩家点了自己的名字想看看战绩，弹出来的却是改名框。
-         * 改名挪到卡片角落那支铅笔（.player-edit），先拦它。 */
-        var edit = e.target.closest ? e.target.closest('.player-edit') : null;
-        if (edit) { openRename(); return; }
-        var row = e.target.closest ? e.target.closest('.player-row') : null;
-        if (row && row.dataset.pid) openProfile(row.dataset.pid);
-      });
-      /* 结算行的两个手势（结算页和「上一局结算」弹窗同一套）：
-       *   头像 → 看这个人（和牌桌上点座位是同一个手势，同一个入口）
-       *   行的其他地方 → 看**这一把**的过程（见 openReplayHere）
-       * 之所以把「档案」收窄到只剩头像：整行原来都在跳档案，而结算页上
-       * 十次有九次是想确认刚才那把怎么算的。头像在行里只占最左边 56px，
-       * 「查人」得瞄着点，「查过程」随手点哪里都行 —— 按真实意图分配面积。 */
-      function bindSettleRowTap(bodySel) {
-        var body = $(bodySel);
-        if (!body) return;
-        body.addEventListener('click', function (e) {
-          if (!e.target.closest) return;
-          var row = e.target.closest('.settle-row');
-          if (!row) return;
-          var rank = e.target.closest('.settle-rank');
-          if (rank && row.dataset.pid) { openProfile(row.dataset.pid); return; }
-          openReplayHere();
-        });
-        /* 键盘同一套：头像是个 role=button，回车/空格等价于点它。
-         * 行本身不抢焦点 —— 一行里有两个动作，让 Tab 停在「行」上说不清是哪个。 */
-        body.addEventListener('keydown', function (e) {
-          if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-          if (!e.target.closest) return;
-          var rank = e.target.closest('.settle-rank');
-          if (!rank) return;
-          var row = rank.closest('.settle-row');
-          if (!row || !row.dataset.pid) return;
-          e.preventDefault();   // 空格不滚屏
-          openProfile(row.dataset.pid);
-        });
-      }
-      bindSettleRowTap('#settle-body');
-      bindSettleRowTap('#prev-result-body');
-      bindOppSeatTap();
-      $('#btn-confirm-ok').addEventListener('click', onConfirmOk);
-      $('#btn-confirm-cancel').addEventListener('click', closeConfirm);
-      /* 爆点拦截框唯一的出口：合上、回到十点半那一组继续改。
-       * 没有第二个按钮 —— 见 blockBustSubmit 上方关于「不留后路」的说明。 */
-      $('#btn-bust-fix').addEventListener('click', function () {
-        hideModalEl('bust-modal');
-        state.activeGroup = 'tenhalf';
-        render();
-        nudgeTenHalf();
-      });
-    }
-
-    function bindRename() {
-      /* 房内改昵称 */
-      $('#btn-rename-ok').addEventListener('click', onRenameOk);
-      $('#btn-rename-cancel').addEventListener('click', closeRename);
-      $('#rename-input').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); onRenameOk(); }
-      });
-      $('#rename-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closeRename();   // 点遮罩关闭
-      });
-    }
-
-    /* ---------------------------- 成就页（v109） ----------------------------
-     * 数据来源：RoomStore.getProfile(pid)。服务端档案里带 ach 桶
-     * （见 hub.getProfile 的注释），自己看自己也走同一条路，只是标题不同。
-     *
-     * 为什么不复用 /api/me/records：那条路只在 HTTP 登录态下可用，
-     * 而成就页从房间里的座位卡也能打开 —— 那时未必还连着 HTTP 会话，
-     * 但 WS 一定是连着的（否则看不到座位）。
-     */
-    var achBackScreen = 'screen-home';
-
-    /* 当前停在哪一屏。用来决定「从成就页返回时回到哪儿」：
-     * 从首页进来就回首页，从座位卡进来就回房间 —— 玩家点的是座位上的头像，
-     * 回到首页等于把他踢出了房间。 */
-    function currentScreenId() {
-      var ids = ['screen-home', 'screen-room', 'screen-game', 'screen-settle', 'screen-records', 'screen-rank'];
-      for (var i = 0; i < ids.length; i++) {
-        /* 别用 el 当变量名：el 是本文件的 DOM 构造函数，遮蔽它会让
-         * ui.test.js 的「代码卫生」守卫变红，也更容易在改动时误用。 */
-        var scr = $('#' + ids[i]);
-        if (scr && !scr.classList.contains('hidden')) return ids[i];
-      }
-      return 'screen-home';
-    }
-
-    function openAchievements(pid, from) {
-      var isMe = !pid || pid === state.myId;
-      achBackScreen = from || 'screen-home';
-      $('#ach-title').textContent = isMe ? '我的成就' : '成就';
-      $('#ach-body').innerHTML = '<p class="rank-tip">正在加载…</p>';
-      showScreen('screen-achievements');
-      if (typeof RoomStore === 'undefined' || !RoomStore.canQueryProfile || !RoomStore.canQueryProfile()) {
-        $('#ach-body').innerHTML = '<p class="rank-tip">本地演示模式看不了成就。</p>';
+  /* 新手引导的四个按钮 + 首次自动弹一次（步进状态在 bindEvents 作用域里，见上） */
+  function bindGuide() {
+    $('#btn-rules').addEventListener('click', openGuide);
+    $('#guide-skip').addEventListener('click', closeGuide);
+    $('#guide-prev').addEventListener('click', function () {
+      if (guideStep > 0) { guideStep--; renderGuide(); Sfx.play('select'); }
+    });
+    $('#guide-next').addEventListener('click', function () {
+      if (guideStep < GUIDE_TOTAL - 1) {
+        guideStep++;
+        renderGuide();
+        Sfx.play('select');
         return;
       }
-      RoomStore.getProfile(pid || state.myId).then(function (res) {
-        /* 加载期间可能已经返回了。这时整屏已切走，再往里写就是往隐藏页写 ——
-         * 不报错，但下次进来会先闪一下上一次的内容。 */
-        if (state.screen !== 'achievements') return;
-        if (!res || res.ok === false) {
-          $('#ach-body').innerHTML = '<p class="rank-tip">' + esc((res && res.error) || '加载失败') + '</p>';
-          return;
-        }
-        var pr = res.profile;
-        if (!pr) {
-          $('#ach-body').innerHTML = '<p class="rank-tip">还没有数据，打完一局就有了。</p>';
-          return;
-        }
-        if (!AV) {                       // 老客户端缓存里没有这个模块：明确告知，别白屏
-          $('#ach-body').innerHTML = '<p class="rank-tip">页面版本太旧，刷新一次再看。</p>';
-          return;
-        }
-        $('#ach-body').innerHTML = AV.pageHtml(pr, window.Ach, { isMe: isMe });
-        if ($('#ach-scroll')) $('#ach-scroll').scrollTop = 0;
-      }).catch(function () {
-        if (state.screen !== 'achievements') return;
-        $('#ach-body').innerHTML = '<p class="rank-tip">网络异常，稍后再试。</p>';
-      });
-    }
+      /* 引导与完整规则互斥：先关引导，再用统一入口打开规则层。
+       * 规则层此刻本来就是关着的，所以 showModalEl 走的是「从关到开」那一下，焦点归还目标会正常记下。 */
+      closeGuide();
+      showModalEl('rules-modal');
+      pushModalState();
+    });
 
-    function closeAchievements() {
-      showScreen(achBackScreen || 'screen-home');
-    }
-
-    /* 战绩页与排行榜入口（榜单行用委托：innerHTML 每次重写） */
-    function bindRecordsNav() {
-      /* 战绩页（L0 本机战绩） */
-      $('#btn-records-home').addEventListener('click', function () { openRecords('home'); });
-      $('#btn-rank-home').addEventListener('click', openRank);
-      $('#btn-rank-back').addEventListener('click', closeRank);
-      /* 成就页：入口在战绩页标题栏右上角（v109 把首页那个第 5 格合并过来了）。
-       * 传 'screen-records' 作为返回目标 —— 玩家是从战绩页点进来的，返回要回那儿。 */
-      $('#btn-ach-from-records').addEventListener('click', function () {
-        openAchievements(state.myId, 'screen-records');
-      });
-      $('#btn-ach-back').addEventListener('click', closeAchievements);
-      /* 成就页：座位信息档底部那一行（内容由 profileBodyHtml 动态生成，所以用委托）。
-       * 挂在 document 上而不是面板上：档案卡有两个宿主（.profile-box / .ss-info），
-       * 分别绑一次会漏掉以后新加的第三个。 */
-      document.addEventListener('click', function (e) {
-        var hit = e.target && e.target.closest ? e.target.closest('[data-ach-open]') : null;
-        if (!hit) return;
-        var pid = hit.getAttribute('data-ach-open');
-        if (!pid) return;
-        /* 先把座位面板关掉：成就页是整屏，留一个浮层压在上面会挡住返回按钮。 */
-        try { closeSeatSheet(); } catch (err) { /* 面板本来就没开 */ }
-        openAchievements(pid, currentScreenId());
-      });
-      /* 排行榜行 → 看这个人的云端档案。委托监听：榜单每次拉取都整块 innerHTML 重写，
-       * 逐行绑事件会在第一次刷新后全部失效（房间座位卡当初就踩过这个坑）。
-       * 榜尾那行「我在 50 名外」也带 data-pid，点自己就看我自己的档案。 */
-      $('#rank-list').addEventListener('click', function (e) {
-        var row = e.target.closest ? e.target.closest('.rank-row') : null;
-        if (row && row.dataset.pid) openProfile(row.dataset.pid, row.dataset.nick);
-      });
-    }
-
-    function bindAuthScreen() {
-      /* 登录 / 注册：登录与注册两个 tab 都用事件委托，
-       * 因为底部提示那行是 innerHTML 动态替换的，直接绑会在替换后失效。 */
-      $('#screen-auth').addEventListener('click', function (e) {
-        var tab = e.target.closest ? e.target.closest('[data-auth-tab]') : null;
-        if (tab) { setAuthMode(tab.getAttribute('data-auth-tab')); Sfx.play('select'); }
-      });
-      $('#btn-auth-submit').addEventListener('click', submitAuth);
-      /* 忘记密码：就地展开一段说明，不弹窗。
-       * 这个游戏不绑手机号、没有邮箱，服务端也没有任何自助找回的接口 ——
-       * 与其让玩家反复试密码、以为号废了，不如直接告诉他「找管理员重置，战绩不丢」。 */
-      $('#btn-forgot').addEventListener('click', function () {
-        var box = $('#auth-forgot-note');
-        var open = box.classList.contains('hidden');
-        box.classList.toggle('hidden', !open);
-        Sfx.play('select');
-      });
-      var authPass = $('#auth-pass');
-      authPass.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); submitAuth(); }
-      });
-      $('#auth-name').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); authPass.focus(); }
-      });
-    }
-
-    function bindAccountScreen() {
-      /* 我的账号 */
-      $('#btn-account').addEventListener('click', openAccount);
-      $('#btn-acc-close').addEventListener('click', closeAccount);
-      $('#account-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closeAccount();
-      });
-      $('#btn-acc-pwd').addEventListener('click', openPwdModal);
-      $('#btn-acc-avatar').addEventListener('click', openAvatarModal);
-      $('#btn-av-close').addEventListener('click', closeAvatarModal);
-      $('#avatar-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closeAvatarModal();
-      });
-      /* 委托而不是给 48 个格子各挂一个监听：
-       * 格子是每次打开时重画的，直接绑会随重画一起失效（或者要在重画时重绑一遍）。 */
-      $('#av-grid').addEventListener('click', function (e) {
-        var cell = e.target.closest ? e.target.closest('[data-av]') : null;
-        if (cell) pickAvatar(cell.getAttribute('data-av'));
-      });
-      $('#btn-av-upload').addEventListener('click', function () {
-        var f = $('#av-file');
-        if (f) f.click();
-      });
-      $('#av-file').addEventListener('change', function (e) {
-        var f = e.target.files && e.target.files[0];
-        /* 选完立刻清空 input.value：不清的话「同一个文件再选一次」不会触发 change，
-         * 用户会以为点了没反应。 */
-        try { e.target.value = ''; } catch (err) { /* 忽略 */ }
-        if (f) pickAvatarPhoto(f);
-      });
-      $('#btn-av-drop').addEventListener('click', dropAvatarPhoto);
-      $('#btn-av-random').addEventListener('click', function () {
-        if (typeof Avatar === 'undefined') return;
-        pickAvatar('a' + Math.floor(Math.random() * Avatar.COUNT));
-      });
-      $('#btn-acc-logout').addEventListener('click', onLogout);
-      $('#btn-acc-delete').addEventListener('click', onDeleteAccount);
-      $('#btn-pwd-ok').addEventListener('click', submitPwd);
-      $('#btn-pwd-cancel').addEventListener('click', closePwdModal);
-      $('#pwd-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closePwdModal();
-      });
-      $('#pwd-new').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') { e.preventDefault(); submitPwd(); }
-      });
-    }
-
-    /* 结算页与回放 / 分享 / 上一把成绩 */
-    function bindSettleActions() {
-      $('#btn-records').addEventListener('click', function () { openRecords('settle'); });
-      $('#btn-share').addEventListener('click', onShare);
-      $('#btn-replay').addEventListener('click', function () { openReplay(); });
-      /* 就位态的回放入口。按钮本身会被 renderRoom 显示/隐藏，
-       * 监听在初始化时就绑上（屏幕是常驻的，只是切换显隐）。 */
-      $('#btn-prev-replay').addEventListener('click', function () { openReplay({ prev: true }); });
-      $('#btn-prev-result').addEventListener('click', openPrevResult);
-      $('#btn-prev-result-close').addEventListener('click', closePrevResult);
-      /* 点遮罩关闭，和回放弹窗同一套。判定必须用 e.target === e.currentTarget：
-       * 监听挂在 .modal 上，点在卡片内部时 target 会变成卡片里的某个元素。 */
-      $('#prev-result-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closePrevResult();
-      });
-      /* 弹窗里的玩家行也能点 —— 结算页能点，这里为什么不能点。
-       * 手势与结算页完全一致（头像 = 档案，行 = 这一把的过程），
-       * 所以两边的监听是同一个函数（bindSettleRowTap），不在这里重复绑。 */
-      $('#btn-next-back').addEventListener('click', onNextBack);
-      $('#btn-replay-close').addEventListener('click', closeReplay);
-      /* 点遮罩关闭。全站 12 个弹窗里，内容型的那几个（分享图、玩家档案、账号卡、
-       * 改密码、改昵称）早就支持点外面关，只有回放是例外 —— 它是最该支持的那种：
-       * 玩家只是想瞄一眼过程，看完随手点一下空白处就该退出去。
-       * 判定必须用 e.target === e.currentTarget：监听挂在 .modal 上，
-       * 点在卡片内部时 target 会变成卡片里的某个元素，否则点内容也会误关。 */
-      $('#replay-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closeReplay();
-      });
-      $('#btn-share-save').addEventListener('click', onShareSave);
-      $('#btn-share-close').addEventListener('click', closeShare);
-      $('#share-modal').addEventListener('click', function (e) {
-        if (e.target === e.currentTarget) closeShare();
-      });
-      $('#btn-records-back').addEventListener('click', closeRecords);
-      $('#btn-records-create').addEventListener('click', onCreateFromRecords);
-      $('#btn-records-clear').addEventListener('click', openClearModal);
-      $('#btn-records-clear-ok').addEventListener('click', onClearConfirmed);
-      $('#btn-records-clear-cancel').addEventListener('click', closeClearModal);
-      $('#room-input').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') onJoin();
-      });
-      $('#nickname-input').addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') onCreate();
-      });
-      // 每次输入即时持久化昵称：SW 接管导致首访后页面自动 reload 时，
-      // 会话内刚输入的昵称能从 sessionStorage 读回，避免被清成默认「玩家xxxx」。
-      $('#nickname-input').addEventListener('input', function (e) {
-        setNickname((e.target.value || '').trim());
-      });
-    }
-
-    /* Esc 关最上层弹窗（顺序即层级顺序）+ Tab 圈定 + 返回键 */
-    function bindKeyboard() {
-      // Esc / 移动端返回键关闭弹窗（通用确认、玩法规则、清除战绩、玩家战绩卡、改昵称）
-      document.addEventListener('keydown', function (e) {
-        if (e.key !== 'Escape') return;
-        /* 爆点拦截框排最前：它只在提交被挡下的那一刻出现，是当时唯一的一层。 */
-        if (!$('#bust-modal').classList.contains('hidden')) { hideModalEl('bust-modal'); return; }
-        if (!$('#profile-modal').classList.contains('hidden')) { closeProfile(); return; }
-        if (!$('#rename-modal').classList.contains('hidden')) { closeRename(); return; }
-        if (!$('#records-clear-modal').classList.contains('hidden')) { closeClearModal(); return; }
-        /* 建房选把数：只在首页，是最外层的那一个（进来就没人叠它） */
-        if (!$('#create-modal').classList.contains('hidden')) { closeCreateModal(); return; }
-        if (!$('#confirm-modal').classList.contains('hidden')) { closeConfirm(); return; }
-        /* 引导和完整规则会互相切换，所以先关引导：它更可能是当前那一层。
-         * 关掉即视为「看过了」，不再自动弹 —— 用户按了 Esc 就是明确表态。 */
-        if (!$('#guide-modal').classList.contains('hidden')) { closeGuide(); return; }
-        if (!$('#replay-modal').classList.contains('hidden')) { closeReplay(); return; }
-        /* 和回放同一层：两个都是「瞄一眼就退」的内容型弹窗，放在同一位置，
-         * 不会因为它们互相叠而抢先后。 */
-        if (!$('#prev-result-modal').classList.contains('hidden')) { closePrevResult(); return; }
-        if (!$('#rules-modal').classList.contains('hidden')) { hideModalEl('rules-modal'); return; }
-        /* 换头像叠在账号卡上面，所以要先于 account 判一次 */
-        if (!$('#avatar-modal').classList.contains('hidden')) { closeAvatarModal(); return; }
-        /* 补上这两个：以前 Esc 关不掉改密码和账号卡，键盘用户只能去点按钮。
-         * pwd 在前，因为它叠在账号卡上面；只加不删，上面几条的优先级一点没动。 */
-        if (!$('#pwd-modal').classList.contains('hidden')) { closePwdModal(); return; }
-        if (!$('#account-modal').classList.contains('hidden')) { closeAccount(); return; }
-        /* 交替卡与结算弹窗原来**不在** Esc 链里（结算是必看的，关掉等于跳过）。
-         * v89 改成一幕一组后，Esc 的含义变成「下一幕」—— 跳过的只是一次等待，
-         * 不是跳过内容；而交替卡本来就是过渡通知，直接关掉。 */
-        if (!$('#round-break-modal').classList.contains('hidden')) { closeBreakCard(); render(); return; }
-        if (!$('#result-modal').classList.contains('hidden')) { advanceResult(); return; }
-      });
-
-      /* Tab 圈定：弹窗打开时把 Tab / Shift+Tab 关在「最上层那个弹窗」里。
-       * 不加这一段的话，键盘用户按两下 Tab 焦点就跑到弹窗背后的首页按钮上了 ——
-       * 屏幕上还显示着弹窗、焦点却在背后，这是最难自己发现的一类可用性问题
-       *（眼睛看不见焦点，读屏又已经不在念弹窗了）。
-       * 用 capture 阶段：弹窗内部的输入框自己处理按键时，Tab 仍然先过这里。 */
-      document.addEventListener('keydown', function (e) {
-        if (e.key !== 'Tab') return;
-        var id = topModalId();
-        if (!id) return;
-        var list = modalFocusables($('#' + id));
-        if (!list.length) return;
-        var first = list[0];
-        var last = list[list.length - 1];
-        var idx = -1;
-        for (var i = 0; i < list.length; i++) if (list[i] === document.activeElement) { idx = i; break; }
-        /* idx < 0 = 焦点根本不在弹窗里（刚打开还没搬进去、或用户点了背景）：
-         * 也要接住 —— 一个 Tab 就该回到弹窗里，而不是从页面顶部重新开始。 */
-        if (e.shiftKey) {
-          if (idx <= 0) { e.preventDefault(); focusEl(last); }
-        } else if (idx < 0 || idx === list.length - 1) {
-          e.preventDefault();
-          focusEl(first);
-        }
-      }, true);
-      window.addEventListener('popstate', function () {
-        Modal.setModalStatePushed(false);
-        /* 顺序有讲究：先关上层（确认框、改密码），再关下层（账号弹窗）。
-         * 只关一部分会留下「按返回没反应」的死状态——账号弹窗是最后加的，
-         * 之前漏在这里，手机上按返回键关不掉它。 */
-        closeConfirm();
-        closePwdModal();
-        closeProfile();
-        closeRename();
-        closeClearModal();
-        closeCreateModal();
-        closeAccount();
-        closeGuide();
-        closeReplay();
-        hideModalEl('rules-modal');
-      });
-    }
-
-    /* 视口尺寸自愈与前后台切换：只重算缩放，不碰状态 */
-    function bindViewportAndLifecycle() {
-      // 移动端自动播放限制：第一次触摸解锁音频
-      document.addEventListener('touchstart', function () { Sfx.unlock(); }, { passive: true });
-      document.addEventListener('mousedown', function () { Sfx.unlock(); });
-
-      // 断网/恢复：顶部提示条跟着切（WS 自己的重连提示在 init 里另挂）
-      window.addEventListener('offline', function () {
-        setNetBanner(false);
-        flash('网络已断开');
-      });
-      window.addEventListener('online', function () {
-        setNetBanner(true);
-        flash('网络已恢复');
-      });
-
-      window.addEventListener('resize', resize);
-      window.addEventListener('resize', updateOppScrollHint);
-      window.addEventListener('orientationchange', function () { setTimeout(resize, 200); });
-
-      /* 输入框失焦后再量一次。
-       *
-       * resize() 在有焦点时**故意不切** compact-v / ls-tight（见那里的说明）。
-       * 但键盘收起不一定派发 resize（iOS 尤其不可靠），若一直没人再量一次，
-       * 那一次被跳过的档位判定就永久丢了 —— 小屏手机上会一直停在「非紧凑」版式。
-       * 这里在焦点离开输入控件后补一次，代价是一次 resize()，不涉及任何状态变化。 */
-      document.addEventListener('blur', function (e) {
-        if (isTypingTarget(e.target)) setTimeout(resize, 60);   // 等布局从键盘态恢复
-      }, true);
-
-      /* 视口尺寸自愈：容器变了就重算，不管 resize 事件有没有派发。
-       *
-       * 真机上「横屏底部一条深色带」的成因就是这个缺口：浏览器收起底栏、应用内 WebView
-       * 改高度、分屏拖拽、PWA 从后台恢复，都可能让视口变大而**不派发 resize**。
-       * 舞台原来是用当时算出的像素值写死的，没人重算就停在旧高度。
-       * 这里用 ResizeObserver 盯 #viewport 自己的盒子 —— 容器一变必然触发，与事件无关。 */
-      function syncViewportSize() {
-        var vp = document.getElementById('viewport');
-        if (!vp) return;
-        if (vp.clientWidth === lastVpW && vp.clientHeight === lastVpH) return;
-        resize();
-        updateOppScrollHint();
+    /* 首次进首页自动弹一次。
+     * 延迟 1.2 秒而不是立刻：先让首屏渲染和首页动画走完，上来就盖一层弹窗很凶。
+     * 已经清过缓存的老玩家也会被弹一次，这是可接受的代价 —— 一次点击就能关掉。 */
+    try {
+      if (!(ST && ST.read(ST.KEYS.GUIDE_SEEN, ''))) {
+        setTimeout(function () {
+          if (state.roomId) return;                                        // 已经在房间里就不打扰
+          if (!$('#guide-modal').classList.contains('hidden')) return;      // 已经开着（用户手动点了）
+          openGuide();
+        }, 1200);
       }
-      if (typeof ResizeObserver === 'function') {
-        var vpEl = document.getElementById('viewport');
-        if (vpEl) {
-          new ResizeObserver(function () {
-            clearTimeout(vpWatchTimer);
-            vpWatchTimer = setTimeout(syncViewportSize, 30);
-          }).observe(vpEl);
+    } catch (e) { /* 隐私模式禁 storage：不自动弹，但「玩法规则」按钮照常可用 */ }
+
+    $('#btn-rules-close').addEventListener('click', function () {
+      hideModalEl('rules-modal');
+    });
+  }
+
+  /* 安装引导条：三种环境的行为各在各的分支里，这里只做绑定 */
+  function setupInstallGuide() {
+    /* ---------------------------- PWA 安装引导 ----------------------------
+     * 以前完全没有这一块：页面能装成 App（manifest + SW + 图标都齐），
+     * 但界面上没有任何入口，玩家永远只会把它当网页用，每次都要重新打开链接。
+     *
+     * 三种情况分开处理，因为「怎么装」在两端的答案完全不同：
+     *   · Chrome / Edge：收到 beforeinstallprompt（index.html 头部已提前接住），
+     *     点「安装」直接弹系统安装框 —— 这是一条真正的一键路径；
+     *   · iOS Safari：没有这个事件，也不允许页面主动触发安装，
+     *     只能告诉用户「分享 → 添加到主屏幕」。所以按钮文案改成「怎么做」，点开展开步骤；
+     *   · 微信内置浏览器：装不了（它自己的 X5 内核），干脆不显示，免得教用户做一件做不到的事。
+     * 已经装过（独立窗口运行）就永远不显示。 */
+    (function setupInstallGuide() {
+      var bar = $('#install-bar');
+      var textEl = $('#install-text');
+      var goEl = $('#install-go');
+      var stepsEl = $('#install-steps');
+      if (!bar || !textEl || !goEl) return;
+
+      var DISMISS_KEY = ST ? ST.KEYS.INSTALL_DISMISSED : 'lxw_install_dismissed_v1';
+      var DISMISS_MS = 30 * 24 * 60 * 60 * 1000;   // 「不再提示」按 30 天算，不是永久
+
+      function standalone() {
+        try {
+          if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+        } catch (e) { /* 老内核没有 matchMedia 也不影响后面的 navigator.standalone */ }
+        return navigator.standalone === true;   // iOS 专有：从主屏幕图标启动
+      }
+      function ua() { return navigator.userAgent || ''; }
+      function isWeChat() { return /MicroMessenger/i.test(ua()); }
+      function isIOS() {
+        if (/iPad|iPhone|iPod/.test(ua())) return true;
+        /* iPadOS 13+ 的 UA 伪装成 macOS，只能靠「有触摸」来认 */
+        return /Macintosh/.test(ua()) && navigator.maxTouchPoints > 1;
+      }
+      function dismissed() {
+        var t = Number(ST ? ST.read(DISMISS_KEY, '') : '') || 0;
+        return t > 0 && (Date.now() - t) < DISMISS_MS;
+      }
+
+      var mode = '';   // 'prompt' | 'ios'
+
+      function render() {
+        if (!mode || standalone() || dismissed()) { bar.classList.add('hidden'); return; }
+        if (mode === 'prompt') {
+          textEl.textContent = '添加到桌面，下次一点就开';
+          goEl.textContent = '安装';
+          goEl.classList.remove('hidden');
+        } else {
+          textEl.textContent = '添加到主屏幕，像 App 一样打开';
+          goEl.textContent = '怎么做';
+          goEl.classList.remove('hidden');
         }
+        bar.classList.remove('hidden');
+      }
+
+      /* 展开 / 收起「分享 → 添加到主屏幕」的分步说明。
+       * force=true 表示直接展开（用于 prompt() 被浏览器拒绝时的兜底）。 */
+      function showSteps(force) {
+        if (!stepsEl) return;
+        var open = force === true || stepsEl.classList.contains('hidden');
+        stepsEl.textContent = open
+          ? '① 点浏览器底部工具栏的「分享」图标（方框 + 向上箭头）；'
+            + '② 在弹出菜单里往下找「添加到主屏幕」；③ 点右上角「添加」。'
+          : '';
+        stepsEl.classList.toggle('hidden', !open);
+        textEl.textContent = open ? '加到桌面只要三步：' : '添加到主屏幕，像 App 一样打开';
+      }
+
+      function usePrompt() {
+        var ev = window.__lxwInstallPrompt;
+        if (!ev || typeof ev.prompt !== 'function') return false;
+        var ret = null;
+        try { ret = ev.prompt(); } catch (e) { return false; }
+        /* ★ prompt() 在 Chrome 里是「返回 Promise、被拒绝时抛 NotAllowedError」。
+         * 只包 try/catch 抓不到那种异步拒绝 —— 它会变成一条未处理的 Promise 拒绝
+         *（实测：headless 里点一下就冒一条 NotAllowedError，还会被 errorReport 上报）。
+         * 拒绝通常意味着「这次点击没被算作用户手势」，此时退回文字步骤，别让按钮点了没反应。 */
+        if (ret && typeof ret.catch === 'function') {
+          ret.catch(function () { showSteps(true); });
+        }
+        /* userChoice 只有 Chrome 系给。选「稍后」不要当成永久拒绝 ——
+         * 只在本次会话里收起，下次打开还能再提示一次。 */
+        if (ev.userChoice && typeof ev.userChoice.then === 'function') {
+          ev.userChoice.then(function (choice) {
+            if (choice && choice.outcome === 'accepted') window.__lxwInstallPrompt = null;
+            bar.classList.add('hidden');
+          }).catch(function () { /* 拿不到选择结果就什么都不做 */ });
+        } else {
+          bar.classList.add('hidden');
+        }
+        return true;
+      }
+
+      $('#btn-install').addEventListener('click', function () {
+        Sfx.play('select');
+        if (mode === 'prompt' && usePrompt()) return;
+        /* iOS（或还没拿到事件）：展开文字步骤，再点一次收起 */
+        showSteps(false);
+      });
+      $('#btn-install-x').addEventListener('click', function () {
+        bar.classList.add('hidden');
+        if (ST) ST.write(DISMISS_KEY, String(Date.now())); // 隐私模式：下次还会出现
+      });
+
+      /* 事件可能比脚本晚到（SW 装好之后才满足安装条件），所以监听而不是只在启动时查一次 */
+      window.addEventListener('lxw:installable', function () {
+        mode = 'prompt';
+        render();
+      });
+      window.addEventListener('appinstalled', function () {
+        mode = '';
+        bar.classList.add('hidden');
+        if (ST) ST.remove(DISMISS_KEY);
+        flash('已添加到桌面');
+      });
+
+      if (standalone()) return;                 // 已经装过了，什么都不用做
+      if (isWeChat()) return;                   // 微信里装不了，别教用户做白工
+      if (window.__lxwInstallPrompt) mode = 'prompt';
+      /* iOS 上任何浏览器都没有 beforeinstallprompt，统一走「分享 → 添加到主屏幕」那一套；
+       * 安卓上没拿到事件 = 还不满足安装条件（比如没走 HTTPS），先不显示，免得点了一下没反应。 */
+      else if (isIOS()) mode = 'ios';
+      else return;
+      render();
+    })();
+  }
+
+  /* 玩家战绩卡 / 通用确认框 / 爆点拦截框 */
+  function bindProfileCards() {
+    /* 玩家战绩卡（三处入口共用一张卡）：
+     *   房间页座位卡 / 对局页对手座位卡 / 结束页玩家行 —— 都是委托监听，避免重渲染丢绑定 */
+    $('#btn-profile-close').addEventListener('click', closeProfile);
+    $('#profile-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeProfile();   // 点遮罩关闭
+    });
+    $('#room-players').addEventListener('click', function (e) {
+      /* 座位卡上的行为只有一条规则：点谁 = 看谁的战绩，**包括自己**。
+       * 以前是「点自己 = 改昵称、点别人 = 看战绩」—— 同一张卡两种行为，
+       * 玩家点了自己的名字想看看战绩，弹出来的却是改名框。
+       * 改名挪到卡片角落那支铅笔（.player-edit），先拦它。 */
+      var edit = e.target.closest ? e.target.closest('.player-edit') : null;
+      if (edit) { openRename(); return; }
+      var row = e.target.closest ? e.target.closest('.player-row') : null;
+      if (row && row.dataset.pid) openProfile(row.dataset.pid);
+    });
+    /* 结算行的两个手势（结算页和「上一局结算」弹窗同一套）：
+     *   头像 → 看这个人（和牌桌上点座位是同一个手势，同一个入口）
+     *   行的其他地方 → 看**这一把**的过程（见 openReplayHere）
+     * 之所以把「档案」收窄到只剩头像：整行原来都在跳档案，而结算页上
+     * 十次有九次是想确认刚才那把怎么算的。头像在行里只占最左边 56px，
+     * 「查人」得瞄着点，「查过程」随手点哪里都行 —— 按真实意图分配面积。 */
+    function bindSettleRowTap(bodySel) {
+      var body = $(bodySel);
+      if (!body) return;
+      body.addEventListener('click', function (e) {
+        if (!e.target.closest) return;
+        var row = e.target.closest('.settle-row');
+        if (!row) return;
+        var rank = e.target.closest('.settle-rank');
+        if (rank && row.dataset.pid) { openProfile(row.dataset.pid); return; }
+        openReplayHere();
+      });
+      /* 键盘同一套：头像是个 role=button，回车/空格等价于点它。
+       * 行本身不抢焦点 —— 一行里有两个动作，让 Tab 停在「行」上说不清是哪个。 */
+      body.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+        if (!e.target.closest) return;
+        var rank = e.target.closest('.settle-rank');
+        if (!rank) return;
+        var row = rank.closest('.settle-row');
+        if (!row || !row.dataset.pid) return;
+        e.preventDefault();   // 空格不滚屏
+        openProfile(row.dataset.pid);
+      });
+    }
+    bindSettleRowTap('#settle-body');
+    bindSettleRowTap('#prev-result-body');
+    bindOppSeatTap();
+    $('#btn-confirm-ok').addEventListener('click', onConfirmOk);
+    $('#btn-confirm-cancel').addEventListener('click', closeConfirm);
+    /* 爆点拦截框唯一的出口：合上、回到十点半那一组继续改。
+     * 没有第二个按钮 —— 见 blockBustSubmit 上方关于「不留后路」的说明。 */
+    $('#btn-bust-fix').addEventListener('click', function () {
+      hideModalEl('bust-modal');
+      state.activeGroup = 'tenhalf';
+      render();
+      nudgeTenHalf();
+    });
+  }
+
+  function bindRename() {
+    /* 房内改昵称 */
+    $('#btn-rename-ok').addEventListener('click', onRenameOk);
+    $('#btn-rename-cancel').addEventListener('click', closeRename);
+    $('#rename-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); onRenameOk(); }
+    });
+    $('#rename-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeRename();   // 点遮罩关闭
+    });
+  }
+
+  /* ---------------------------- 成就页（v109） ----------------------------
+   * 数据来源：RoomStore.getProfile(pid)。服务端档案里带 ach 桶
+   * （见 hub.getProfile 的注释），自己看自己也走同一条路，只是标题不同。
+   *
+   * 为什么不复用 /api/me/records：那条路只在 HTTP 登录态下可用，
+   * 而成就页从房间里的座位卡也能打开 —— 那时未必还连着 HTTP 会话，
+   * 但 WS 一定是连着的（否则看不到座位）。
+   */
+
+  /* 当前停在哪一屏。用来决定「从成就页返回时回到哪儿」：
+   * 从首页进来就回首页，从座位卡进来就回房间 —— 玩家点的是座位上的头像，
+   * 回到首页等于把他踢出了房间。 */
+  function currentScreenId() {
+    var ids = ['screen-home', 'screen-room', 'screen-game', 'screen-settle', 'screen-records', 'screen-rank'];
+    for (var i = 0; i < ids.length; i++) {
+      /* 别用 el 当变量名：el 是本文件的 DOM 构造函数，遮蔽它会让
+       * ui.test.js 的「代码卫生」守卫变红，也更容易在改动时误用。 */
+      var scr = $('#' + ids[i]);
+      if (scr && !scr.classList.contains('hidden')) return ids[i];
+    }
+    return 'screen-home';
+  }
+
+  function openAchievements(pid, from) {
+    var isMe = !pid || pid === state.myId;
+    achBackScreen = from || 'screen-home';
+    $('#ach-title').textContent = isMe ? '我的成就' : '成就';
+    $('#ach-body').innerHTML = '<p class="rank-tip">正在加载…</p>';
+    showScreen('screen-achievements');
+    if (typeof RoomStore === 'undefined' || !RoomStore.canQueryProfile || !RoomStore.canQueryProfile()) {
+      $('#ach-body').innerHTML = '<p class="rank-tip">本地演示模式看不了成就。</p>';
+      return;
+    }
+    RoomStore.getProfile(pid || state.myId).then(function (res) {
+      /* 加载期间可能已经返回了。这时整屏已切走，再往里写就是往隐藏页写 ——
+       * 不报错，但下次进来会先闪一下上一次的内容。 */
+      if (state.screen !== 'achievements') return;
+      if (!res || res.ok === false) {
+        $('#ach-body').innerHTML = '<p class="rank-tip">' + esc((res && res.error) || '加载失败') + '</p>';
+        return;
+      }
+      var pr = res.profile;
+      if (!pr) {
+        $('#ach-body').innerHTML = '<p class="rank-tip">还没有数据，打完一局就有了。</p>';
+        return;
+      }
+      if (!AV) {                       // 老客户端缓存里没有这个模块：明确告知，别白屏
+        $('#ach-body').innerHTML = '<p class="rank-tip">页面版本太旧，刷新一次再看。</p>';
+        return;
+      }
+      $('#ach-body').innerHTML = AV.pageHtml(pr, window.Ach, { isMe: isMe });
+      if ($('#ach-scroll')) $('#ach-scroll').scrollTop = 0;
+    }).catch(function () {
+      if (state.screen !== 'achievements') return;
+      $('#ach-body').innerHTML = '<p class="rank-tip">网络异常，稍后再试。</p>';
+    });
+  }
+
+  function closeAchievements() {
+    showScreen(achBackScreen || 'screen-home');
+  }
+
+  /* 战绩页与排行榜入口（榜单行用委托：innerHTML 每次重写） */
+  function bindRecordsNav() {
+    /* 战绩页（L0 本机战绩） */
+    $('#btn-records-home').addEventListener('click', function () { openRecords('home'); });
+    $('#btn-rank-home').addEventListener('click', openRank);
+    $('#btn-rank-back').addEventListener('click', closeRank);
+    /* 成就页：入口在战绩页标题栏右上角（v109 把首页那个第 5 格合并过来了）。
+     * 传 'screen-records' 作为返回目标 —— 玩家是从战绩页点进来的，返回要回那儿。 */
+    $('#btn-ach-from-records').addEventListener('click', function () {
+      openAchievements(state.myId, 'screen-records');
+    });
+    $('#btn-ach-back').addEventListener('click', closeAchievements);
+    /* 成就页：座位信息档底部那一行（内容由 profileBodyHtml 动态生成，所以用委托）。
+     * 挂在 document 上而不是面板上：档案卡有两个宿主（.profile-box / .ss-info），
+     * 分别绑一次会漏掉以后新加的第三个。 */
+    document.addEventListener('click', function (e) {
+      var hit = e.target && e.target.closest ? e.target.closest('[data-ach-open]') : null;
+      if (!hit) return;
+      var pid = hit.getAttribute('data-ach-open');
+      if (!pid) return;
+      /* 先把座位面板关掉：成就页是整屏，留一个浮层压在上面会挡住返回按钮。 */
+      try { closeSeatSheet(); } catch (err) { /* 面板本来就没开 */ }
+      openAchievements(pid, currentScreenId());
+    });
+    /* 排行榜行 → 看这个人的云端档案。委托监听：榜单每次拉取都整块 innerHTML 重写，
+     * 逐行绑事件会在第一次刷新后全部失效（房间座位卡当初就踩过这个坑）。
+     * 榜尾那行「我在 50 名外」也带 data-pid，点自己就看我自己的档案。 */
+    $('#rank-list').addEventListener('click', function (e) {
+      var row = e.target.closest ? e.target.closest('.rank-row') : null;
+      if (row && row.dataset.pid) openProfile(row.dataset.pid, row.dataset.nick);
+    });
+  }
+
+  function bindAuthScreen() {
+    /* 登录 / 注册：登录与注册两个 tab 都用事件委托，
+     * 因为底部提示那行是 innerHTML 动态替换的，直接绑会在替换后失效。 */
+    $('#screen-auth').addEventListener('click', function (e) {
+      var tab = e.target.closest ? e.target.closest('[data-auth-tab]') : null;
+      if (tab) { setAuthMode(tab.getAttribute('data-auth-tab')); Sfx.play('select'); }
+    });
+    $('#btn-auth-submit').addEventListener('click', submitAuth);
+    /* 忘记密码：就地展开一段说明，不弹窗。
+     * 这个游戏不绑手机号、没有邮箱，服务端也没有任何自助找回的接口 ——
+     * 与其让玩家反复试密码、以为号废了，不如直接告诉他「找管理员重置，战绩不丢」。 */
+    $('#btn-forgot').addEventListener('click', function () {
+      var box = $('#auth-forgot-note');
+      var open = box.classList.contains('hidden');
+      box.classList.toggle('hidden', !open);
+      Sfx.play('select');
+    });
+    var authPass = $('#auth-pass');
+    authPass.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submitAuth(); }
+    });
+    $('#auth-name').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); authPass.focus(); }
+    });
+  }
+
+  function bindAccountScreen() {
+    /* 我的账号 */
+    $('#btn-account').addEventListener('click', openAccount);
+    $('#btn-acc-close').addEventListener('click', closeAccount);
+    $('#account-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeAccount();
+    });
+    $('#btn-acc-pwd').addEventListener('click', openPwdModal);
+    $('#btn-acc-avatar').addEventListener('click', openAvatarModal);
+    $('#btn-av-close').addEventListener('click', closeAvatarModal);
+    $('#avatar-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeAvatarModal();
+    });
+    /* 委托而不是给 48 个格子各挂一个监听：
+     * 格子是每次打开时重画的，直接绑会随重画一起失效（或者要在重画时重绑一遍）。 */
+    $('#av-grid').addEventListener('click', function (e) {
+      var cell = e.target.closest ? e.target.closest('[data-av]') : null;
+      if (cell) pickAvatar(cell.getAttribute('data-av'));
+    });
+    $('#btn-av-upload').addEventListener('click', function () {
+      var f = $('#av-file');
+      if (f) f.click();
+    });
+    $('#av-file').addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      /* 选完立刻清空 input.value：不清的话「同一个文件再选一次」不会触发 change，
+       * 用户会以为点了没反应。 */
+      try { e.target.value = ''; } catch (err) { /* 忽略 */ }
+      if (f) pickAvatarPhoto(f);
+    });
+    $('#btn-av-drop').addEventListener('click', dropAvatarPhoto);
+    $('#btn-av-random').addEventListener('click', function () {
+      if (typeof Avatar === 'undefined') return;
+      pickAvatar('a' + Math.floor(Math.random() * Avatar.COUNT));
+    });
+    $('#btn-acc-logout').addEventListener('click', onLogout);
+    $('#btn-acc-delete').addEventListener('click', onDeleteAccount);
+    $('#btn-pwd-ok').addEventListener('click', submitPwd);
+    $('#btn-pwd-cancel').addEventListener('click', closePwdModal);
+    $('#pwd-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closePwdModal();
+    });
+    $('#pwd-new').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submitPwd(); }
+    });
+  }
+
+  /* 结算页与回放 / 分享 / 上一把成绩 */
+  function bindSettleActions() {
+    $('#btn-records').addEventListener('click', function () { openRecords('settle'); });
+    $('#btn-share').addEventListener('click', onShare);
+    $('#btn-replay').addEventListener('click', function () { openReplay(); });
+    /* 就位态的回放入口。按钮本身会被 renderRoom 显示/隐藏，
+     * 监听在初始化时就绑上（屏幕是常驻的，只是切换显隐）。 */
+    $('#btn-prev-replay').addEventListener('click', function () { openReplay({ prev: true }); });
+    $('#btn-prev-result').addEventListener('click', openPrevResult);
+    $('#btn-prev-result-close').addEventListener('click', closePrevResult);
+    /* 点遮罩关闭，和回放弹窗同一套。判定必须用 e.target === e.currentTarget：
+     * 监听挂在 .modal 上，点在卡片内部时 target 会变成卡片里的某个元素。 */
+    $('#prev-result-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closePrevResult();
+    });
+    /* 弹窗里的玩家行也能点 —— 结算页能点，这里为什么不能点。
+     * 手势与结算页完全一致（头像 = 档案，行 = 这一把的过程），
+     * 所以两边的监听是同一个函数（bindSettleRowTap），不在这里重复绑。 */
+    $('#btn-next-back').addEventListener('click', onNextBack);
+    $('#btn-replay-close').addEventListener('click', closeReplay);
+    /* 点遮罩关闭。全站 12 个弹窗里，内容型的那几个（分享图、玩家档案、账号卡、
+     * 改密码、改昵称）早就支持点外面关，只有回放是例外 —— 它是最该支持的那种：
+     * 玩家只是想瞄一眼过程，看完随手点一下空白处就该退出去。
+     * 判定必须用 e.target === e.currentTarget：监听挂在 .modal 上，
+     * 点在卡片内部时 target 会变成卡片里的某个元素，否则点内容也会误关。 */
+    $('#replay-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeReplay();
+    });
+    $('#btn-share-save').addEventListener('click', onShareSave);
+    $('#btn-share-close').addEventListener('click', closeShare);
+    $('#share-modal').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) closeShare();
+    });
+    $('#btn-records-back').addEventListener('click', closeRecords);
+    $('#btn-records-create').addEventListener('click', onCreateFromRecords);
+    $('#btn-records-clear').addEventListener('click', openClearModal);
+    $('#btn-records-clear-ok').addEventListener('click', onClearConfirmed);
+    $('#btn-records-clear-cancel').addEventListener('click', closeClearModal);
+    $('#room-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') onJoin();
+    });
+    $('#nickname-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') onCreate();
+    });
+    // 每次输入即时持久化昵称：SW 接管导致首访后页面自动 reload 时，
+    // 会话内刚输入的昵称能从 session 那份读回，避免被清成默认「玩家xxxx」。
+    $('#nickname-input').addEventListener('input', function (e) {
+      setNickname((e.target.value || '').trim());
+    });
+  }
+
+  /* Esc 关最上层弹窗（顺序即层级顺序）+ Tab 圈定 + 返回键 */
+  function bindKeyboard() {
+    // Esc / 移动端返回键关闭弹窗（通用确认、玩法规则、清除战绩、玩家战绩卡、改昵称）
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      /* 爆点拦截框排最前：它只在提交被挡下的那一刻出现，是当时唯一的一层。 */
+      if (!$('#bust-modal').classList.contains('hidden')) { hideModalEl('bust-modal'); return; }
+      if (!$('#profile-modal').classList.contains('hidden')) { closeProfile(); return; }
+      if (!$('#rename-modal').classList.contains('hidden')) { closeRename(); return; }
+      if (!$('#records-clear-modal').classList.contains('hidden')) { closeClearModal(); return; }
+      /* 建房选把数：只在首页，是最外层的那一个（进来就没人叠它） */
+      if (!$('#create-modal').classList.contains('hidden')) { closeCreateModal(); return; }
+      if (!$('#confirm-modal').classList.contains('hidden')) { closeConfirm(); return; }
+      /* 引导和完整规则会互相切换，所以先关引导：它更可能是当前那一层。
+       * 关掉即视为「看过了」，不再自动弹 —— 用户按了 Esc 就是明确表态。 */
+      if (!$('#guide-modal').classList.contains('hidden')) { closeGuide(); return; }
+      if (!$('#replay-modal').classList.contains('hidden')) { closeReplay(); return; }
+      /* 和回放同一层：两个都是「瞄一眼就退」的内容型弹窗，放在同一位置，
+       * 不会因为它们互相叠而抢先后。 */
+      if (!$('#prev-result-modal').classList.contains('hidden')) { closePrevResult(); return; }
+      if (!$('#rules-modal').classList.contains('hidden')) { hideModalEl('rules-modal'); return; }
+      /* 换头像叠在账号卡上面，所以要先于 account 判一次 */
+      if (!$('#avatar-modal').classList.contains('hidden')) { closeAvatarModal(); return; }
+      /* 补上这两个：以前 Esc 关不掉改密码和账号卡，键盘用户只能去点按钮。
+       * pwd 在前，因为它叠在账号卡上面；只加不删，上面几条的优先级一点没动。 */
+      if (!$('#pwd-modal').classList.contains('hidden')) { closePwdModal(); return; }
+      if (!$('#account-modal').classList.contains('hidden')) { closeAccount(); return; }
+      /* 交替卡与结算弹窗原来**不在** Esc 链里（结算是必看的，关掉等于跳过）。
+       * v89 改成一幕一组后，Esc 的含义变成「下一幕」—— 跳过的只是一次等待，
+       * 不是跳过内容；而交替卡本来就是过渡通知，直接关掉。 */
+      if (!$('#round-break-modal').classList.contains('hidden')) { closeBreakCard(); render(); return; }
+      if (!$('#result-modal').classList.contains('hidden')) { advanceResult(); return; }
+    });
+
+    /* Tab 圈定：弹窗打开时把 Tab / Shift+Tab 关在「最上层那个弹窗」里。
+     * 不加这一段的话，键盘用户按两下 Tab 焦点就跑到弹窗背后的首页按钮上了 ——
+     * 屏幕上还显示着弹窗、焦点却在背后，这是最难自己发现的一类可用性问题
+     *（眼睛看不见焦点，读屏又已经不在念弹窗了）。
+     * 用 capture 阶段：弹窗内部的输入框自己处理按键时，Tab 仍然先过这里。 */
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab') return;
+      var id = topModalId();
+      if (!id) return;
+      var list = modalFocusables($('#' + id));
+      if (!list.length) return;
+      var first = list[0];
+      var last = list[list.length - 1];
+      var idx = -1;
+      for (var i = 0; i < list.length; i++) if (list[i] === document.activeElement) { idx = i; break; }
+      /* idx < 0 = 焦点根本不在弹窗里（刚打开还没搬进去、或用户点了背景）：
+       * 也要接住 —— 一个 Tab 就该回到弹窗里，而不是从页面顶部重新开始。 */
+      if (e.shiftKey) {
+        if (idx <= 0) { e.preventDefault(); focusEl(last); }
+      } else if (idx < 0 || idx === list.length - 1) {
+        e.preventDefault();
+        focusEl(first);
+      }
+    }, true);
+    window.addEventListener('popstate', function () {
+      Modal.setModalStatePushed(false);
+      /* 顺序有讲究：先关上层（确认框、改密码），再关下层（账号弹窗）。
+       * 只关一部分会留下「按返回没反应」的死状态——账号弹窗是最后加的，
+       * 之前漏在这里，手机上按返回键关不掉它。 */
+      closeConfirm();
+      closePwdModal();
+      closeProfile();
+      closeRename();
+      closeClearModal();
+      closeCreateModal();
+      closeAccount();
+      closeGuide();
+      closeReplay();
+      hideModalEl('rules-modal');
+    });
+  }
+
+  /* 视口尺寸自愈与前后台切换：只重算缩放，不碰状态 */
+  function bindViewportAndLifecycle() {
+    // 移动端自动播放限制：第一次触摸解锁音频
+    document.addEventListener('touchstart', function () { Sfx.unlock(); }, { passive: true });
+    document.addEventListener('mousedown', function () { Sfx.unlock(); });
+
+    // 断网/恢复：顶部提示条跟着切（WS 自己的重连提示在 init 里另挂）
+    window.addEventListener('offline', function () {
+      setNetBanner(false);
+      flash('网络已断开');
+    });
+    window.addEventListener('online', function () {
+      setNetBanner(true);
+      flash('网络已恢复');
+    });
+
+    window.addEventListener('resize', resize);
+    window.addEventListener('resize', updateOppScrollHint);
+    window.addEventListener('orientationchange', function () { setTimeout(resize, 200); });
+
+    /* 输入框失焦后再量一次。
+     *
+     * resize() 在有焦点时**故意不切** compact-v / ls-tight（见那里的说明）。
+     * 但键盘收起不一定派发 resize（iOS 尤其不可靠），若一直没人再量一次，
+     * 那一次被跳过的档位判定就永久丢了 —— 小屏手机上会一直停在「非紧凑」版式。
+     * 这里在焦点离开输入控件后补一次，代价是一次 resize()，不涉及任何状态变化。 */
+    document.addEventListener('blur', function (e) {
+      if (isTypingTarget(e.target)) setTimeout(resize, 60);   // 等布局从键盘态恢复
+    }, true);
+
+    /* 视口尺寸自愈：容器变了就重算，不管 resize 事件有没有派发。
+     *
+     * 真机上「横屏底部一条深色带」的成因就是这个缺口：浏览器收起底栏、应用内 WebView
+     * 改高度、分屏拖拽、PWA 从后台恢复，都可能让视口变大而**不派发 resize**。
+     * 舞台原来是用当时算出的像素值写死的，没人重算就停在旧高度。
+     * 这里用 ResizeObserver 盯 #viewport 自己的盒子 —— 容器一变必然触发，与事件无关。 */
+    function syncViewportSize() {
+      var vp = document.getElementById('viewport');
+      if (!vp) return;
+      if (vp.clientWidth === lastVpW && vp.clientHeight === lastVpH) return;
+      resize();
+      updateOppScrollHint();
+    }
+    if (typeof ResizeObserver === 'function') {
+      var vpEl = document.getElementById('viewport');
+      if (vpEl) {
+        new ResizeObserver(function () {
+          clearTimeout(vpWatchTimer);
+          vpWatchTimer = setTimeout(syncViewportSize, 30);
+        }).observe(vpEl);
       }
       if (window.visualViewport && window.visualViewport.addEventListener) {
         /* visualViewport 与布局视口不总是同步（捏合、键盘、地址栏收放），

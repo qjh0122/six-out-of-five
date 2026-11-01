@@ -18,6 +18,7 @@ const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 const authStoreSrc = fs.readFileSync(path.join(ROOT, 'js', 'authStore.js'), 'utf8');
+const storageSrc = fs.readFileSync(path.join(ROOT, 'js', 'storage.js'), 'utf8');
 const roomStoreSrc = fs.readFileSync(path.join(ROOT, 'js', 'roomStore.js'), 'utf8');
 const gameJs = readGameAll();
 const serverAuthSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'server', 'auth.js'), 'utf8');
@@ -74,6 +75,10 @@ function openPage(disk, opts) {
   sandbox.window = sandbox;
   sandbox.self = sandbox;
   vm.createContext(sandbox);
+  /* 存储收口（v111）：authStore 的物理键与降级逻辑都在 js/storage.js。
+   * 沙箱里必须先把它跑起来，否则 authStore 拿不到 Store，写的是空实现 ——
+   * 那时「登录态写进 localStorage」这条会以「什么都没写」的方式红。 */
+  vm.runInContext(storageSrc, sandbox, { filename: 'storage.js' });
   vm.runInContext(authStoreSrc, sandbox, { filename: 'authStore.js' });
   return { AuthStore: sandbox.AuthStore, fetchCalls: pageFetch, sandbox };
 }
@@ -212,7 +217,9 @@ async function main() {
     ok(/RoomStore\.disconnect\(\)/.test(leave), '退出/删号时断开长连接');
     ok(/cleanupRoom\(\)/.test(leave), '退出/删号时清掉房内状态');
     ok(/AuthStore\.logout\(\)/.test(leave), '退出/删号时清掉本地会话');
-    ok(/removeItem\(LS_NICK\)/.test(leave), '退出/删号时清掉昵称缓存（否则下一个人看到上一个人的名字）');
+    /* v111 起存储调用统一走 ST（js/storage.js），所以判据从 removeItem(LS_NICK)
+     * 改成 ST.remove(LS_NICK) —— 守的是同一件事：昵称缓存被清掉了。 */
+    ok(/ST\.remove\(LS_NICK\)/.test(leave), '退出/删号时清掉昵称缓存（否则下一个人看到上一个人的名字）');
     ok(/onLogout[\s\S]{0,200}leaveAccountState/.test(gameJs), '退出登录走的是这套清理');
     /* 断言从「调了这个函数」升级成「**传了 purge**」：
      * 删号后必须连本机战绩与整场回放一起清，只清会话等于只删了一半。

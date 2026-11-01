@@ -29,6 +29,10 @@ const auth = require('./auth');
  * 分开写的后果一定是「页面上写着 7 次、服务器记了 5 次」，
  * 而这项目已经在 MAX_PLAYERS 上踩过一次同类问题。 */
 const Ach = require(path.join(__dirname, '..', 'pwa', 'js', 'achievements.js'));
+/* 战绩统计口径：与前端 pwa/js/records.js 共用同一份纯函数。
+ * 以前两边各写一遍（服务端增量、前端整表），改规则要改两处；
+ * 现在服务端只是「逐把 apply」，前端是「整表 fold」，同一段代码。 */
+const Stats = require(path.join(__dirname, '..', 'pwa', 'js', 'stats.js'));
 
 /* 这里原本有一份 `const INITIAL_SCORE = 20`，并且从本模块导出。
  * 但全仓没有任何地方 require 它 —— hub.js 算净胜用的是 `CONFIG.INITIAL_SCORE`
@@ -519,10 +523,14 @@ class ProfileStore {
 
     /* ---- 成就累加（口径见 pwa/js/achievements.js 顶部） ----
      *
-     * 放在 p.games / currentStreak / bestNet 更新**之前**：R7「翻身农奴」
-     * 判的是「这一把之前已连败 ≥3 把，而这一把刷新了个人单场最高」，
-     * 两个条件都依赖更新前的值。挪到后面，连败计数已经被清零，永远判不到 ——
+     * 放在 p.games / currentStreak 更新**之前**：R7「翻身农奴」判的是
+     * 「这一把之前已连败 ≥5 把，而这一把赢了」—— 条件依赖更新前的连败计数。
+     * 挪到后面，连败计数已经被清零，永远判不到 ——
      * 这类「顺序错了就静默失效」的判定，测试里有一条专门盯着它。
+     *
+     * v112 改口径（用户裁定）：原来是「连败 ≥3 且这一把刷新个人单场最高」，
+     * 现在只要「连败 ≥5 之后赢一把」。理由：连败时状态本来就差，
+     * 还要求刷新最高，等于让最需要被承认的人拿不到；而「终于赢了一把」才是那一刻。
      *
      * AI 局在上面就 return 了，所以这里天然不记人机局，
      * 与「人机局不影响任何统计」的口径一致。
@@ -530,41 +538,42 @@ class ProfileStore {
     const run = meta && meta.ach;
     if (run) {
       const loseBefore = Math.abs(Math.min(0, Number(p.currentStreak) || 0));
-      const prevBest = Number(p.bestNet) || 0;
       /* 浅拷贝一份再改：run 是 room.achRun 的引用，
        * 直接往上写 r7/r8 会污染房间对象（虽然整局结束就废了，但别留这种依赖）。 */
       const delta = Object.assign({}, run);
-      /* n > 0 这个条件是必须的：只看「刷新个人最高」的话，一个全负的人
-       * 从 -5 打到 -4 也算刷新（-4 确实是他最好的那一场）——
-       * 可玩家看到的是「输了 4 分」，给他发「翻身农奴」等于嘲讽。
-       * 这条成就的语义是「终于赢了一把」，所以必须真的赢。 */
-      if (loseBefore >= 3 && p.games > 0 && n > 0 && n > prevBest) delta.r7 = 1;
-      /* R8：打满 30 把的整局。handLimit 是建房时选的局数，由 hub 传进来；
-       * endReason='handLimit' 表示「确实打满了预定局数」，不是中途解散。 */
-      if (Number(meta.handLimit) >= 30 && meta.endReason === 'handLimit') delta.r8 = 1;
+      /* n > 0 是硬条件：这条成就的语义是「终于赢了一把」，
+       * 一个全负的人把 -5 打成 -4 不算 —— 玩家看到的是「还是输了」，
+       * 给他发「翻身农奴」等于嘲讽。 */
+      if (loseBefore >= 5 && n > 0) delta.r7 = 1;
+      /* R8（人间清醒）v112 删除：它与「把数上限」这条规则重复表达同一件事，
+       * 而且只有选 30 把房才拿得到 —— 属于「给一个特定设置发奖」，不是成就。
+       * 字段保留在桶里只为老档案不丢（见 achievements.js 的 blankCounts）。 */
       p.ach = Ach.mergeInto(p.ach || Ach.blank(), delta);
     }
 
-    p.games += 1;
-    p.totalNet += n;
-    if (n > 0) {
-      p.wins += 1;
-      p.currentStreak = p.currentStreak >= 0 ? p.currentStreak + 1 : 1;
-    } else if (n < 0) {
-      p.losses += 1;
-      p.currentStreak = p.currentStreak <= 0 ? p.currentStreak - 1 : -1;
-    } else {
-      p.draws += 1;
-      p.currentStreak = 0;
-    }
-    const absStreak = Math.abs(p.currentStreak);
-    if (p.currentStreak > 0 && absStreak > p.longestStreak) p.longestStreak = absStreak;
-    if (p.currentStreak < 0 && absStreak > p.longestLoseStreak) p.longestLoseStreak = absStreak;
-    /* 第一场直接做初值，不能用 `n > 0` 起算：
-     * 一个全负的人，「单场最高」应该是那个负数（-18 也是他真实的最好成绩），
-     * 而不是 0 —— 0 是「平局」的语义，摆在那里会让人以为某一局打平了。 */
-    if (p.games === 1) p.bestNet = n;
-    else if (n > p.bestNet) p.bestNet = n;
+    /* 这一把之后的所有计数都由 Stats.apply 算（含「第一场直接取初值」那条）：
+     * 服务端档案里的字段名与前端不完全一致（`draws` ↔ `flats`），
+     * 所以过一遍映射再写回，**不在两边各留一份规则**。 */
+    const st = Stats.apply({
+      games: p.games,
+      wins: p.wins,
+      losses: p.losses,
+      flats: p.draws,
+      totalNet: p.totalNet,
+      bestNet: p.bestNet,
+      currentStreak: p.currentStreak,
+      longestStreak: p.longestStreak,
+      longestLoseStreak: p.longestLoseStreak
+    }, n);
+    p.games = st.games;
+    p.wins = st.wins;
+    p.losses = st.losses;
+    p.draws = st.flats;
+    p.totalNet = st.totalNet;
+    p.bestNet = st.bestNet;
+    p.currentStreak = st.currentStreak;
+    p.longestStreak = st.longestStreak;
+    p.longestLoseStreak = st.longestLoseStreak;
 
     /* 流水里带上人数与结束原因：战绩页每行要显示「3 人 · 分数见底结束」，
      * 没有这两个字段就只能从本机记录里猜，而本机记录正是这次要绕开的东西。 */

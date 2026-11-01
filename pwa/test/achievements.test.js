@@ -205,7 +205,7 @@ eq(Ach.runOf(null, 'p1'), null, '没有房间桶时也返回 null');
  * 七、统计表：分母为 0 时概率是 null 而不是 0
  * ================================================================ */
 var st = Ach.typeStats(Ach.blank());
-eq(st.types.length, 5, '五种大牌型都要出现');
+eq(st.types.length, 8, '八种牌型都要出现（5 种大牌 + 3 种小牌）');
 eq(st.types[0].label, '五花牛', '排序：最稀有的排最前');
 eq(st.types[0].rate, null, '★ 没参与过 → 概率是 null（不等于 0%）');
 eq(st.vs.total, 0, '对撞分母 0');
@@ -220,19 +220,19 @@ eq(st2.types.filter(function (t) { return t.label === '十点半'; })[0].rate, 1
 /* ================================================================
  * 八、目录与判定
  * ================================================================ */
-eq(Ach.TOTAL, 26, '成就总数 26（牌型 10 + 对撞 4 + 通吃 4 + 战绩 8）');
+eq(Ach.TOTAL, 34, '成就总数 34（牌型 13 + 对撞 6 + 通吃 4 + 战绩 11）');
 
 var emptyEval = Ach.evaluate(Ach.blank(), { games: 0, longestStreak: 0, bestNet: 0 });
-eq(emptyEval.total, 26, 'evaluate 返回全部条目（未解锁也要返回，页面要显示名字）');
+eq(emptyEval.total, 34, 'evaluate 返回全部条目（未解锁也要返回，页面要显示名字）');
 eq(emptyEval.unlocked, 0, '空档案一个都没解锁');
 ok(emptyEval.list.every(function (i) { return typeof i.name === 'string' && i.name.length > 0; }),
   '未解锁条目也带名字（用户裁定：不做 ??? 猜谜）');
 
 var byS = emptyEval.bySeries;
-eq(byS.type.total, 10, '牌型系列 10 条');
-eq(byS.vs.total, 4, '对撞系列 4 条');
+eq(byS.type.total, 13, '牌型系列 13 条（大牌 10 + 小牌 3）');
+eq(byS.vs.total, 6, '对撞系列 6 条（大牌对撞 4 + 小牌对撞 2）');
 eq(byS.sweep.total, 4, '通吃系列 4 条');
-eq(byS.record.total, 8, '战绩系列 8 条');
+eq(byS.record.total, 11, '战绩系列 11 条（含两条连败、两条新整把成就；人间清醒已删）');
 
 /* 单条判定：拿到 1 次十点半 → h1 解锁、h2（10 次）没解锁 */
 var oneTh = Ach.evaluate({ t: { th: 1 } }, { games: 1, longestStreak: 0, bestNet: 0 });
@@ -256,17 +256,19 @@ var vet = Ach.evaluate({}, { games: 100, longestStreak: 10, bestNet: 15 });
 eq(findEval(vet, 'r1').ok, true, '第一次：games ≥ 1');
 eq(findEval(vet, 'r3').ok, true, '老油条：games ≥ 100');
 eq(findEval(vet, 'r5').ok, true, '十连胜：longestStreak ≥ 10');
-eq(findEval(vet, 'r6').ok, true, '一夜暴富：bestNet ≥ 15');
+/* v112 改口径：一夜暴富不再看「单把 15 分」这个绝对阈值，
+ * 而是「我的净胜 ≥ 在场所有输家负分总和的一半」（由 accumulateHand 计数 r12）。 */
+eq(findEval(vet, 'r9').ok, false, '只靠 bestNet 拿不到一夜暴富（它看的是 r12 计数）');
 
 /* 边界：差一点点就不解锁 */
 var justUnder = Ach.evaluate({}, { games: 99, longestStreak: 9, bestNet: 14 });
 eq(findEval(justUnder, 'r3').ok, false, '99 场拿不到老油条');
 eq(findEval(justUnder, 'r5').ok, false, '9 连胜拿不到十连胜');
-eq(findEval(justUnder, 'r6').ok, false, '14 分拿不到一夜暴富');
+eq(findEval(justUnder, 'r9').ok, false, '没有 r12 计数就拿不到一夜暴富');
 
 /* 传 null / 缺字段不能抛 */
 var nullEval = Ach.evaluate(null, null);
-eq(nullEval.total, 26, 'ACH 为 null 时按空桶处理，不抛');
+eq(nullEval.total, 34, 'ACH 为 null 时按空桶处理，不抛');
 eq(nullEval.unlocked, 0, '仍然是 0 解锁');
 
 /* sinceText */

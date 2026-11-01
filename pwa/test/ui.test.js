@@ -284,7 +284,12 @@ const swJs = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
 const scriptTags = html.match(/<script[^>]*src=/g) || [];
 const deferCount = html.match(/<script[^>]*\bdefer\b/g) || [];
 ok(scriptTags.length >= 8, '有 8 个外链 script（实际 ' + scriptTags.length + '）');
-ok(deferCount.length === scriptTags.length, '所有外链 script 都加了 defer（不阻塞渲染）', deferCount.length + '/' + scriptTags.length);
+/* v111 起唯一允许的非 defer 外链脚本是 js/storage.js：
+ * 它必须在 head 里**同步**执行完 —— 下面两段内联脚本（分享码自愈、首帧会话判断）
+ * 比任何 defer 都早，晚一步就拿不到 Store。这是唯一的例外，别再加第二个。 */
+const blockingOk = (html.match(/<script[^>]*src="[^"]*"[^>]*>/g) || []).filter((t) => !/\bdefer\b/.test(t));
+ok(blockingOk.length === 1 && blockingOk[0].indexOf('storage.js') >= 0,
+  '★ 只有 storage.js 是阻塞加载（其余都必须 defer）', blockingOk.join(' | '));
 ok(swJs.indexOf("'/assets/audio/bgm_room_loop.mp3'") < 0, 'BGM 已移出 PRECACHE（懒加载，省 155KB 首屏）');
 ok(swJs.indexOf("'/assets/audio/sfx_settle.mp3'") >= 0, '音效仍进 PRECACHE（离线也要能响）');
 
@@ -743,12 +748,13 @@ console.log('\n[安装包里的访问凭据不能写死]');
     ok(bad.length === 0, '★ 预览图的 sizes / form_factor 与文件实际一致', bad.join('; '));
   })();
 
-  ok(/localStorage\.setItem\(KEY,\s*cur\)/.test(html), '★ 首页会把当前 sharecode 存起来');
-  ok(/var KEY = 'lxw_sharecode_v1'/.test(html), 'key 名字固定，方便排查');
-  ok(/lxw_sharecode_v1/.test(html), '用的独立 key，不和登录态混在一起');
+  var storageJs = fs.readFileSync(path.join(__dirname, '..', 'js', 'storage.js'), 'utf8');
+  ok(/Store\.write\(KEY,\s*cur\)/.test(html), '★ 首页会把当前 sharecode 存起来');
+  ok(/var KEY = Store\.KEYS\.SHARE_CODE/.test(html), 'key 从唯一清单取（v111 收口，不在页面里写死）');
+  ok(/SHARE_CODE:\s*'lxw_sharecode_v1'/.test(storageJs), '用的独立 key，不和登录态混在一起');
   ok(/history\.replaceState/.test(html), '★ 补全用 replaceState（不往用户历史里塞记录）');
   /* 补全必须早于 defer 脚本，否则它们读 location.search 时还是空的 */
-  var fillAt = html.indexOf('lxw_sharecode_v1');
+  var fillAt = html.indexOf('Store.write(KEY, cur)');
   var firstScriptAt = html.indexOf('js/engine.js');
   ok(fillAt > 0 && fillAt < firstScriptAt, '★ 补全脚本在首个 defer 脚本之前执行');
 
@@ -776,7 +782,7 @@ console.log('\n[新手引导：分步，不是一屏文字]');
   ok(/\$\('#btn-rules'\)\.addEventListener\('click', openGuide\)/.test(gameJs),
     '★ 「玩法规则」现在打开的是引导，不是直接甩一整屏文字');
   ok(/看完整规则/.test(gameJs), '★ 最后一步给「看完整规则」的出口（引导与查细节分工）');
-  ok(/lxw_guide_seen_v1/.test(gameJs), '★ 用 localStorage 记「看过」，不然每次进来都弹');
+  ok(/ST\.KEYS\.GUIDE_SEEN/.test(gameJs), '★ 记「看过」，不然每次进来都弹（键在 storage.js 的唯一清单里）');
   ok(/\$\('#guide-modal'\)\.classList\.contains\('hidden'\)\)\s*\{\s*closeGuide\(\)/.test(gameJs),
     '★ Esc 能关引导');
   /* 这条以前写的是 /closeGuide\(\);\s*\n\s*\$\('#rules-modal'\)/，看着像在验 popstate，

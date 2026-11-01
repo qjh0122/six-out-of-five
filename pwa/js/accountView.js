@@ -465,8 +465,11 @@
     if (state.room || state.roomId) cleanupRoom();
     /* 昵称是独立缓存的（LS_NICK），不清的话下一个登录的人会看到上一个人的名字，
      * 而且首页输入框非空时不会被新账号的昵称覆盖，等于拿旧昵称去开房。 */
-    try { localStorage.removeItem(LS_NICK); } catch (e) { /* 忽略 */ }
-    try { sessionStorage.removeItem('weile_nickname'); } catch (e) { /* 忽略 */ }
+    var ST = (typeof LXW !== 'undefined' && LXW.Store) ? LXW.Store : null;
+    if (ST) {
+      ST.remove(LS_NICK);
+      ST.remove(ST.KEYS.NICK_SESSION, 'session');
+    }
     $('#nickname-input').value = '';
     AuthStore.logout();
     state.myId = '';

@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v110';
+const CACHE_NAME = 'weile-liuxuanwu-v112';
 
 /* network-first 的超时上限。
  *
@@ -106,8 +106,16 @@ const PRECACHE = [
   '/js/achievements.js',
   '/js/bestLine.js',
   '/js/stateMachine.js',
+/* 存储收口（v111）：**必须**预缓存，而且是**阻塞加载**（index.html head 里没有 defer）。
+ * 它 404 的话连「分享码自愈」和首帧会话判断都会失效 —— 桌面图标打开时的兜底路径
+ * 正好就依赖它，而那条路径只有真实安装用户会走到，本地探针很难覆盖。 */
+  '/js/storage.js',
   '/js/authStore.js',
   '/js/roomStore.js',
+/* 统计口径（v111 收口）：records.js 与 server/profile.js 共用一份。
+ * 它 404 的话 records.js 加载后第一次算统计就抛 —— 战绩页整页空，
+ * 而且因为是 deferred 脚本，控制台里只有一条与「战绩」看起来无关的错。 */
+  '/js/stats.js',
   '/js/records.js',
 /* 场次档案（整场回放的数据源）。它不预缓存不会崩 —— game.js 每个调用点都用
  * typeof 判断兜底 —— 但离线时会静默退化成「只能看单把」，

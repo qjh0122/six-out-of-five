@@ -14,6 +14,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const { readOne } = require('./helpers/gameSource.js');
 
 let pass = 0, fail = 0;
@@ -25,7 +26,13 @@ function ok(cond, name, extra) {
 const src = readOne('game.js');
 
 console.log('\n[1] 读写函数存在且命名一致');
-ok(/var HAND_LIMIT_KEY = 'lxw_hand_limit_v1';/.test(src), '键名是 lxw_hand_limit_v1（与 lxw_guide_seen_v1 同一命名）');
+/* v111 起键名从 js/storage.js 的唯一清单取（物理键只允许在那里出现一次）。
+ * 这里改成「取的是清单里的那一项」+「清单里确实叫这个名」两条一起守，
+ * 只守后一条会被「代码里又写死一遍」绕过。 */
+ok(/var HAND_LIMIT_KEY = ST \? ST\.KEYS\.HAND_LIMIT : 'lxw_hand_limit_v1';/.test(src),
+  '键名从存储清单取（storage.js 的 HAND_LIMIT）');
+ok(/HAND_LIMIT: 'lxw_hand_limit_v1'/.test(fs.readFileSync(path.join(__dirname, '..', 'js', 'storage.js'), 'utf8')),
+  '清单里确实是 lxw_hand_limit_v1（与 lxw_guide_seen_v1 同一命名）');
 ok(/function readSavedLimit\(\)/.test(src), '有 readSavedLimit');
 ok(/function saveLimit\(n\)/.test(src), '有 saveLimit');
 
@@ -33,8 +40,14 @@ ok(/function saveLimit\(n\)/.test(src), '有 saveLimit');
  * 一个没包 try 的读会让整个建房弹窗打不开 —— 那是最难查的一类（只有部分用户会遇到）。 */
 const readFn = /function readSavedLimit\(\)\s*\{([\s\S]*?)\n  \}/.exec(src);
 const saveFn = /function saveLimit\(n\)\s*\{([\s\S]*?)\n  \}/.exec(src);
-ok(!!readFn && /try\s*\{/.test(readFn[1]) && /catch/.test(readFn[1]), '★ readSavedLimit 包了 try/catch');
-ok(!!saveFn && /try\s*\{/.test(saveFn[1]) && /catch/.test(saveFn[1]), '★ saveLimit 包了 try/catch');
+/* 「不能被隐私模式炸掉」是这里真正要守的性质，v111 起由 storage.js 统一保证：
+ * Store.read / Store.write 契约上**永不抛**（storage.test.js [3] 用会抛的 backing 证过）。
+ * 所以判据从「函数里有 try/catch」换成「走的是那个不抛的入口」——
+ * 守的仍是同一件事，且不再逼着每个调用点各写一份 try/catch。 */
+ok(!!readFn && /ST\.read\(HAND_LIMIT_KEY/.test(readFn[1]), '★ readSavedLimit 走 ST.read（契约上不抛）');
+ok(!!saveFn && /ST\.write\(/.test(saveFn[1]), '★ saveLimit 走 ST.write（写不进返回 false，不抛）');
+ok(!/(local|session)Storage\s*\.\s*(get|set|remove)Item/.test(src),
+  '不再直接读写 localStorage（收口后只剩 storage.js 一处；注释里提到不算）');
 
 console.log('\n[2] 白名单校验');
 ok(!!readFn && /CONFIG\.HAND_LIMITS[\s\S]*indexOf\(n\)\s*>=\s*0/.test(readFn[1]),

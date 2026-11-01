@@ -1078,13 +1078,15 @@
 .ach-card.is-ok[data-rarity="epic"] { border-color: rgba(245, 193, 92, 0.5); }
 .ach-card.is-ok[data-rarity="rare"] { border-color: rgba(155, 225, 196, 0.45); }
 
-/* 进度条：只在 need > 1 时出现 */
+/* 进度条：只有 6 条「还差多少」的成就画它（v112 起其余成就显示次数）。
+ * 数字区一律贴卡片底边（.ach-progress 的 margin-top:auto），
+ * 这样同一行里有的画条、有的只写「37 次」，底边也是齐的。 */
 .ach-bar {
   height: 6px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
-  margin-top: auto;
+  margin-top: 10px;
 }
 .ach-bar i {
   display: block;
@@ -1096,6 +1098,8 @@
   font-size: 20px;
   color: var(--gray-aux);
   font-variant-numeric: tabular-nums;
+  margin-top: auto;      /* 贴底：不画条的那几张卡也要和画条的底边对齐 */
+  padding-top: 6px;
 }
 
 /* 窄屏（≤ 375 物理 px 的设计宽度档）：3 列会挤成一列字，
