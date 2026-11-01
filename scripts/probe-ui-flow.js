@@ -930,7 +930,17 @@ async function main() {
 
   console.log('静态 :' + SRV_STATIC + ' / 应用 :' + SRV_PORT + '\n');
 
-  const list = VIEWPORTS.filter((v) => !ONLY || (v.g + v.m).indexOf(ONLY) >= 0);
+  /* ★ 匹配用 ASCII 归一化，不能直接拿全角 × 去比。
+   *
+   * 实测：CI 里 `ONLY: '390×844'` 一个视口都匹配不到 —— 而同一行在本地 bash
+   * 里是对的。全角 ×（U+00D7）要经过 YAML → 环境变量 → Node 三道手，
+   * runner 的 locale 不是 UTF-8 时会被改坏。表现出来是「巡检零问题」，
+   * 修复前更糟：它会安静地跑 0 个视口然后**通过**。
+   *
+   * 现在把两边的 × 都归一成半角 x 再比，CI 里写 390x844 就行。 */
+  const norm = (t) => String(t || '').toLowerCase().replace(/×/g, 'x').replace(/\s+/g, '');
+  const onlyN = norm(ONLY);
+  const list = VIEWPORTS.filter((v) => !onlyN || norm(v.g + v.m).indexOf(onlyN) >= 0);
   /* 筛选结果为空必须是**硬错误**，不能安静地跑 0 个视口然后「通过」。
    * 典型踩法：ONLY 里写了半角 x（390x844）而视口名是全角 ×（390×844），
    * 或者 CI 的 env 编码把 × 改坏了 —— 那样巡检会「零问题通过」，

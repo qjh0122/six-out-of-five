@@ -108,7 +108,7 @@ jobs:
 
       - name: 全流程巡检 · 竖屏主路径（13 屏 + 全部弹窗）
         env:
-          ONLY: '390×844'
+          ONLY: '390x844'
         run: |
           set +e
           node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui.log 2>&1
@@ -116,14 +116,18 @@ jobs:
           cat /tmp/ui.log
           # 把硬问题提成 annotation：不开日志（或者没有仓库 admin 读日志）时，
           # 也能从 check-run 的 annotations 里直接看到是哪几条红了。
-          grep -E '问题 [1-9]|✗|FAIL|Error' /tmp/ui.log | head -5 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
+          # 不靠 grep 筛：✗ 是多字节，runner 的 C locale 下 grep 匹配不到，
+          # 上一轮就因此只看到一句「exit code 2」。直接吐最后几行。
+          if [ $code -ne 0 ]; then
+            tail -8 /tmp/ui.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
           exit $code
 
       - name: 全流程巡检 · 横屏（历史上问题最多的一档）
         env:
-          ONLY: '844×390'
+          ONLY: '844x390'
           # 换一组端口：上一步刚退出时 3042 还在 TIME_WAIT，直接复用会 EADDRINUSE，
           # 而那个报错看起来像「巡检卡住了」（本地实测踩过）。
           PROBE_PORT: '3052'
@@ -132,9 +136,11 @@ jobs:
           node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui2.log 2>&1
           code=$?
           cat /tmp/ui2.log
-          grep -E '问题 [1-9]|✗|FAIL|Error' /tmp/ui2.log | head -5 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
+          if [ $code -ne 0 ]; then
+            tail -8 /tmp/ui2.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
           exit $code
 
       - name: 端到端旅途（注册 → 建房 → 打完一局 → 结算）
@@ -143,7 +149,9 @@ jobs:
           node scripts/probe-ci.js scripts/journey.js > /tmp/j.log 2>&1
           code=$?
           cat /tmp/j.log
-          grep -E '✗|FAIL|Error' /tmp/j.log | head -5 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
+          if [ $code -ne 0 ]; then
+            tail -8 /tmp/j.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
           exit $code
