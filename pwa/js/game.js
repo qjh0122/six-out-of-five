@@ -482,8 +482,15 @@
       renderSettle(room);
       if (!state.settleCelebrated) {
         state.settleCelebrated = true;
-        var _sorted = room.players.slice().sort(function (a, b) { return b.score - a.score; });
-        if (_sorted.length && _sorted[0].id === state.myId) {
+        /* ★ v113（A-4）：庆祝音改用**与名次同一份**结果（settleRank）。
+         *
+         * 旧写法自己排一次序、取第一个，与名单口径有两处不一致：
+         *   ① 不过滤弃局者 —— 弃局的人分数可能还挂在高位，他一走，
+         *      「冠军」在名单上让给了别人，声音却按他算；
+         *   ② 不认并列 —— 两人同分并列第一时，只有排在前面的那个有声音。
+         * 同一个事实两个来源，早晚要分岔；这里改成只留一份。 */
+        var _champs = settleRank(room.players).filter(function (r) { return r.champion; });
+        if (_champs.some(function (r) { return r.p.id === state.myId; })) {
           setTimeout(function () { Sfx.play('win'); }, 500); // 我赢时的庆祝音（P2）
         }
       }

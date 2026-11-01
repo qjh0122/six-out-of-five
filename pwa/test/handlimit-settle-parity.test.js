@@ -220,8 +220,10 @@ ok((reasonText.match(/:\s*'[^']+'/g) || []).length === 4, '四条结束原因都
 
 /* settleReasonText 的 handLimit 分支要把局数报出来 —— 用户需要知道「我是打满的」 */
 ok(/endReason === 'handLimit'/.test(gameJs), 'settleReasonText 有 handLimit 分支');
-ok(/打满 ' \+ lim \+ ' 局，本局结束/.test(gameJs),
-  '★ 打满的说明写成「打满 N 局，本局结束」，不是「提前结束」那种事故口气');
+/* v113：术语从「局」改成「把」—— 同一句里「局」出现两次，而顶栏一直说「第 N/M 把」。
+ * 这条断言守的仍是「必须报出把数、且不是事故口气」，只换了那个量词。 */
+ok(/打满 ' \+ lim \+ ' 把，本局结束/.test(gameJs),
+  '★ 打满的说明写成「打满 N 把，本局结束」，不是「提前结束」那种事故口气');
 ok(/isFinite\(lim\)/.test(gameJs),
   '仍防着 Infinity（v103 起 handLimitOf 不会返回它，这条当第二道闸留着）');
 

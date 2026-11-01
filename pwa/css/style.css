@@ -3132,6 +3132,14 @@ body.is-dragging { cursor: grabbing; }
   text-align: center;
   color: var(--gold);
 }
+/* 「下一把分数从 0 开始」（v113）：同一条视觉档位，但用辅助色 ——
+ * 它不是结论（含 AI 那句才是），是提醒，不该抢视线。 */
+.settle-reset-note {
+  margin: 2px 0 10px;
+  font-size: 20px;
+  text-align: center;
+  color: var(--gray-aux);
+}
 .settle-wait { font-size: 24px; color: var(--gray-aux); }
 
 /* ---------- toast ---------- */
@@ -3379,6 +3387,7 @@ body.is-dragging { cursor: grabbing; }
 .ls .opp-name,
 .ls .settle-tip,
 .ls .settle-ai-note,
+.ls .settle-reset-note,
 .ls .rp-best-k,
 .ls .pf-stat span,
 .ls .rp-legend,

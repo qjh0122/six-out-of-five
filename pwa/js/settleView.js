@@ -780,7 +780,9 @@
      * 顺带把把数报出来 —— 玩家需要知道自己是打满了 10 把，而不是被谁掐断的。 */
     else if (room.endReason === 'handLimit') {
       var lim = StateMachine.handLimitOf(room);
-      why = isFinite(lim) ? ('打满 ' + lim + ' 局，本局结束。') : '打满预定把数，本局结束。';
+      /* v113：这里原来写「打满 N 局」—— 同一句话里「局」出现两次，
+       * 而顶栏一直说「第 N/M 把」。术语统一成「把」，整场才叫「局」。 */
+      why = isFinite(lim) ? ('打满 ' + lim + ' 把，本局结束。') : '打满预定把数，本局结束。';
     }
     /* 中途结束本局：以前这里没有分支，玩家点完同意跳到结算页，
      * 只看到一堆分数和自己没变的净胜，没人解释这一局为什么就完了。 */
@@ -823,6 +825,14 @@
     if (roomHasBot(room)) {
       inner.appendChild(el('p', 'settle-ai-note', '本局含 AI · 不计入战绩与排行榜'));
     }
+    /* ★ v113（A-3）：下一把分数归零要**明说**。
+     * 玩家看到「开始下一把」会默认分数延续（整场本来就是连着打的），
+     * 开局后发现自己从 0 开始，第一反应是「我的分丢了」。
+     * 只在「打满把数」这种还有下一把的场合显示 —— 中途解散/有人离开时没有下一把，
+     * 写这句话只会让人以为还能接着打。 */
+    if (room.endReason === 'handLimit') {
+      inner.appendChild(el('p', 'settle-reset-note', '下一把分数从 0 分重新开始'));
+    }
     body.appendChild(inner);
     /* 结算列表在横屏是滚动的（.ls #screen-settle .settle-body 有 max-height + overflow-y:auto），
      * 而移动端滚动条是隐藏的 —— 不挂底部渐隐的话，第 5 行会被硬切成半行（844×390 实测），
@@ -842,7 +852,7 @@
      * 就知道不点的话这一局跟自己无关了。 */
     var joined = StateMachine.nextRoundPlayers(room).length;
     $('#settle-wait').textContent = joined > 0
-      ? '已经有 ' + joined + ' 人进入下一局'
+      ? '已经有 ' + joined + ' 人进入下一把'
       : '';
   }
 
