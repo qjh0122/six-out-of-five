@@ -2242,3 +2242,12 @@ C-3 原计划是两件事：**座位全保留（不续局的人变旁听）** + 
   他得先「回结算页」再改。就位态那一屏本来也进了留白（见 v116）。
 - `journey` 有一条偶发红：`第 1 轮十点半没爆`。它依赖抽到的牌，重跑即绿，
   与本版无关，已记进 BACKLOG 的 watch。
+
+### 发布结果（v117）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `https://liuxuanwu.app.workbuddy.host/?sharecode=Q2JYFWXOP3`（同一个应用，链接不变） |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本号 `20261102f`，`sw.js` 直抓 `CACHE_NAME = weile-liuxuanwu-v117`） |
+| 公库 | `1e6e24f chore: 同步自私有仓库（cb04ddf）` |
+| 私库 | `cb04ddf`（`git ls-remote` 比对一致） |
