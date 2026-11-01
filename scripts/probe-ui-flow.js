@@ -931,6 +931,16 @@ async function main() {
   console.log('静态 :' + SRV_STATIC + ' / 应用 :' + SRV_PORT + '\n');
 
   const list = VIEWPORTS.filter((v) => !ONLY || (v.g + v.m).indexOf(ONLY) >= 0);
+  /* 筛选结果为空必须是**硬错误**，不能安静地跑 0 个视口然后「通过」。
+   * 典型踩法：ONLY 里写了半角 x（390x844）而视口名是全角 ×（390×844），
+   * 或者 CI 的 env 编码把 × 改坏了 —— 那样巡检会「零问题通过」，
+   * 比直接报错危险得多（它看起来比真跑过还干净）。 */
+  if (!list.length) {
+    console.error('✗ ONLY=' + JSON.stringify(ONLY) + ' 没有匹配到任何视口。可选：'
+      + VIEWPORTS.map((v) => v.g + v.m).join(' / '));
+    process.exit(2);
+  }
+  console.log('本轮视口 ' + list.length + ' 个：' + list.map((v) => v.g + v.m).join(' / '));
 
   for (let vi = 0; vi < list.length; vi++) {
     const v = list[vi];
