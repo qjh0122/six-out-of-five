@@ -61,7 +61,19 @@ const H = Number(process.env.JOURNEY_H) || 844;
 const WITH_WAIT = process.argv.includes('--with-wait');
 const AUTH_WAIT_MS = 35000;
 
-const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+/* 浏览器路径：走跨平台探测（scripts/lib/browser.js）。
+ *
+ * 原来写死 Windows 的 Edge —— 在 Linux runner 上必然找不到，于是走到下面
+ * 的 [SKIP] + exit 2。而那条 SKIP 逻辑本身是**对的**（环境缺失不能用退出码 0
+ * 冒充通过），所以这里只换「怎么找」，不换「找不到怎么办」：
+ * 探测不到时仍然保留原来的 Windows 路径，让 existsSync 判假、照旧 SKIP。 */
+const EDGE = (function () {
+  try {
+    return require('./lib/browser.js').findBrowser();
+  } catch (e) {
+    return 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+  }
+})();
 const SERVER_ENTRY = path.join(__dirname, '..', 'server', 'index.js');
 /* 真实档案已从仓库出库，这里指向样例种子（同样用于「有没有被误写」的守卫） */
 const REAL_DATA = path.join(__dirname, '..', 'server', 'data', 'profiles.example.json');
