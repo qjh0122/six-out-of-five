@@ -1,0 +1,61 @@
+name: test
+
+# 为什么要有这个：项目有 51 个测试文件、1700+ 项断言，但全靠手动 `npm test`。
+# 这一轮 review 里两个真 bug 都是测试抓出来的（榜单缓存漏失效、协议无消息限流），
+# 而测试的价值完全取决于它是否**一直在跑**。更直接的证据是：
+# 之前用脚本往 package.json 的长链里插测试命令，有一批没插进去且静默失败，
+# 结果那 7 套测试写完之后从来没被执行过 —— 没有 CI 就没人会发现。
+#
+# 现在测试入口是 scripts/run-tests.js（扫描目录），新测试只要放进
+# pwa/test 或 server/test 就自动纳入，不会再有"忘了挂进去"这种失败模式。
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # 项目是零依赖的（没有 dependencies），刻意不跑 npm ci：
+      # 既没有依赖要装，也避免 lock 文件缺失时直接失败。
+      - name: 语法检查
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            node --check "$f" || { echo "语法错误：$f"; fail=1; }
+          done < <(git ls-files '*.js')
+          exit $fail
+
+      - name: 全量测试
+        run: npm test
+
+      # 测试产物（临时档案、.tmp）不该留在工作区；有残留多半说明某个测试没清干净，
+      # 而"没清干净"正是下一次运行偶发失败的主要来源。
+      # 这里只告警不失败：仓库里本来就可能有未跟踪的脚本产物，误伤比漏报更烦人。
+      - name: 检查测试残留
+        if: always()
+        run: |
+          leftovers="$(git status --porcelain -- '*.tmp' '*.corrupt-*' 2>/dev/null || true)"
+          if [ -n "$leftovers" ]; then
+            echo "::warning::测试跑完后留下了临时文件，检查是否有测试没清理"
+            echo "$leftovers"
+          else
+            echo "没有残留"
+          fi

@@ -1,0 +1,17 @@
+# 统一行尾：**这个仓库里有源码级字节比较的测试**，行尾不一致会让同一条断言
+# 在不同机器上给出不同结果（实测：同一份代码在 CRLF 工作区里
+# flex-gap-fallback.test.js 与 pattern-fx.test.js 各挂一项，转成 LF 后全绿）。
+#
+# 所以这里强制文本文件一律 LF —— 不要依赖每个人的 core.autocrlf 设置。
+* text=auto eol=lf
+
+# 明确的二进制：不要参与行尾转换，也不要在 diff 里显示
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.mp3 binary
+*.woff binary
+*.woff2 binary

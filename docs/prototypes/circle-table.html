@@ -1,0 +1,2857 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>六选五 · 圆桌版交互原型</title>
+<style>
+:root{
+  --green-deep:#0F2B22;
+  --green-mid:#16382F;
+  --green-bright:#1E5A44;
+  --gold:#F5C15C;
+  --gold-light:#FFE08A;
+  --warm-white:#FFF7E8;
+  --up-red:#FF5D5D;
+  --down-green:#3DDC84;
+  --ink:#0A0D0A;
+  --panel:#141815;
+  --panel-2:#1B201C;
+  --line:rgba(255,255,255,.10);
+  --txt:#E9E5DA;
+  --txt-dim:rgba(233,229,218,.62);
+  --txt-faint:rgba(233,229,218,.38);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  margin:0;background:
+    radial-gradient(1200px 700px at 18% -10%, rgba(30,90,68,.28), transparent 60%),
+    radial-gradient(900px 600px at 90% 110%, rgba(245,193,92,.06), transparent 60%),
+    #070907;
+  color:var(--txt);
+  font:14px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  display:flex;min-height:100%;
+}
+
+/* ---------------- 左侧控制栏 ---------------- */
+aside{
+  width:308px;flex:0 0 308px;padding:26px 22px 40px;
+  border-right:1px solid var(--line);
+  height:100vh;overflow-y:auto;position:sticky;top:0;
+  background:linear-gradient(180deg, rgba(20,24,21,.92), rgba(12,15,12,.92));
+  backdrop-filter:blur(8px);
+}
+aside h1{font-size:17px;margin:0 0 4px;letter-spacing:.5px;color:var(--warm-white)}
+aside .sub{font-size:12px;color:var(--txt-faint);margin:0 0 22px;line-height:1.7}
+.grp{margin-bottom:18px}
+.grp > label{display:block;font-size:11px;letter-spacing:1.6px;color:var(--txt-faint);margin-bottom:8px;text-transform:uppercase}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{
+  flex:1 1 auto;min-width:56px;padding:8px 10px;border-radius:9px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);
+  color:var(--txt-dim);font:inherit;font-size:12.5px;transition:.14s;
+}
+.seg button:hover{background:rgba(255,255,255,.08);color:var(--txt)}
+.seg button.on{
+  background:linear-gradient(180deg, rgba(245,193,92,.24), rgba(245,193,92,.10));
+  border-color:rgba(245,193,92,.62);color:var(--gold-light);font-weight:600;
+}
+.play{
+  width:100%;padding:11px;border-radius:10px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;
+  color:#1A1206;border:none;
+  background:linear-gradient(180deg,var(--gold-light),var(--gold));
+  box-shadow:0 6px 18px rgba(245,193,92,.18);
+}
+.play:active{transform:translateY(1px)}
+.play.alt{
+  background:rgba(255,255,255,.07);color:var(--txt);
+  border:1px solid rgba(255,255,255,.16);box-shadow:none;
+}
+.ledger{margin-top:20px;border-top:1px solid var(--line);padding-top:16px}
+.ledger h2{font-size:11px;letter-spacing:1.6px;color:var(--txt-faint);margin:0 0 10px;font-weight:600}
+.ledger table{width:100%;border-collapse:collapse;font-size:12px}
+.ledger td{padding:4px 0;color:var(--txt-dim);border-bottom:1px dashed rgba(255,255,255,.06)}
+.ledger td:last-child{text-align:right;color:var(--txt);font-variant-numeric:tabular-nums}
+.ledger tr.sum td{color:var(--gold);border-bottom:none;padding-top:7px}
+.notes{margin:18px 0 0;padding:0;list-style:none;font-size:12px;color:var(--txt-faint);line-height:1.75}
+.notes li{padding-left:14px;position:relative}
+.notes li::before{content:'';position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:50%;background:rgba(245,193,92,.55)}
+
+/* ---------------- 右侧画布 ---------------- */
+main{flex:1;display:flex;flex-direction:column;align-items:stretch;padding:20px 26px 24px;min-width:0;overflow:hidden}
+.hint{
+  font-size:12.5px;color:var(--txt-faint);margin:0 0 14px;text-align:center;
+  letter-spacing:.2px;flex:0 0 auto;
+}
+.hint b{color:var(--gold);font-weight:600}
+.stage{flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-height:0;min-width:0}
+.device{
+  position:relative;border-radius:26px;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(255,255,255,.10), 0 30px 80px -20px rgba(0,0,0,.9), 0 0 90px rgba(30,90,68,.12);
+  background:#000;flex:0 0 auto;margin:auto;
+}
+.device .design{transform-origin:top left;position:relative;overflow:hidden;background:var(--green-deep)}
+
+/* ---------------- 设计空间内的元素 ---------------- */
+.felt{
+  position:absolute;border-radius:50%;
+  background:
+    radial-gradient(ellipse at 50% 32%, #2A6B51 0%, #1D5540 34%, #14402F 62%, #0E2C22 88%);
+  box-shadow:
+    inset 0 3px 0 rgba(255,255,255,.12),
+    inset 0 -26px 60px rgba(0,0,0,.45),
+    0 18px 50px rgba(0,0,0,.45);
+}
+.felt::after{
+  content:'';position:absolute;inset:9px;border-radius:50%;
+  border:1px solid rgba(245,193,92,.26);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.35);
+  pointer-events:none;
+}
+/* 内圈：牌桌的第二道包边。没有它时，桌面就是一块渐变绿，显得空。 */
+.felt-in{
+  position:absolute;inset:34px;border-radius:50%;
+  border:1px solid rgba(255,255,255,.055);
+  background:radial-gradient(ellipse at 50% 45%, rgba(255,255,255,.030), transparent 62%);
+  box-shadow:inset 0 0 100px rgba(0,0,0,.24);
+  pointer-events:none;
+}
+
+/* 座位 */
+.seat{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.seat .av{
+  width:var(--av,60px);height:var(--av,60px);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;color:#fff;font-size:calc(var(--av,60px) * .42);
+  /* 底色不在这里写：由 .pN 底纹类提供（见下方），否则会被这条 shorthand 顶掉。 */
+  box-shadow:0 5px 14px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.22);
+  position:relative;overflow:hidden;
+  border:2px solid rgba(255,255,255,.16);
+  text-shadow:0 1px 3px rgba(0,0,0,.35);
+}
+/* 头像预设库的 8 种底纹。全部用纯 CSS 生成 —— 不引素材、不依赖机型 emoji，
+ * 离线可用，且和现有「昵称首字 + 哈希色」老数据天然兼容（老玩家 = p0）。
+ *
+ * 第一版做的是「细纹理」（细斜纹、小圆点），在面板 66px 的格子里几乎分辨不出来，
+ * 一整屏缩略图看起来像同一款重复了 48 次的 bug。改成**双色构成**：
+ * 用一种高对比的几何分割（对半 / 内圆 / 斜带 / 2×2），小到 40px 也能一眼分出来。
+ * 选择器是通用的 .pN：座位头像、战绩卡头像、选择面板缩略图共用一套。 */
+.p0{background-image:linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p1{background-image:linear-gradient(180deg, rgba(255,255,255,.30) 0 50%, transparent 50% 100%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p2{background-image:linear-gradient(90deg, rgba(255,255,255,.28) 0 34%, transparent 34% 100%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p3{background-image:radial-gradient(circle at 50% 50%, rgba(255,255,255,.30) 0 38%, transparent 39%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p4{background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.26) 0 22%, transparent 22% 50%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p5{background-image:radial-gradient(circle at 50% 118%, rgba(255,255,255,.28) 0 52%, transparent 53%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p6{background-image:radial-gradient(circle at 50% 50%, transparent 0 46%, rgba(255,255,255,.30) 47% 62%, transparent 63%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+.p7{background-image:
+  linear-gradient(90deg, rgba(255,255,255,.24) 0 50%, transparent 50% 100%),
+  linear-gradient(180deg, rgba(255,255,255,.24) 0 50%, transparent 50% 100%),
+  linear-gradient(160deg,var(--c1,#3E6B58),var(--c2,#22453A))}
+/* 上传照片：直接盖住底纹。圆内 object-fit:cover，不会把脸拉扁。 */
+.seat .av.has-photo{border-color:rgba(245,193,92,.5)}
+/* 面板开着的时候，给「这个面板属于谁」补一圈金边 —— 面板已经贴着他坐了，
+ * 再加一圈光是为了在 8 人局里也能一眼确认对象没点错。 */
+.seat .av.sel{box-shadow:0 0 0 3px rgba(245,193,92,.92), 0 0 26px rgba(245,193,92,.45)}
+.seat .av img{
+  position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  border-radius:50%;display:block;
+}
+/* 昵称框宽度按「这个座位离画布边还有多远」自适应（--nmw 由 JS 按座位坐标算）。
+ * 固定 132 时，最外侧那几个座位（5 人局左右两侧）会把长昵称顶到画布外面 ——
+ * 实测最左只剩 0 设计px。宁可让边上的人的昵称早一个字符截断，也不能出血。 */
+.seat .nm{
+  font-size:var(--fs,17px);line-height:1.2;color:#F2ECDD;max-width:var(--nmw,132px);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-shadow:0 1px 4px rgba(0,0,0,.85);
+}
+.seat .sc{font-size:calc(var(--fs,17px) * .92);font-weight:700;font-variant-numeric:tabular-nums;line-height:1.15;text-shadow:0 1px 4px rgba(0,0,0,.8)}
+.seat .sc.pos{color:var(--up-red)}
+.seat .sc.neg{color:var(--down-green)}
+.seat .sc.zero{color:rgba(233,229,218,.66)}
+.seat .bdg{
+  position:absolute;right:-3px;bottom:-3px;min-width:22px;height:22px;border-radius:11px;
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;
+  border:2px solid rgba(10,20,16,.9);
+}
+.seat .bdg.ok{background:#2E9E63;color:#fff}
+.seat .bdg.wait{background:rgba(20,40,32,.92);color:var(--gold);font-size:11px;letter-spacing:.4px}
+.seat .bdg.out{background:#7A2A2A;color:#FFD8D2}
+.seat.dim{opacity:.5;filter:grayscale(.4)}
+.seat.me{cursor:pointer}
+/* 自己的头像不再写死尺寸：跟随「头像大小」档位，只加金圈区分。 */
+.seat.me .av{border-color:rgba(245,193,92,.92);box-shadow:0 0 0 3px rgba(245,193,92,.20), 0 8px 20px rgba(0,0,0,.5)}
+.seat .you{
+  position:absolute;top:-16px;left:50%;transform:translateX(-50%);
+  font-size:11px;letter-spacing:1px;color:var(--gold);white-space:nowrap;
+}
+/* 命中区域扩大（原型里用伪元素示意热区，真实实现按 44 CSS px 兜底） */
+.seat::before{
+  content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:calc(var(--av,60px) + 26px);height:calc(var(--av,60px) + 26px);border-radius:50%;
+}
+.seat:active .av{transform:scale(.94)}
+
+/* 表情气泡 */
+/* 表情气泡改成参照图那样：**表情直接浮在头像旁边**（不带白底气泡），
+ * 短语才是一个淡蓝色的对话泡，尾巴指着发话的人。两种形态分开写，
+ * 因为混在一个容器里时，表情会被气泡的白底包住 —— 那是「聊天气泡」，不是「表情」。 */
+.bub{position:absolute;pointer-events:none;animation:pop .26s cubic-bezier(.2,1.5,.4,1) both}
+@keyframes pop{from{opacity:0;transform:scale(.55)}to{opacity:1;transform:scale(1)}}
+.bub.face{filter:drop-shadow(0 10px 18px rgba(0,0,0,.5))}
+.bub.face img{width:100%;height:100%;object-fit:contain;display:block}
+.bub.phr{
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(180deg,#DCE3FA,#C9D2F2);color:#22376B;
+  border:2px solid rgba(255,255,255,.92);border-radius:16px;
+  padding:0 18px;font-weight:600;line-height:1.24;white-space:nowrap;
+  box-shadow:0 10px 22px rgba(0,0,0,.36);
+}
+.bub.phr::after{
+  content:'';position:absolute;left:16px;bottom:-8px;width:17px;height:17px;
+  background:#CCD5F3;border-right:2px solid rgba(255,255,255,.92);
+  border-bottom:2px solid rgba(255,255,255,.92);
+  border-bottom-right-radius:4px;transform:rotate(45deg);
+}
+.bub.phr.lft::after{left:auto;right:16px;border-radius:0;border-bottom-right-radius:0;border-bottom-left-radius:4px}
+
+/* 中央公共区 —— D2 之后它成了「唯一的公共信息位」：
+ * 轮次、房号、阶段、倒计时、提交进度全在这里，顶栏不再承担任何东西。 */
+.plaque{
+  position:absolute;transform:translate(-50%,-50%);text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:7px;pointer-events:none;
+}
+.plaque .pl-meta{
+  display:flex;align-items:center;gap:8px;font-size:19px;color:rgba(245,193,92,.72);
+  letter-spacing:1px;
+}
+.plaque .pl-meta b{font-weight:600;color:rgba(245,220,170,.9)}
+.plaque .pl-meta i{
+  font-style:normal;width:4px;height:4px;border-radius:50%;background:rgba(245,193,92,.42);
+}
+.plaque .pl-phase{font-size:44px;font-weight:800;color:var(--warm-white);letter-spacing:1px;line-height:1.1;text-shadow:0 2px 12px rgba(0,0,0,.5)}
+.plaque .pl-timer{
+  font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;
+  padding:3px 18px;border-radius:999px;color:#D8E2DC;
+  background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.16);
+}
+.plaque .pl-timer.warn{color:#FFDDD4;background:rgba(150,34,22,.62);border-color:rgba(255,132,108,.8)}
+.plaque .pl-prog{display:flex;align-items:center;gap:10px;font-size:19px;color:rgba(210,220,212,.72)}
+.plaque .dots{display:flex;gap:5px}
+.plaque .dot{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.16)}
+.plaque .dot.on{background:var(--gold);box-shadow:0 0 8px rgba(245,193,92,.6)}
+.plaque .pl-hint{font-size:17px;color:rgba(200,214,206,.5);letter-spacing:.5px}
+
+/* 2 人局：对面坐会把桌子撑成一个大空盘。中央补一条「对战条」把它填住 ——
+ * 显示双方分数和分差，这是单挑时唯一真正重要的一条信息（谁领先多少）。 */
+.plaque.duel .pl-phase{font-size:56px;line-height:1.15}
+.plaque .pl-duel{
+  display:flex;align-items:center;gap:12px;margin-top:8px;flex-wrap:nowrap;max-width:100%;
+  padding:6px 16px;border-radius:999px;
+  background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.10);
+  font-size:22px;font-variant-numeric:tabular-nums;
+}
+.plaque .pl-duel b{font-weight:800}
+.plaque .pl-duel b.up{color:var(--up-red);white-space:nowrap}
+.plaque .pl-duel b.eq{color:rgba(233,229,218,.7);white-space:nowrap}
+.plaque .pl-duel b.dn{color:var(--down-green);white-space:nowrap;max-width:250px;overflow:hidden;text-overflow:ellipsis}
+.plaque .pl-duel span{font-size:19px;color:rgba(210,220,212,.62);letter-spacing:1px;white-space:nowrap}
+
+/* 表情只留两层：飞行 + 落点旁浮出。
+ * 曾经还有第三层「中央小字播报 · 谁给谁」，按用户要求删掉了（多余、抢戏）。 */
+
+/* 飞行中的表情：从自己的头像中心，沿直线飞到最后停放的那个矩形。
+ * 外壳只负责位移，内容就是气泡本体（.bub face / .bub phr），所以落点不会有「跳一下」。
+ * 起点/终点都靠 CSS 变量给，动画本身不逐帧跑 JS。 */
+.flyer{
+  position:absolute;pointer-events:none;z-index:11;
+  transform:translate(-50%,-50%);
+  filter:drop-shadow(0 8px 16px rgba(0,0,0,.5));
+  animation:fly .46s cubic-bezier(.42,0,.36,1) both;   /* ease-in-out：前半程别一口气冲完，否则看着像跳 */
+}
+@keyframes fly{
+  from{opacity:0;transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(.42)}
+  22%{opacity:1}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+
+/* 组托盘 */
+.band{
+  position:absolute;border-radius:16px;display:flex;align-items:center;gap:10px;
+  padding:0 14px;overflow:hidden;
+  background:linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.018)), rgba(8,26,21,.62);
+  border:1px solid rgba(255,255,255,.09);
+  border-left:4px solid var(--sc,#3D7EA6);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06);
+}
+.band.active{background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.035)), rgba(8,26,21,.72);box-shadow:inset 0 1px 0 rgba(255,255,255,.09), 0 8px 22px rgba(0,0,0,.28)}
+.band .cards{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+.band .slot-empty{width:var(--w,92px);height:var(--h,128px);border-radius:11px;border:1.5px dashed rgba(255,255,255,.16);background:rgba(255,255,255,.02)}
+.band .meta{margin-left:auto;text-align:right;display:flex;flex-direction:column;gap:3px;min-width:0}
+.band .meta .t{font-size:23px;font-weight:700;color:var(--warm-white);letter-spacing:.5px;white-space:nowrap}
+.band .meta .t em{font-style:normal;color:var(--sc);margin-right:6px;font-weight:800}
+.band .meta .s{font-size:17px;color:var(--txt-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+.band .meta .c{font-size:18px;color:rgba(210,220,212,.72);font-variant-numeric:tabular-nums}
+
+.cd{display:block;border-radius:9px;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+.hwrap{position:absolute;transform-origin:50% 100%}
+
+.hand-hint{
+  position:absolute;transform:translateX(-50%);text-align:center;font-size:13px;color:var(--txt-faint);letter-spacing:.6px;
+}
+
+/* 底部按钮 */
+.acts{position:absolute;display:flex;gap:12px;align-items:center;justify-content:center}
+.btn{
+  border-radius:12px;font:inherit;font-weight:600;border:1px solid transparent;
+  display:flex;align-items:center;justify-content:center;white-space:nowrap;
+}
+.btn-primary{background:linear-gradient(180deg,#E23A2E,#B41F19);color:#fff;box-shadow:0 6px 16px rgba(180,31,25,.35)}
+.btn-primary[disabled]{background:#3A4A44;color:#8A93A3;box-shadow:none}
+.btn-ghost{background:rgba(255,255,255,.06);color:rgba(255,255,255,.72);border-color:rgba(255,255,255,.14)}
+
+/* ===================== 准备态（房间就长在牌桌上） =====================
+ * 参考微乐：没有单独的房间页。人坐在同一个椅子上、看着同一张桌子，
+ * 只是中央换成房号与就绪计数、手牌区空着、底部主按钮变成「准备 / 开始」。
+ * 对局开始的瞬间不是「切页面」，而是桌上多了一手牌 —— 这一条是这个方案的全部价值。
+ */
+.seat .rdy{
+  margin-top:5px;display:inline-flex;align-items:center;gap:5px;
+  font-size:calc(var(--fs,17px) * .86);line-height:1.3;letter-spacing:.5px;
+  padding:3px 11px;border-radius:999px;white-space:nowrap;
+  background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.13);
+  color:rgba(228,234,230,.62);
+}
+.seat .rdy.on{
+  background:rgba(30,170,116,.22);border-color:rgba(74,222,158,.52);color:#B6F3D4;
+  box-shadow:0 0 14px rgba(74,222,158,.18);
+}
+.seat .rdy.on::before{content:'\2713';font-weight:800;font-size:1em}
+
+/* 中央房间牌：房号 / 玩法 / 就绪计数 / 每家的就绪点 */
+.room{
+  position:absolute;transform:translate(-50%,-50%);
+  display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;
+  pointer-events:none;
+}
+.room .rid{font-size:17px;letter-spacing:3px;color:rgba(245,193,92,.62)}
+.room .rid b{font-size:25px;letter-spacing:4px;color:#FFE9BE;font-weight:700;margin-left:4px}
+.room .rule{display:flex;align-items:center;gap:9px;font-size:16px;color:rgba(198,212,204,.56);letter-spacing:.5px}
+.room .rule i{font-style:normal;width:3px;height:3px;border-radius:50%;background:rgba(245,193,92,.4)}
+.room .big{
+  font-size:44px;font-weight:800;letter-spacing:2px;line-height:1.12;
+  color:var(--warm-white);text-shadow:0 2px 14px rgba(0,0,0,.5);
+}
+.room .big.cd{font-size:64px;font-variant-numeric:tabular-nums;color:#FFE9BE}
+.room .cnt{font-size:18px;color:rgba(206,218,210,.68);letter-spacing:.5px}
+.room .dots{display:flex;gap:7px;margin-top:2px}
+.room .dt{width:30px;height:5px;border-radius:3px;background:rgba(255,255,255,.14);transition:background .2s,box-shadow .2s}
+.room .dt.on{background:#4ADE9E;box-shadow:0 0 9px rgba(74,222,158,.55)}
+.room .last{
+  margin-top:4px;font-size:16px;padding:4px 14px;border-radius:999px;
+  background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.1);color:rgba(214,224,218,.66);
+}
+.room .last b{font-variant-numeric:tabular-nums}
+.room .last b.p{color:var(--up-red)}
+.room .last b.n{color:var(--down-green)}
+
+/* 准备态的托盘区：占的是组带那一块，放「本房间规则」。
+ * 为什么不把桌子放大 / 下移：放大就要在开局那一刻缩回去，座位会跳一下。
+ * 占住同一块矩形，牌发下来时是从这张卡的位置长出来的 —— 零跳变。 */
+.rminfo{
+  position:absolute;display:flex;flex-direction:column;justify-content:center;align-items:center;
+  gap:0;
+}
+.rminfo .card{
+  width:100%;border-radius:22px;padding:24px 26px;
+  background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.028));
+  border:1px solid rgba(255,255,255,.09);
+}
+.rminfo .cap{
+  font-size:20px;letter-spacing:5px;color:rgba(245,193,92,.72);
+  padding-bottom:14px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,.08);
+}
+.rminfo .r{
+  display:flex;align-items:baseline;gap:16px;padding:19px 0;
+  border-bottom:1px dashed rgba(255,255,255,.07);
+}
+.rminfo .r:last-of-type{border-bottom:none}
+.rminfo .r i{font-style:normal;flex:0 0 88px;font-size:19px;color:rgba(198,212,204,.5);letter-spacing:1px}
+/* nowrap：桌面端 556 宽时「① 比大小 → ② 十点半 → ③ 飘三叶」会被挤断成两行，
+ * 第二行只剩一个「叶」字。宁可缩字号也不让它折。 */
+.rminfo .r b{font-size:21px;font-weight:600;color:rgba(240,244,240,.92);letter-spacing:.5px;white-space:nowrap}
+.rminfo .r b em{font-style:normal;color:rgba(245,193,92,.5);margin:0 6px}
+.rminfo .ft{
+  margin-top:14px;padding-top:13px;border-top:1px solid rgba(255,255,255,.08);
+  font-size:16px;color:rgba(198,212,204,.42);letter-spacing:.5px;text-align:center;
+}
+
+/* 退出确认：唯一的模态，因为退出是不可撤销的（本局分数清零）。
+   别的都用面板 / 就地切换，只有这一件需要拦住手。 */
+.ask{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:21;
+  width:min(470px,88%);border-radius:20px;padding:26px 24px 22px;text-align:center;
+  background:linear-gradient(180deg,#123A2E,#0A241C);
+  border:1px solid rgba(245,193,92,.22);
+  box-shadow:0 30px 80px rgba(0,0,0,.66), 0 0 0 1px rgba(255,255,255,.04);
+  /* 两个坑叠在一起：
+   *  ① 不能用 pop —— 它以 transform:scale(1) 收尾，会把 translate(-50%,-50%) 抹掉，
+   *     卡片直接偏到右下角（.brk 上踩过一次）；
+   *  ② 不能动 opacity —— 无 GPU 的合成路径下，这个图层会被截成半透明，
+   *     底下的规则卡直接透上来（截图里能看到「① 比大小」压在按钮上）。
+   * 所以只动 scale，透明度全程 1。 */
+  animation:askIn .18s cubic-bezier(.2,1.2,.4,1) both;
+}
+@keyframes askIn{
+  from{transform:translate(-50%,-50%) scale(.955)}
+  to{transform:translate(-50%,-50%) scale(1)}
+}
+.ask b{display:block;font-size:26px;color:#FFF4DE;margin-bottom:9px;letter-spacing:1px}
+.ask p{margin:0 0 20px;font-size:18px;line-height:1.65;color:rgba(206,218,210,.62)}
+.ask .row{display:flex;gap:12px}
+.ask button{
+  flex:1;padding:16px;border-radius:14px;border:none;cursor:pointer;
+  font:inherit;font-size:22px;font-weight:700;
+}
+.ask .no{background:rgba(255,255,255,.08);color:rgba(255,255,255,.78)}
+.ask .yes{background:linear-gradient(180deg,#E23A2E,#B41F19);color:#fff;box-shadow:0 6px 16px rgba(180,31,25,.32)}
+
+/* 轻提示：只说一句「刚才发生了什么」，1.6s 自己消失，不做确认 */
+.toast{
+  position:absolute;left:50%;transform:translateX(-50%);z-index:22;
+  padding:11px 24px;border-radius:999px;white-space:nowrap;
+  background:rgba(8,24,19,.92);border:1px solid rgba(245,193,92,.3);
+  color:#F1E7D3;font-size:19px;letter-spacing:.5px;
+  box-shadow:0 14px 34px rgba(0,0,0,.5);
+  animation:toastIn .22s cubic-bezier(.2,1.3,.4,1) both;
+}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+
+/* 顶部极简条（横屏/桌面才有位置） */
+/* 顶栏已按 D2 决策整块删除。原来它承载的「轮次 / 房号 / 提交进度 / 菜单」
+ * 全部搬进毡面中央的 .plaque —— 见 .pl-meta 与 .pl-prog。 */
+
+/* 遮罩与战绩卡 */
+/* 不用 backdrop-filter：在某些合成路径下会把整屏画成镜像（实测 Edge headless
+   + transform 舞台会复现）。改用纯色遮罩，观感差别可忽略。 */
+.scrim{position:absolute;inset:0;background:rgba(4,10,8,.70);animation:fade .18s both}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.sheet{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:520px;border-radius:22px;padding:24px;
+  background:linear-gradient(180deg,#FFFBF0,#F3EADA);color:#2A1B06;
+  box-shadow:0 30px 70px rgba(0,0,0,.6);
+  animation:rise .22s cubic-bezier(.2,1.2,.4,1) both;
+}
+@keyframes rise{from{opacity:0;transform:translate(-50%,-46%) scale(.96)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+.sheet .hd{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.sheet .hd .av{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;overflow:hidden;position:relative;text-shadow:0 1px 3px rgba(0,0,0,.35)}
+.sheet .hd .av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.sheet .hd .who{flex:1;min-width:0}
+.sheet .hd .who .n{font-size:31px;font-weight:800;color:#3A1D00;letter-spacing:.5px}
+.sheet .hd .who .m{font-size:19px;color:#6B6F79}
+.sheet .hd .x{width:52px;height:52px;border-radius:50%;border:none;background:rgba(0,0,0,.06);color:#6B6F79;font-size:24px;cursor:pointer}
+.sheet .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.sheet .kpi{background:rgba(0,0,0,.045);border-radius:14px;padding:12px;text-align:center}
+.sheet .kpi b{display:block;font-size:36px;font-variant-numeric:tabular-nums;color:#3A1D00;line-height:1.2}
+.sheet .kpi span{font-size:18px;color:#6B6F79}
+.sheet .rows{border-top:1px solid rgba(0,0,0,.08);padding-top:14px;font-size:19px;color:#4A4F5A}
+.sheet .row{display:flex;justify-content:space-between;padding:4px 0}
+.sheet .row i{font-style:normal;color:#6B6F79}
+.sheet .acts2{display:flex;gap:10px;margin-top:18px}
+.sheet .acts2 button{flex:1;padding:18px;border-radius:14px;font:inherit;font-size:24px;font-weight:700;cursor:pointer;border:none}
+.sheet .acts2 .a1{background:linear-gradient(180deg,#0E8C6E,#0A6B54);color:#fff}
+.sheet .acts2 .a2{background:rgba(0,0,0,.07);color:#4A4F5A}
+.sheet.gone .kpis,.sheet.gone .rows{opacity:.35;filter:grayscale(1)}
+
+/* 换头像面板 */
+.avpick{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:640px;max-height:88%;border-radius:22px;padding:22px 24px;
+  background:linear-gradient(180deg,#FFFBF0,#F3EADA);color:#2A1B06;
+  box-shadow:0 30px 70px rgba(0,0,0,.6);
+  display:flex;flex-direction:column;gap:14px;
+  animation:rise .22s cubic-bezier(.2,1.2,.4,1) both;
+}
+.avpick .ttl{display:flex;align-items:center;justify-content:space-between}
+.avpick .ttl b{font-size:29px;letter-spacing:.5px}
+.avpick .ttl .x{width:52px;height:52px;border-radius:50%;border:none;background:rgba(0,0,0,.06);color:#6B6F79;font-size:24px;cursor:pointer}
+.avpick .cur{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:16px;background:rgba(0,0,0,.05)}
+.avpick .cur .big{position:relative;width:104px;height:104px;border-radius:50%;overflow:hidden;flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:44px;
+  box-shadow:0 6px 18px rgba(0,0,0,.25);text-shadow:0 1px 4px rgba(0,0,0,.35)}
+.avpick .cur .big img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.avpick .cur .txt{font-size:18px;color:#5A6068;line-height:1.55}
+.avpick .cur .txt b{display:block;font-size:21px;color:#3A1D00;margin-bottom:2px}
+.avpick .sec{font-size:17px;color:#8A8F98;letter-spacing:1px}
+.avpick .grid{
+  display:grid;grid-template-columns:repeat(8,1fr);gap:10px;
+  overflow:auto;padding:2px;
+}
+.avpick .cell{
+  position:relative;aspect-ratio:1;border-radius:50%;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:22px;
+  box-shadow:inset 0 0 0 2px rgba(0,0,0,.06);
+  text-shadow:0 1px 3px rgba(0,0,0,.35);
+}
+.avpick .cell.on{box-shadow:0 0 0 3px #FFFBF0, 0 0 0 6px #0E8C6E}
+.avpick .up{
+  display:flex;align-items:center;gap:14px;padding:16px;border-radius:16px;cursor:pointer;
+  border:2px dashed rgba(0,0,0,.16);background:rgba(0,0,0,.025);font-size:19px;color:#4A4F5A;
+}
+.avpick .up .ic{width:56px;height:56px;border-radius:14px;background:rgba(14,140,110,.12);color:#0E8C6E;
+  display:flex;align-items:center;justify-content:center;font-size:26px;flex:0 0 auto}
+.avpick .up small{display:block;color:#8A8F98;font-size:16px;margin-top:3px}
+.avpick .foot{display:flex;gap:10px}
+.avpick .foot button{flex:1;padding:16px;border-radius:14px;border:none;font:inherit;font-size:23px;font-weight:700;cursor:pointer}
+.avpick .foot .ok{background:linear-gradient(180deg,#0E8C6E,#0A6B54);color:#fff}
+.avpick .foot .no{background:rgba(0,0,0,.07);color:#4A4F5A}
+
+/* 表情轮盘 */
+.wheel{
+  position:absolute;transform:translate(-50%,-50%);width:0;height:0;
+  animation:wheelIn .2s cubic-bezier(.2,1.3,.4,1) both;
+}
+.wheel .it{
+  position:absolute;width:76px;height:76px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:34px;cursor:pointer;
+  background:rgba(20,34,28,.94);border:1px solid rgba(245,193,92,.34);
+  box-shadow:0 8px 22px rgba(0,0,0,.5);
+  transform:translate(-50%,-50%);
+}
+.wheel .it:hover{background:rgba(245,193,92,.22);transform:translate(-50%,-50%) scale(1.12)}
+@keyframes wheelIn{from{opacity:0;transform:translate(-50%,-50%) scale(.72)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+/* 镂空的环形，不是实心圆盘。
+ * 圆桌化之后「发给谁」是唯一要紧的信息，实心盘会把它整个盖住 ——
+ * 你一边点表情一边看不见对方是谁。中心留出的洞比头像略大，头像原样透出来。 */
+.wheel .ring{
+  position:absolute;transform:translate(-50%,-50%);width:300px;height:300px;border-radius:50%;
+  background:radial-gradient(circle, rgba(6,16,12,0) 0 28%, rgba(6,16,12,.62) 30% 100%);
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+  border:0;
+}
+
+/* 图例（设计空间内小角标） */
+.tag{
+  position:absolute;font-size:11px;letter-spacing:.6px;padding:3px 9px;border-radius:999px;
+  background:rgba(245,193,92,.14);border:1px solid rgba(245,193,92,.34);color:rgba(245,193,92,.9);
+  pointer-events:none;white-space:nowrap;
+}
+
+/* ======================================================================
+   本轮新增：表情面板 / 逐组结算 / 战绩页 / 四种牌型特效
+   —— 全部沿用同一套设计 px（750 宽基准），三端只换可用宽高。
+   ====================================================================== */
+
+/* 透明点击层：面板已经贴着头像开，但背后还要有一层承接「点空白关闭」。
+   顺带压暗一点，让贴着桌子的浮层跟后面的座位分得开。 */
+.tap{position:absolute;inset:0;z-index:13;background:rgba(4,10,8,.34);animation:fade .16s both}
+
+/* ---- 毡面上的表情按钮（对应参考图右侧那个对话气泡） ---- */
+.feltbtn{
+  position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(180deg,rgba(48,70,60,.96),rgba(14,26,21,.97));
+  border:1px solid rgba(245,193,92,.38);cursor:pointer;z-index:6;
+  box-shadow:0 10px 24px rgba(0,0,0,.52), inset 0 1px 0 rgba(255,255,255,.14);
+  transition:transform .12s;
+}
+.feltbtn:active{transform:scale(.93)}
+.feltbtn svg{width:54%;height:54%;display:block}
+.feltbtn .dot{
+  position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;
+  background:#E0402F;border:2px solid rgba(14,26,21,.95);
+}
+
+/* ---- 统一浮层面板：表情 / 短语 / 个人信息 三合一 ---- */
+/* 以前是两个组件：表情抽屉钉在托盘栏底部，战绩卡居中最亮。同一个「点了某人头像」
+ * 的意图走进两个位置的弹层，用户会以为点了两样东西；而且标题写法也不一致。
+ * 现在只有一个组件：同一张卡、同一条绿色标题条、同一列右侧 tab，
+ * 位置统一贴着被点的那个人坐 —— 谁是对象，靠位置说，不靠文案说。 */
+.panel{
+  position:absolute;border-radius:22px;display:flex;flex-direction:column;overflow:hidden;z-index:14;
+  background:linear-gradient(180deg,#FFFBF0,#F2E9D8);color:#2A1B06;
+  box-shadow:0 30px 80px rgba(0,0,0,.66), 0 0 0 1px rgba(255,255,255,.10);
+  animation:panelIn .18s cubic-bezier(.2,1.2,.4,1) both;
+}
+@keyframes panelIn{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.panel .hd{display:flex;align-items:center;gap:14px;padding:14px 18px;flex:0 0 auto;
+  background:linear-gradient(180deg,#115444,#0A382E);color:#FFF4DE}
+.panel .hd .av{position:relative;width:64px;height:64px;border-radius:50%;flex:0 0 auto;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:26px;
+  text-shadow:0 1px 3px rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.panel .hd .av img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.panel .hd .who{min-width:0;flex:1}
+.panel .hd .who b{display:block;font-size:26px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel .hd .who span{font-size:17px;color:rgba(255,244,222,.7);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.panel .hd .x{
+  flex:0 0 auto;width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.10);color:#FFF4DE;font-size:24px;
+}
+.panel .body{flex:1;display:flex;min-height:0}
+.panel .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.panel .grid{
+  flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px 12px;
+  overflow:auto;align-content:start;
+}
+.panel .cell{
+  aspect-ratio:1;border-radius:16px;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.045);border:1px solid rgba(0,0,0,.05);cursor:pointer;
+  font-size:var(--es,52px);line-height:1;transition:transform .1s, background .12s;
+}
+.panel .cell:hover{background:rgba(14,140,110,.14)}
+.panel .cell:active{transform:scale(.9)}
+.panel .cell.ph{font-size:var(--ts,21px);font-weight:700;letter-spacing:.5px;color:#3A1D00;padding:6px;text-align:center;line-height:1.25}
+.panel .cell svg{width:88%;height:88%;display:block}
+.panel .grid.phr{grid-template-columns:1fr;gap:7px;padding:12px}
+.panel .grid.phr .cell{aspect-ratio:auto;height:52px;justify-content:flex-start;padding:0 14px;border-radius:12px}
+.panel .grid.phr .cell:active{background:rgba(14,140,110,.18)}
+.panel .tabs{
+  flex:0 0 auto;width:96px;display:flex;flex-direction:column;gap:10px;padding:14px 10px;
+  background:rgba(0,0,0,.045);border-left:1px solid rgba(0,0,0,.06);
+}
+.panel .tabs button{
+  writing-mode:vertical-rl;text-orientation:upright;letter-spacing:6px;
+  flex:1;border:none;border-radius:14px;background:rgba(0,0,0,.05);color:#6B6F79;
+  font:inherit;font-size:19px;cursor:pointer;padding:10px 0;
+}
+.panel .tabs button.on{background:linear-gradient(180deg,#12725B,#0B4A3B);color:#FFF4DE;font-weight:700}
+/* 战绩内容（同一张卡里的第三档）—— 六项 KPI + 牌风雷达 + 最近五场 */
+.panel .statb{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.panel .top{display:flex;gap:12px;align-items:stretch}
+.panel .top .k6{flex:1;min-width:0}
+.panel .top .radar{flex:0 0 240px}
+.panel .k6{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.panel .k6 .kpi{background:rgba(0,0,0,.045);border-radius:14px;padding:10px 4px;text-align:center}
+.panel .k6 .kpi b{display:block;font-size:33px;line-height:1.15;font-variant-numeric:tabular-nums;color:#3A1D00}
+.panel .k6 .kpi span{font-size:16px;color:#6B6F79;white-space:nowrap}
+.panel .radar{border-radius:16px;background:rgba(0,0,0,.04);padding:8px 8px 2px;
+  display:flex;flex-direction:column;align-items:center}
+.panel .radar .cap2{font-size:18px;font-weight:800;color:#1F6E52;letter-spacing:3px}
+.panel .radar svg{width:100%;height:auto;max-height:200px}
+.panel .recent{border-top:1px solid rgba(0,0,0,.08);padding-top:8px}
+.panel .recent .row{display:flex;justify-content:space-between;gap:12px;font-size:19px;color:#4A4F5A;padding:4px 0}
+.panel .recent .row i{font-style:normal;color:#6B6F79}
+.panel .recent .row b{font-variant-numeric:tabular-nums}
+
+/* ---- 逐组结算条（reveal / settle 时替换三/两条组托盘） ---- */
+.sstrip{
+  position:absolute;border-radius:20px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;
+  background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.015)),rgba(8,24,19,.74);
+  border:1px solid rgba(255,255,255,.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.07);
+  animation:pop2 .22s ease-out both;
+}
+@keyframes pop2{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.sstrip .cap{display:flex;align-items:center;gap:10px;flex:0 0 auto;font-size:19px;color:var(--txt-dim)}
+.sstrip .cap b{font-size:22px;color:var(--warm-white);font-weight:700;letter-spacing:.5px}
+.sstrip .cap em{font-style:normal;color:var(--gold);font-weight:700}
+.sstrip .cap .sp{flex:1}
+.sstrip .list{flex:1;display:flex;flex-direction:column;gap:6px;min-height:0;overflow:hidden}
+.sstrip .r{
+  display:flex;align-items:center;gap:10px;height:var(--rh,74px);flex:0 0 auto;
+  border-radius:12px;padding:0 10px;background:rgba(255,255,255,.035);
+}
+.sstrip .r.win{background:linear-gradient(90deg,rgba(245,193,92,.24),rgba(245,193,92,.05));box-shadow:inset 0 0 0 1px rgba(245,193,92,.36)}
+.sstrip .r.out{opacity:.42;filter:grayscale(.6)}
+.sstrip .rk{width:28px;text-align:center;font-size:19px;font-weight:800;color:rgba(245,193,92,.75);flex:0 0 auto}
+.sstrip .avs{position:relative;width:var(--av2,44px);height:var(--av2,44px);border-radius:50%;flex:0 0 auto;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px}
+.sstrip .avs img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
+.sstrip .who{min-width:0;flex:0 0 auto;max-width:190px}
+.sstrip .who b{display:block;font-size:20px;font-weight:600;color:#F2ECDD;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sstrip .who span{font-size:15px;color:var(--txt-faint);white-space:nowrap}
+.sstrip .ty{
+  flex:0 0 auto;padding:3px 11px;border-radius:999px;font-size:16px;font-weight:700;
+  background:rgba(255,255,255,.08);color:#E7E1D2;white-space:nowrap;
+}
+.sstrip .r.win .ty{background:rgba(245,193,92,.24);color:var(--gold-light)}
+.sstrip .ty.spec{background:linear-gradient(90deg,#FF7A45,#E0402F);color:#fff}
+.sstrip .mini{display:flex;gap:4px;margin-left:auto;flex:0 0 auto}
+.sstrip .dl{
+  width:92px;flex:0 0 auto;text-align:right;font-size:26px;font-weight:800;
+  font-variant-numeric:tabular-nums;letter-spacing:.5px;
+}
+.sstrip .dl.p{color:var(--up-red)}
+.sstrip .dl.n{color:var(--down-green)}
+.sstrip .dl.z{color:rgba(233,229,218,.35);font-size:20px}
+.sstrip .ft{flex:0 0 auto;display:flex;align-items:center;gap:10px;font-size:17px;color:var(--txt-faint)}
+.sstrip .ft .warn{color:#FFC9BE}
+
+/* ---- 座位上的得失气泡 / 赢家光环 ---- */
+.seat .dl{
+  position:absolute;top:-6px;left:calc(50% + 20px);padding:2px 10px;border-radius:999px;
+  font-size:19px;font-weight:800;white-space:nowrap;line-height:1.3;
+  box-shadow:0 5px 14px rgba(0,0,0,.5);animation:dlIn .34s cubic-bezier(.2,1.6,.4,1) both;
+}
+.seat .dl.lft{left:auto;right:calc(50% + 20px)}
+.seat .dl.p{background:linear-gradient(180deg,#FF6E5E,#D32B1E);color:#fff}
+.seat .dl.n{background:linear-gradient(180deg,#46E08C,#11924F);color:#04220F}
+@keyframes dlIn{from{opacity:0;transform:translateY(10px) scale(.6)}to{opacity:1;transform:none}}
+.seat.win .av{
+  box-shadow:0 0 0 4px rgba(245,193,92,.85), 0 0 40px rgba(245,193,92,.6), 0 8px 20px rgba(0,0,0,.5);
+  border-color:rgba(255,232,170,.95);
+}
+.seat.win .av::after{
+  content:'';position:absolute;inset:-10px;border-radius:50%;border:2px solid rgba(245,193,92,.55);
+  animation:haloPulse 1.5s ease-in-out infinite;
+}
+@keyframes haloPulse{0%,100%{opacity:.2;transform:scale(1)}50%{opacity:.95;transform:scale(1.09)}}
+.seat .crown{
+  position:absolute;left:-18px;top:-10px;font-size:26px;line-height:1;
+  filter:drop-shadow(0 3px 6px rgba(0,0,0,.6));animation:pop .32s cubic-bezier(.2,1.6,.4,1) both;
+}
+.seat .out-tag{
+  position:absolute;left:50%;top:-18px;transform:translateX(-50%);
+  padding:1px 9px;border-radius:999px;background:#7A2A2A;color:#FFD8D2;font-size:15px;white-space:nowrap;
+}
+.seat.dim{opacity:.55;filter:grayscale(.55)}
+
+/* ---- 牌型特效层 ---- */
+/* 特效层只铺在毡面上（位置由 JS 给 felt 的矩形），不铺整屏 ——
+ * 铺整屏时它正好压在结算条上，把刚翻开的牌和得失全糊住。 */
+.fx{position:absolute;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:12}
+.fx .core{position:relative;display:flex;flex-direction:column;align-items:center;gap:16px}
+.fx .halo{
+  position:absolute;left:50%;top:50%;width:920px;height:920px;margin:-460px 0 0 -460px;border-radius:50%;
+  background:conic-gradient(from 0deg,
+    rgba(245,193,92,0) 0 6%, rgba(245,193,92,.55) 9%, rgba(245,193,92,0) 13% 25%,
+    rgba(245,193,92,.55) 28%, rgba(245,193,92,0) 32% 50%,
+    rgba(245,193,92,.55) 53%, rgba(245,193,92,0) 57% 75%,
+    rgba(245,193,92,.55) 78%, rgba(245,193,92,0) 82%);
+  -webkit-mask:radial-gradient(circle, transparent 26%, #000 44%, transparent 70%);
+  mask:radial-gradient(circle, transparent 26%, #000 44%, transparent 70%);
+  animation:spin 7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.fx .cards{display:flex;gap:12px;align-items:flex-end;position:relative;z-index:2}
+.fx .cards .cd{animation:cardDrop .42s cubic-bezier(.2,1.6,.4,1) both;animation-delay:var(--d,0s)}
+@keyframes cardDrop{from{opacity:0;transform:translateY(-110px) rotate(-7deg) scale(1.24)}to{opacity:1;transform:none}}
+.fx .cards .mk{box-shadow:0 0 0 3px rgba(245,193,92,.95), 0 0 30px rgba(245,193,92,.7);border-radius:11px}
+.fx .lbl{
+  position:relative;z-index:2;font-size:108px;font-weight:900;letter-spacing:10px;line-height:1;
+  color:#FFE08A;-webkit-text-stroke:3px #6B3E06;
+  text-shadow:0 12px 30px rgba(0,0,0,.7);
+  animation:lblIn .52s .2s cubic-bezier(.2,1.5,.4,1) both;
+}
+@keyframes lblIn{from{opacity:0;transform:scale(2.3) rotate(-7deg)}to{opacity:1;transform:none}}
+/* 原来还有一行解释文本（「全手 JQK · 每家收 4 分」）。
+ * 牌型名本身就够读了，再加一句解释等于让玩家在 1.4 秒里读两遍同一件事，按要求删掉。 */
+.fx .wave{
+  position:absolute;left:50%;top:50%;width:160px;height:160px;margin:-80px 0 0 -80px;border-radius:50%;
+  border:3px solid rgba(245,193,92,.8);animation:wave .95s ease-out both;animation-delay:var(--d,0s);
+}
+@keyframes wave{from{opacity:.9;transform:scale(.22)}to{opacity:0;transform:scale(5.2)}}
+.fx .pt{
+  position:absolute;left:50%;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;
+  background:var(--pc,#FFE08A);animation:burst 1.05s ease-out both;animation-delay:var(--d,0s);
+}
+@keyframes burst{
+  0%{opacity:0;transform:rotate(var(--a)) translate(0,0) scale(.3)}
+  14%{opacity:1}
+  100%{opacity:0;transform:rotate(var(--a)) translate(0,calc(-1 * var(--r))) scale(1)}
+}
+/* 豹子：红金 */
+.fx.bz .lbl{color:#FFC0AC;-webkit-text-stroke-color:#5C1208}
+.fx.bz .halo{
+  background:conic-gradient(from 0deg,
+    rgba(255,90,60,0) 0 5%, rgba(255,120,80,.6) 8%, rgba(255,90,60,0) 12% 24%,
+    rgba(245,193,92,.6) 27%, rgba(255,90,60,0) 31% 49%,
+    rgba(255,120,80,.6) 52%, rgba(255,90,60,0) 56% 74%,
+    rgba(245,193,92,.6) 77%, rgba(255,90,60,0) 81%);
+}
+/* 五花牛：紫金 */
+.fx.wh .lbl{color:#F3D7FF;-webkit-text-stroke-color:#4A1E6B}
+.fx.wh .halo{
+  background:conic-gradient(from 0deg,
+    rgba(200,140,255,0) 0 5%, rgba(214,164,255,.62) 8%, rgba(200,140,255,0) 12% 24%,
+    rgba(255,214,120,.62) 27%, rgba(200,140,255,0) 31% 49%,
+    rgba(214,164,255,.62) 52%, rgba(200,140,255,0) 56% 74%,
+    rgba(255,214,120,.62) 77%, rgba(200,140,255,0) 81%);
+}
+.fx.wh .sub{border-color:rgba(214,164,255,.5);color:#F0DBFF}
+/* 牛牛：把「凑成 10 的三张」圈出来，是这四种特效里唯一的解释性动画 ——
+   其余三种是一眼牌型，牛牛不解释的话没人看得出为什么赢。 */
+.fx .mkb{
+  position:absolute;z-index:3;font-size:16px;font-weight:800;color:#3A2A00;
+  background:linear-gradient(180deg,#FFE8A8,#F5C15C);border-radius:999px;padding:1px 8px;
+  transform:translate(-50%,-50%);
+}
+.felt.shake{animation:fshk .4s 2}
+@keyframes fshk{
+  0%,100%{transform:translate(0,0)}
+  20%{transform:translate(-7px,4px)}
+  40%{transform:translate(6px,-5px)}
+  60%{transform:translate(-4px,-3px)}
+  80%{transform:translate(3px,4px)}
+}
+
+/* ---- 轮次交替卡 / 局终卡 ---- */
+.brk{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:10;
+  display:flex;flex-direction:column;align-items:center;gap:12px;
+  padding:26px 34px;border-radius:24px;text-align:center;
+  background:radial-gradient(ellipse at 50% 0%, rgba(26,72,54,.96), rgba(7,17,13,.985));
+  border:1px solid rgba(245,193,92,.34);box-shadow:0 24px 60px rgba(0,0,0,.6);
+  animation:brkIn .3s cubic-bezier(.2,1.2,.4,1) both;
+}
+/* 关键帧必须保留 translate(-50%,-50%)：上一版的 pop2 结尾是 transform:none，
+ * 会把居中位移一起抹掉 —— 卡片的左边缘被钉在圆心，整块跑到画布外。 */
+@keyframes brkIn{from{opacity:0;transform:translate(-50%,-44%) scale(.94)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+.brk .t{font-size:38px;font-weight:800;color:var(--warm-white);letter-spacing:1px;line-height:1.2;white-space:nowrap}
+.brk .t em{font-style:normal;color:var(--gold)}
+.brk .rows{display:flex;flex-direction:column;gap:5px;min-width:330px}
+.brk .rr{display:flex;justify-content:space-between;gap:16px;font-size:20px;color:var(--txt-dim);padding:2px 2px;border-bottom:1px dashed rgba(255,255,255,.07)}
+.brk .rr b{font-variant-numeric:tabular-nums}
+.brk .rr b.p{color:var(--up-red)}
+.brk .rr b.n{color:var(--down-green)}
+.brk .next{font-size:20px;color:var(--gold);letter-spacing:1px}
+/* 下一轮顺序预告：轮次卡原本只有「已结算 + 3s 后发牌」，没说清第二轮怎么开始；
+ * 补这一行既回答了流程，也把卡片撑高、填掉手牌区空出来的那片空白。 */
+.brk .nx{display:flex;align-items:center;gap:12px;padding:11px 16px;border-radius:14px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);margin-top:2px;white-space:nowrap}
+.brk .nx .lbl{font-size:17px;letter-spacing:1px;color:var(--txt-dim);white-space:nowrap}
+.brk .nx .g{display:flex;align-items:center;gap:9px;white-space:nowrap}
+.brk .nx .g b{font-size:21px;font-weight:800;padding:3px 13px;border-radius:9px;
+  background:rgba(245,193,92,.14);border:1px solid rgba(245,193,92,.3);color:var(--warm-white);white-space:nowrap}
+.brk .nx .g i{font-style:normal;font-size:19px;color:rgba(245,193,92,.6)}
+
+/* 战绩内容已经搬进统一面板（.panel .statb），原来的浅色居中大卡 .sheet 整套删除。 */
+
+/* 侧栏里的流程场景列表 */
+.scenes{display:flex;flex-direction:column;gap:5px}
+.scenes button{
+  text-align:left;padding:7px 11px;border-radius:9px;cursor:pointer;font:inherit;font-size:12.5px;
+  border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);color:var(--txt-dim);
+  display:flex;gap:8px;align-items:center;
+}
+.scenes button i{
+  font-style:normal;flex:0 0 auto;min-width:18px;height:18px;border-radius:5px;
+  background:rgba(255,255,255,.09);color:var(--txt-faint);font-size:11px;
+  display:flex;align-items:center;justify-content:center;
+}
+.scenes button.on{background:linear-gradient(180deg,rgba(245,193,92,.22),rgba(245,193,92,.08));border-color:rgba(245,193,92,.6);color:var(--gold-light);font-weight:600}
+.scenes button.on i{background:rgba(245,193,92,.9);color:#22160A}
+.scenes button.fx i{background:rgba(224,64,47,.8);color:#fff}
+
+/* 中央区在「结算」这一幕多出来的两行：赢家牌型 + 见底提示 */
+.plaque .pl-win{font-size:27px;font-weight:800;color:var(--gold-light);letter-spacing:1px;text-shadow:0 2px 10px rgba(0,0,0,.5)}
+.plaque .pl-bust{
+  margin-top:4px;font-size:19px;color:#FFD3C9;padding:3px 16px;border-radius:999px;
+  background:rgba(150,34,22,.62);border:1px solid rgba(255,132,108,.6);
+}
+
+/* 层级：特效 12 < 点击层 13 < 统一面板 14 < 遮罩 19 < 换头像 20 */
+.scrim{z-index:19}
+.avpick{z-index:20}
+.sstrip .who{flex:0 1 auto;max-width:190px}
+.bub.wide{padding:5px 12px;max-width:520px}
+.bub .ptx,.pl-bcast .ptx,.flyer .ptx{white-space:nowrap;line-height:1.2}
+.bub .ptx{font-size:23px;font-weight:600}
+.ev{display:inline-block;line-height:0;vertical-align:middle}
+.ev svg{width:100%;height:100%;display:block}
+</style>
+</head>
+<body>
+
+<aside>
+  <h1>六选五 · 圆桌版原型</h1>
+  <p class="sub">同一套几何，三端切换。头像与名字沿椭圆环排布，中央毡面承载公共信息，牌盘下移为「你面前的托盘」。</p>
+
+  <div class="grp">
+    <label>屏幕</label>
+    <div class="seg" id="seg-mode">
+      <button data-v="portrait" class="on">竖屏 390×844</button>
+      <button data-v="landscape">横屏 844×390</button>
+      <button data-v="desktop">桌面 1280×800</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>人数（含自己）</label>
+    <div class="seg" id="seg-n">
+      <button data-v="2">2 人</button>
+      <button data-v="3">3 人</button>
+      <button data-v="4">4 人</button>
+      <button data-v="5" class="on">5 人</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>对局场景（起始分）</label>
+    <div class="seg" id="seg-scen">
+      <button data-v="A" class="on">A ①就见底</button>
+      <button data-v="B">B 无人见底</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>见底之后</label>
+    <div class="seg" id="seg-policy">
+      <button data-v="end" class="on">立即局终</button>
+      <button data-v="keep">出局·其余继续</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>头像大小（座位环）</label>
+    <div class="seg" id="seg-av">
+      <button data-v="s">小 56</button>
+      <button data-v="m" class="on">中 76</button>
+      <button data-v="l">大 92</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <label>我的头像</label>
+    <button class="play alt" id="btn-avatar">换头像（预设 / 上传）</button>
+  </div>
+
+  <button class="play" id="btn-play">▶ 播放整局（看结算节奏）</button>
+  <button class="play alt" id="btn-ready" style="margin-top:6px">◀ 回到准备界面（房间）</button>
+  <div class="grp" style="margin-top:8px">
+    <button class="play alt" id="btn-fx">▶ 四种牌型特效</button>
+    <button class="play alt" id="btn-emo" style="margin-top:6px">▶ 表情：定向发送演示</button>
+  </div>
+
+  <div class="grp">
+    <label>流程（点哪一幕看哪一幕）</label>
+    <div class="scenes" id="scenes"></div>
+  </div>
+
+  <div class="ledger">
+    <h2>当前设计空间</h2>
+    <table id="ledger"></table>
+  </div>
+
+  <ul class="notes">
+    <li>2~5 人（含自己），不再做 6/8 人档</li>
+    <li>准备界面长在牌桌上：同一个坠面、同一个座位环，不另开房间页</li>
+    <li>退出、局终再来一局都在同一条操作栏上，不换页面</li>
+    <li>一局结算 3~5 次：每比完一组立刻结算，见底者当场出局</li>
+    <li>点别人头像 → 贴着他弹出面板（表情 / 短语 / 个人信息，同一张卡切）</li>
+    <li>点自己头像 → 同一张卡，直接落在个人信息；操作栏气泡 → 贴自己开表情</li>
+    <li>给自己发＝就地出现；给别人发＝从我头像到他头像旁的一条直线</li>
+    <li>四种特写：王十点半 / 豹子 / 牛牛 / 五花牛，只有赢家放</li>
+  </ul>
+</aside>
+
+<main>
+  <div class="hint" id="hint">准备态与对局态共用同一张牌桌：中间是房号与就绪计数，下方是「准备 / 开始 / 退出」</div>
+  <div class="stage" id="stage"><div class="device" id="device"><div class="design" id="design"></div></div></div>
+</main>
+
+<!-- 规则引擎：与线上同一份文件，不复制。
+     它自带 UMD 包装，浏览器里执行后就是全局 Engine，不依赖任何构建。
+     原型自己判定过一次，代价是四种牌型里两处判赢反了 —— 详见下面「牌型判定」那段注释。 -->
+<script src="../../pwa/js/engine.js"></script>
+<script>
+(function(){
+'use strict';
+
+/* 引擎缺失时给一句话，而不是白屏：原型被单独拷走（脱离 pwa/ 目录）会走到这里 */
+if (typeof Engine === 'undefined'){
+  document.body.innerHTML = '<div style="padding:48px;font:16px/1.8 system-ui,sans-serif;color:#c33">'
+    + '这个原型依赖 <code>pwa/js/engine.js</code>（规则引擎，与线上同一份文件）。<br>'
+    + '请连同仓库一起打开，不要单独拷贝 circle-table.html。</div>';
+  throw new Error('Engine missing: pwa/js/engine.js');
+}
+
+/* =============================== 牌面绘制（复刻 pwa/js/card.js 的观感） =============================== */
+var SUIT = {
+  spade:   { sym:'\u2660', color:'#1A1D23' },
+  heart:   { sym:'\u2665', color:'#C62828' },
+  club:    { sym:'\u2663', color:'#1A1D23' },
+  diamond: { sym:'\u2666', color:'#C62828' }
+};
+var RANKL = { 11:'J', 12:'Q', 13:'K', 14:'A' };
+var cardCache = {};
+
+function rr(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+function cardURL(rank, suit, w, h){
+  var key = rank + '|' + suit + '|' + w + '|' + h;
+  if (cardCache[key]) return cardCache[key];
+  var dpr = 2;
+  var cv = document.createElement('canvas');
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  var c = cv.getContext('2d');
+  c.scale(dpr,dpr);
+
+  rr(c,0,0,w,h,Math.max(4,w*0.09));
+  if (suit === 'joker') {
+    var g = c.createLinearGradient(0,0,w,h);
+    g.addColorStop(0,'#2C1A4A'); g.addColorStop(1,'#3E2166');
+    c.fillStyle = g; c.fill();
+    c.strokeStyle = 'rgba(245,193,92,.55)'; c.lineWidth = Math.max(1,w*0.012); c.stroke();
+    c.fillStyle = '#F5C15C'; c.textAlign='center'; c.textBaseline='middle';
+    c.font = 'bold ' + Math.round(w*0.26) + 'px system-ui,sans-serif';
+    c.fillText('\u5927', w*0.5, h*0.40);
+    c.fillText('\u738B', w*0.5, h*0.70);
+    var url0 = cv.toDataURL('image/png'); cardCache[key]=url0; return url0;
+  }
+
+  var bg = c.createLinearGradient(0,0,w,h);
+  bg.addColorStop(0,'#FFFFFF'); bg.addColorStop(1,'#F4F1E8');
+  c.fillStyle = bg; c.fill();
+  c.strokeStyle = '#D9D9D9'; c.lineWidth = Math.max(1,w*0.012); c.stroke();
+
+  var col = SUIT[suit].color, sym = SUIT[suit].sym;
+  var label = RANKL[rank] || String(rank);
+
+  c.save(); c.globalAlpha = 0.045; c.fillStyle = col;
+  c.textAlign='center'; c.textBaseline='middle';
+  c.font = Math.round(w*0.62) + 'px system-ui,sans-serif';
+  c.fillText(sym, w*0.53, h*0.55); c.restore();
+
+  c.fillStyle = col; c.textAlign='center'; c.textBaseline='middle';
+  c.font = Math.round(w*0.5) + 'px system-ui,sans-serif';
+  c.fillText(sym, w*0.5, h*0.52);
+
+  c.textAlign='left'; c.textBaseline='top';
+  c.font = 'bold ' + Math.round(w*0.235) + 'px system-ui,sans-serif';
+  c.fillText(label, w*0.09, h*0.055);
+  c.font = Math.round(w*0.21) + 'px system-ui,sans-serif';
+  c.fillText(sym, w*0.09, h*0.30);
+
+  c.save(); c.translate(w,h); c.rotate(Math.PI);
+  c.textAlign='left'; c.textBaseline='top';
+  c.font = 'bold ' + Math.round(w*0.235) + 'px system-ui,sans-serif';
+  c.fillText(label, w*0.09, h*0.055);
+  c.font = Math.round(w*0.21) + 'px system-ui,sans-serif';
+  c.fillText(sym, w*0.09, h*0.30);
+  c.restore();
+
+  var url = cv.toDataURL('image/png');
+  cardCache[key] = url;
+  return url;
+}
+function cardEl(rank, suit, w, h, extra){
+  return '<img class="cd' + (extra?(' '+extra):'') + '" src="' + cardURL(rank,suit,w,h) +
+    '" style="width:' + w + 'px;height:' + h + 'px" draggable="false" alt="">';
+}
+
+/* =============================== 数据（示例） =============================== */
+/* pat = 头像预设底纹编号（0~7），photo = 已上传照片。
+ * 给每个人配不同的 pat，是因为圆桌化之后「谁是谁」全靠这一圈头像区分 ——
+ * 8 个人全是纯色圆 + 一个字，扫一眼分不出来，这才是头像要放大的真正原因。 */
+var POOL = [
+  { n:'玩家A', s:6,   st:'ok',   c:['#3E6B58','#22453A'], pat:3 },
+  { n:'玩家D',           s:-2,  st:'ok',   c:['#6B4A3E','#402A22'], pat:1 },
+  { n:'六六',           s:11,  st:'wait', c:['#3E5A6B','#22333F'], pat:2 },
+  { n:'大王',           s:-7,  st:'ok',   c:['#5B3E6B','#342440'], pat:5 },
+  { n:'小鱼',           s:3,   st:'wait', c:['#6B633E','#403A22'], pat:4 },
+  { n:'阿飞',           s:-4,  st:'out',  c:['#4A4F5A','#2A2E35'], pat:6 },
+  { n:'老张',           s:1,   st:'ok',   c:['#3E6B6B','#22403F'], pat:7 },
+  { n:'机器人1',        s:0,   st:'ok',   c:['#3A4A44','#202925'], pat:0, photo:true }
+];
+/* 预设库调色板：6 组，和现有 hash 色系同一家族（低饱和暖绿/棕/蓝）。
+ * 32 款 = 8 底纹 × 6 色板，够 8 人桌不撞脸，也不会让人陷入选择困难。 */
+var PALETTES = [
+  ['#3E6B58','#22453A'], ['#6B4A3E','#402A22'], ['#3E5A6B','#22333F'],
+  ['#5B3E6B','#342440'], ['#6B633E','#403A22'], ['#3E6B6B','#22403F']
+];
+/* 演示用的「已上传照片」：内联 SVG 画的扁平人像。
+ * 真实实现里这里是 <img src="/api/avatar/<id>?v=<ver>">，原型不引外部素材。 */
+var PHOTO_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">'
+  + '<rect width="80" height="80" fill="#E8D6BC"/>'
+  + '<circle cx="40" cy="33" r="16" fill="#F2D9BC"/>'
+  + '<path d="M24 31c0-10 7-16 16-16s16 6 16 16c-2-5-8-8-16-8s-14 3-16 8z" fill="#33251E"/>'
+  + '<circle cx="34.5" cy="34" r="2.1" fill="#2A1B12"/><circle cx="45.5" cy="34" r="2.1" fill="#2A1B12"/>'
+  + '<path d="M35 41c3 2.6 7 2.6 10 0" stroke="#B9614F" stroke-width="2" fill="none" stroke-linecap="round"/>'
+  + '<path d="M17 80c1-13 10-19 23-19s22 6 23 19z" fill="#2E6FA8"/>'
+  + '</svg>');
+var GROUPS = {
+  1: [
+    { k:'single',    t:'\u6bd4\u5927\u5c0f', n:1, c:'#3D7EA6', hint:'\u5927\u738b\u6700\u5927 \u00b7 \u540c\u70b9\u6bd4\u82b1\u8272' },
+    { k:'tenhalf',   t:'\u5341\u70b9\u534a', n:2, c:'#F5C15C', hint:'\u6700\u63a5\u8fd1 10.5 \u00b7 \u8d85\u4e86\u7206\u724c' },
+    { k:'piaosanye', t:'\u98d8\u4e09\u53f6', n:3, c:'#D65A5A', hint:'\u8c79\u5b50 > \u540c\u82b1\u987a > \u540c\u82b1' }
+  ],
+  2: [
+    { k:'single', t:'\u6bd4\u5927\u5c0f', n:1, c:'#3D7EA6', hint:'\u5927\u738b\u6700\u5927 \u00b7 \u540c\u70b9\u6bd4\u82b1\u8272' },
+    { k:'douniu', t:'\u6597\u725b',     n:5, c:'#8A6BC7', hint:'\u4e09\u5f20\u51d1 10 \u00b7 \u4e94\u82b1\u725b\u6700\u5927' }
+  ]
+};
+/* =============================== 牌型判定：直接用 pwa/js/engine.js ===============================
+ * 这里曾经手抄过一份 154 行的精简判定（evSingle / evTenHalf / evPiao / evDouniu）。
+ * 那次抄写的代价是可量化的 —— 压掉了两样东西：
+ *   ① 「大王万能」的全部分支（十点半王能当 10 且比真 10 大、斗牛王能去凑三张、
+ *     飘三叶王万能、有大王不算五花牛）；
+ *   ② compareHighCards 那层「逐张交错比 (点数, 花色)」的兜底。
+ * 于是随机对撞时飘三叶 4.4%、十点半 0.8%、含大王时斗牛 25.5% 的组**判赢判反**。
+ * 而固定演示牌组恰好绕开这些边界，画面一直是对的；25+54 条断言又只验布局不验分数。
+ *
+ * 结论：规则只能有一份实现。引擎是 UMD，浏览器里就是全局 Engine，一个 <script> 的事。
+ * 原型这边只留两样：**牌型文案**（显示层，属于这次要改的 UI）和「三张凑十高亮」（纯视觉）。
+ */
+var SUIT_SYM = { spade:'\u2660', heart:'\u2665', club:'\u2663', diamond:'\u2666' };
+function isJk(c){ return c[1] === 'joker'; }
+function lblCard(c){
+  if (isJk(c)) return '\u5927\u738b';
+  return (({11:'J',12:'Q',13:'K',14:'A'})[c[0]] || String(c[0])) + SUIT_SYM[c[1]];
+}
+
+/* 原型的牌是 [rank, suit] 数组，引擎要 {rank, suit} 对象 —— 只在这一处转换 */
+function ecards(cards){
+  return cards.map(function(c){ return { rank:c[0], suit:c[1] }; });
+}
+var CMP = { single:'compareSingle', tenhalf:'compareTenHalf', piaosanye:'comparePiaoSanYe', douniu:'compareDouNiu' };
+
+/* 牌型文案沿用原型写法（「牛 9」「爆牌 18.0」），但每个数值都来自引擎：
+ * 文案是设计稿的一部分，不该因为换了实现就变样。 */
+function handLabel(mode, cards, eh){
+  if (mode === 'single') return lblCard(cards[0]);
+  if (mode === 'piaosanye') return Engine.piaoSanYeTypeName(eh);
+  if (mode === 'douniu'){
+    var dt = Engine.douNiuType(eh);
+    if (dt.type === 10) return '\u4e94\u82b1\u725b';
+    if (dt.type === 9) return '\u725b\u725b';
+    if (dt.type < 0) return '\u6ca1\u725b';
+    return '\u725b ' + dt.niu;
+  }
+  var tot = Engine.tenHalfTotal(eh);
+  if (Engine.tenHalfBust(eh)) return '\u7206\u724c ' + (tot/10).toFixed(1);
+  if (tot === 105) return '\u5341\u70b9\u534a';
+  return (tot/10).toFixed(1) + ' \u70b9';
+}
+
+/* r 只承载「显示 + 特效」两件事，不参与胜负 —— 胜负由引擎的比较器决定 */
+function evalHand(mode, cards, eh){
+  var r = { label: handLabel(mode, cards, eh), t: -1, jokerWin: false };
+  if (mode === 'piaosanye') r.t = Engine.piaoSanYeType(eh).type;
+  else if (mode === 'douniu') r.t = Engine.douNiuType(eh).type;
+  else if (mode === 'tenhalf'){
+    r.pts = Engine.tenHalfTotal(eh);
+    /* 「王十点半」= 靠大王撑到 10.5，是四种要放特写的牌型之一 */
+    r.jokerWin = r.pts === 105 && cards.some(isJk);
+  }
+  return r;
+}
+
+/* 纯视觉：斗牛牛牛的特写要圈出「凑十的那三张」。
+ * 引擎不导出这个分组（它只关心胜负），所以这里自己找一组。
+ * 它不参与任何判断，找错了也只是高亮错了三张，不影响赢家和分数。 */
+function niuTrio(cards){
+  var v = cards.map(function(c){ return Engine.douNiuPoint({ rank:c[0], suit:c[1] }); });
+  for (var i=0;i<cards.length;i++)
+    for (var j=i+1;j<cards.length;j++)
+      for (var k=j+1;k<cards.length;k++)
+        if ((v[i]+v[j]+v[k]) % 10 === 0) return [i,j,k];
+  return [];
+}
+
+
+/* =============================== 发牌脚本 =============================== */
+/* 为什么手写而不是随机发：四种「要放特写」的牌型必须真的出现在这一把里，
+ * 随机发牌跑十次也未必凑齐。所以每组牌是写死的。
+ * ★ 没有自动校验兜底（这条注释以前写的是「有函数保证一轮内不重牌」，
+ *   而代码里从来没有那个函数 —— 注释在说一件不存在的事，比没有注释更糟）。
+ *   改牌时只能自己核对「同一个人在同一轮内不拿重复的牌」。
+ * 每组的花色/点数都对着结果核算过：K♠ 赢单张、王+K♥ 是王十点半、777 是豹子、
+ * 五花牛压牛牛 —— 这几个是场景的骨架，改牌要先重算这四条。 */
+var DEAL = {
+  1: {
+    single: {
+      me:[[12,'diamond']], s0:[[9,'club']], s1:[[11,'heart']], s2:[[8,'diamond']], s3:[[13,'spade']]
+    },
+    tenhalf: {
+      me:[[15,'joker'],[13,'heart']], s0:[[14,'spade'],[9,'club']], s1:[[6,'diamond'],[3,'spade']],
+      s2:[[4,'spade'],[2,'heart']], s3:[[8,'heart'],[13,'club']]
+    },
+    piaosanye: {
+      me:[[12,'club'],[12,'heart'],[5,'diamond']],
+      s0:[[7,'spade'],[7,'heart'],[7,'diamond']],
+      s1:[[10,'heart'],[9,'heart'],[3,'heart']],
+      s2:[[6,'club'],[5,'club'],[4,'club']],
+      s3:[[11,'spade'],[10,'spade'],[4,'heart']]
+    }
+  },
+  2: {
+    single: {
+      me:[[13,'spade']], s0:[[12,'diamond']], s1:[[10,'club']], s2:[[9,'heart']], s3:[[11,'diamond']]
+    },
+    douniu: {
+      me:[[10,'spade'],[6,'heart'],[4,'club'],[8,'diamond'],[2,'spade']],   /* 牛牛 */
+      s0:[[9,'spade'],[8,'heart'],[3,'club'],[4,'diamond'],[10,'heart']],    /* 牛 4 */
+      s1:[[14,'diamond'],[2,'club'],[4,'spade'],[8,'spade'],[9,'diamond']],  /* 没牛 */
+      s2:[[5,'spade'],[6,'spade'],[9,'club'],[13,'diamond'],[7,'heart']],    /* 牛 7 */
+      s3:[[11,'club'],[12,'club'],[13,'club'],[11,'heart'],[12,'heart']]     /* 五花牛 */
+    }
+  }
+};
+
+/* 两套起始分。
+ *   A「①就见底」：六六只有 1 分，比完单张就 0 —— 用户要的那个场景，只走两组就结束；
+ *   B「无人见底」：所有人 14 分以上，五组全走完，看完整流程与轮次交替。 */
+var SCORE_A = { me:4, s0:6, s1:3, s2:1, s3:5 };
+var SCORE_B = { me:18, s0:20, s1:16, s2:15, s3:19 };
+
+/* =============================== 表情库 =============================== */
+/* 20 个，4 列 × 5 行 —— 和参照图（微乐麻将）的格子数、行列完全一致。
+ * **用的是系统 emoji，不是他们那套绿脸美术**：那套图是微乐的版权素材，不能直接搬。
+ * 要做到「一模一样」，只能自己按同样的语义集重画 20 个 PNG/SVG 表情
+ * （见 docs/circle-table-analysis.md §13.3 的成本说明）。 */
+/* =============================== 表情库（13 款，用参考截图裁出来的位图） ===============================
+ * 素材来自用户给的参考截图，用 scripts/crop-emoji.py 逐格裁切 + 抠底，产物在 assets/emoji/。
+ * **为什么用位图不用矢量**：矢量自绘的神态差异太大（第一版做出来用户一眼就否了）。
+ * 要做到「一模一样」，只有两条路：拿到原图，或者拿到授权后的正式素材 —— 现在走的是第一条。
+ *
+ * 接正式素材时只需要替换这些 png，路径和 13 个 id 不变，业务代码一行都不用改。
+ */
+var EMO_LIST = [
+  { f:'assets/emoji/e0-dizzy.png',    n:'\u5934\u6655' },
+  { f:'assets/emoji/e1-devil.png',    n:'\u6076\u9b54' },
+  { f:'assets/emoji/e2-money.png',    n:'\u8d22\u8ff7' },
+  { f:'assets/emoji/e3-confused.png', n:'\u7591\u60d1' },
+  { f:'assets/emoji/e4-love.png',     n:'\u82b1\u75f4' },
+  { f:'assets/emoji/e5-cry.png',      n:'\u5927\u54ed' },
+  { f:'assets/emoji/e6-grin.png',     n:'\u9f87\u7259' },
+  { f:'assets/emoji/e7-angry.png',    n:'\u751f\u6c14' },
+  { f:'assets/emoji/e8-smug.png',     n:'\u5f97\u610f' },
+  { f:'assets/emoji/e9-sweat.png',    n:'\u6c57' },
+  { f:'assets/emoji/e10-rage.png',    n:'\u66b4\u6012' },
+  { f:'assets/emoji/e11-shock.png',   n:'\u60ca\u8bb6' },
+  { f:'assets/emoji/e12-grit.png',    n:'\u54ac\u7259' }
+];
+
+function emoImg(idx){
+  var i = Math.max(0, Math.min(EMO_LIST.length - 1, idx));
+  return '<img src="' + EMO_LIST[i].f + '" alt="' + EMO_LIST[i].n + '">';
+}
+
+/* 短语：8 条，内容和参考图逐字一致 */
+var PHRASES = [
+  '朋友，看你打牌可真费劲。',
+  '快点吧，牌在你手上都下崽了。',
+  '你要耽误人家约会了。',
+  '哈哈，没了吧。',
+  '喂，你还在不在。',
+  '小树不修不直溜，人不修理哏赳赳。',
+  '呦，跑挺快呀！',
+  '哈哈，真爽，太过瘾了。'
+];
+
+/* 牌风雷达的五个维度（战绩页右侧）。数值是演示数据，正式实现的口径见分析文档 §13.2。 */
+var STYLE_KEYS = ['\u901f\u5ea6', '\u9632\u5b88', '\u4e92\u52a8', '\u7b56\u7565', '\u83b7\u80dc'];
+
+/* =============================== 状态 =============================== */
+var S = {
+  mode:'portrait',
+  n:5,
+  round:1,
+  phase:'split',
+  av:'m',        // 头像档位 s / m / l
+  bubble:{},     // playerKey -> emoji（接收者那边的气泡）
+  panel:null,    // 统一浮层：{ key:playerKey, tab:'emo'|'phr'|'stat' }
+  pick:false,    // 换头像面板
+  fly:null,      // { to, bx, by, w, h, sx, sy, em, seq }
+  bubbleSeq:{},  // playerKey -> 产生这个气泡的序号（防止旧定时器清掉新气泡）
+  me:{ pat:3, ci:0, photo:false },
+  hover:null,
+  /* ---- 逐组结算 ---- */
+  idx:0,         // 当前场景下标
+  scen:'A',      // A ①就见底 / B 无人见底
+  policy:'end',  // 见底后：end 立即局终 / keep 出局者退出、其余继续
+  fx:null,       // { kind, cards, label, sub, trio, mk }
+  playing:false,
+  /* ---- 准备态（房间）----
+   * 没有单独的房间页：phase 只是决定「同一张桌子中央放什么、底部按钮是什么」。
+   * 对局开始不是换页面，而是桌上多出一手牌。 */
+  phase:'ready', // ready 准备态 / play 对局中
+  rdy:false,     // 自己是否已准备
+  rdyOthers:{},  // 其他人就绪（原型里是模拟的）
+  cdOn:false,    // 倒计时是否在跑（防重复启动）
+  countdown:0,
+  lastDelta:null,// 上一局自己的净得分（回到准备态时挂在房间牌上）
+  ask:null,      // 退出确认：'leave'
+  toast:null     // 一句轻提示
+};
+/* 场景列表由 buildScenes() 生成，S.idx 选其中一幕 */
+var SCENES = [];
+function sceneNow(){ return SCENES[Math.min(S.idx, SCENES.length - 1)] || null; }
+function cp(o){ var r = {}; Object.keys(o || {}).forEach(function(k){ r[k] = o[k]; }); return r; }
+/* 头像档位（设计 px）。座位块宽度 ≈ av + 38；人数上限收到 5 之后，
+ * 弧长均分（见 oppAngles）在 5 人档已经足够松，这三档可以直接给满。 */
+var AV_SIZES = {
+  s:{por:56, wide:54, desk:68},
+  m:{por:76, wide:70, desk:86},
+  l:{por:92, wide:84, desk:100}
+};
+/* 当前头像直径（设计 px）。render 排座位、发一条表情要算气泡尺寸，都读它 ——
+ * 两处各算一遍迟早会算出两个数，气泡就会歪在头像边上。 */
+function curAv(g){
+  g = g || geo();
+  var avS = AV_SIZES[S.av] || AV_SIZES.m;
+  var key = g.compact ? 'por' : (S.mode === 'desktop' ? 'desk' : 'wide');
+  /* 6/8 人档已取消，5 人 + 大号头像（92）实测相邻间隙仍有 30+ 设计 px，不必再收敛。
+   * 这里保留 999 而不是删掉这个变量，是为了以后真要加人数时有个现成的闸口。 */
+  var cap = 999;
+  return Math.min(avS[key], cap);
+}
+
+/* =============================== 几何 =============================== */
+/* 三种版式共用同一套参数化椭圆；差别只在可用宽高与托盘摆放。
+ *
+ * 椭圆比例是刻意定死的：rx : ry ≈ 1.6 : 1 —— 真实牌桌的俯视比例。
+ * 早期版本让 ry 跟着可用高度长（桌面端几乎成正圆），结果是「一个巨大的空盘子，
+ * 座位散在边上，中间什么都没有」。桌子的尺寸该由宽度决定，不是由剩多少高度决定。 */
+function geo(){
+  var RATIO = 0.615;            // ry = rx * RATIO
+  var groups = (GROUPS[S.round] || []).length;
+  /* 2 人局：对手正上方、我正下方，中央区会被对手的昵称/分数压住（实测重叠）。
+   * 而且加了对战条之后中央块更高，上沿必须让开 —— 34 设计px 是量出来的最小值。 */
+  var pOff = S.n === 2 ? 34 : 46;
+  /* 2 人局中央块更高，'我' 那一格要往下让一点，否则和 对战条 贴在一起。 */
+  var meOff = S.n === 2 ? 16 : 0;
+
+  if (S.mode === 'portrait'){
+    var W = 750, H = 1623;
+    var bandGap = 14;
+    var handH = 214, actH = 92, bottom = 52;
+    var bandsBottom = H - bottom - actH - 18 - handH - 26;
+    var regionH = 592;
+    var bandsTop = bandsBottom - regionH;
+
+    /* 顶栏删除后，毡面上沿可以顶到状态栏下沿（设计 px 约 84）。
+     * 省下来的 56 设计 px 不拿去留白 —— 全部换成更大的头像（见 AV_SIZES）。 */
+    var feltTop = 84;
+    var meHalf = 42;
+    var feltBottom = bandsTop - 16 - meHalf;      // 605
+    var feltW = 722;
+    var rx = feltW/2 - 38;                        // 323
+    var ry = rx * RATIO;                          // 199
+    var cy = feltTop + ry + 28;                   // 让顶部座位避开状态栏
+    var feltH = 2*ry + 112;                       // 比上一版 +16：补上顶栏空出来的位置
+
+    var bH = Math.min(240, (regionH - (groups-1)*bandGap)/groups);
+    var bTotal = groups*bH + (groups-1)*bandGap;
+
+    return {
+      W:W, H:H,
+      felt:{ x:(W-feltW)/2, y:cy - feltH/2, w:feltW, h:feltH },
+      ring:{ cx:375, cy:cy, rx:rx, ry:ry },
+      me:{ x:375, y:cy + ry + 30 + meOff },
+      plaque:{ x:375, y:cy - 6 + pOff },
+      band:{ x:36, w:678, start:bandsTop + (regionH-bTotal)/2, h:bH, gap:bandGap, meta:176 },
+      /* 托盘区整块（结算条 / 表情抽屉都住在这里，不用组带的位置） */
+      tray:{ x:36, y:bandsTop, w:678, h:regionH },
+      hand:{ cx:375, y:bandsBottom + 30, cw:142, ch:198, step:88, area:678 },
+      act:{ x:36, w:678, y:H - bottom - actH, h:actH },
+      compact:true
+    };
+  }
+
+  if (S.mode === 'landscape'){
+    var W2 = 1624, H2 = 750;
+    var trayX = 1008, trayW = 596;
+    var bGap2 = 12, actH2 = 56, handH2 = 168, bot2 = 14;
+    var actY2 = H2 - bot2 - actH2;               // 680
+    var handY2 = actY2 - 12 - handH2;            // 500
+    var region2 = handY2 - 16 - 20;              // 464 留给组托盘
+    var bH2 = Math.min(220, (region2 - (groups-1)*bGap2)/groups);
+    var bTotal2 = groups*bH2 + (groups-1)*bGap2;
+    var bStart2 = 20 + (region2 - bTotal2)/2;
+
+    var feltW2 = 966;
+    var rx2 = feltW2/2 - 42;             // 441
+    var ry2 = rx2 * RATIO;               // 271
+    var cy2 = 362;
+
+    return {
+      W:W2, H:H2,
+      felt:{ x:14, y:Math.max(10, cy2 - ry2 - 56), w:feltW2, h:2*ry2 + 112 },
+      ring:{ cx:14 + feltW2/2, cy:cy2, rx:rx2, ry:ry2 },
+      me:{ x:14 + feltW2/2, y:cy2 + ry2 + 32 + meOff },
+      plaque:{ x:14 + feltW2/2, y:cy2 - 4 + pOff },
+      band:{ x:trayX, w:trayW, start:bStart2, h:bH2, gap:bGap2, meta:176 },
+      tray:{ x:trayX, y:20, w:trayW, h:region2 },
+      hand:{ cx:trayX + trayW/2, y:handY2 + 6, cw:120, ch:166, step:76, area:trayW },
+      act:{ x:trayX, w:trayW, y:actY2, h:actH2 },
+      compact:false
+    };
+  }
+
+  // desktop 1280×800 → design 1624×1015
+  var W3 = 1624, H3 = 1015;
+  var tbX = 1044, tbW = 556;
+  var bGap3 = 14, actH3 = 76, handH3 = 226, bot3 = 20;
+  var actY3 = H3 - bot3 - actH3;                 // 919
+  var handY3 = actY3 - 16 - handH3;              // 677
+  var region3 = handY3 - 18 - 22;                // 637
+  var bH3 = Math.min(250, (region3 - (groups-1)*bGap3)/groups);
+  var bTotal3 = groups*bH3 + (groups-1)*bGap3;
+  var bStart3 = 22 + (region3 - bTotal3)/2;
+
+  var feltW3 = 880;   // 原 992 会撑成一个巨大的空盘，收窄后桌子更像桌子
+  var rx3 = feltW3/2 - 44;             // 452
+  var ry3 = rx3 * RATIO;               // 278
+  var cy3 = 20 + 74 + ry3;
+
+  return {
+    W:W3, H:H3,
+    felt:{ x:20, y:cy3 - ry3 - 74, w:feltW3, h:2*ry3 + 148 },
+    ring:{ cx:20 + feltW3/2, cy:cy3, rx:rx3, ry:ry3 },
+    me:{ x:20 + feltW3/2, y:cy3 + ry3 + 38 },
+    plaque:{ x:20 + feltW3/2, y:cy3 - 4 + pOff },
+    band:{ x:tbX, w:tbW, start:bStart3, h:bH3, gap:bGap3, meta:184 },
+    tray:{ x:tbX, y:22, w:tbW, h:region3 },
+    hand:{ cx:tbX + tbW/2, y:handY3, cw:148, ch:206, step:92, area:tbW },
+    act:{ x:tbX, w:tbW, y:actY3, h:actH3 },
+    compact:false
+  };
+}
+
+/* 对手在「上弧」上的角度：以正上方 270° 为中心铺开，跨度随人数增长。
+ * 只用上弧是手机竖屏的唯一出路 —— 下弧要留给「我」和牌盘。 */
+/* 座位角度：按**弧长**均分，不是按角度均分。
+ *
+ * 这不只是「更匀」的美学问题，而是头像能否放大的硬约束。
+ * 按角度均分时，椭圆长轴两端（左右两侧）每度走过的长度是短轴端的 rx/ry ≈ 1.6 倍，
+ * 于是两侧的座位间距只有顶部的 1/1.6。8 人局顶部相邻间距 180 设计 px、
+ * 侧面只有 103 —— 而一个带昵称的座位块要 110 宽，侧面必然互相压住。
+ * 这就是「头像一大就糊成一团」的数学原因。
+ *
+ * 按弧长均分之后，各处间距相等（8 人局 ≈ 143），放大头像才有地方放。
+ * 角度区间仍然沿用原来那张 span 表 —— 上弧给对手，下弧留给「我」和牌盘。 */
+function oppAngles(n, ring){
+  if (n <= 0) return [];
+  /* span = 上弧张角。1 个对手时 0°（正上方）—— 也就是 2 人局面对面坐，
+   * 这是 D4 拍板的结果，几何上本来就成立，不需要额外分支。
+   *
+   * 4 个对手（5 人局）原来给了 202°，实测最外侧座位的中心落在 x≈58，
+   * 而一个 8 字长昵称的座位块宽 132（半宽 66）—— 左边框会被裁掉 8 设计px。
+   * 张角调到 214° 后最外侧座位退到 x≈66，刚好放得下。
+   * 教训：arc 张角不是纯审美参数，它决定「最外侧座位离画布边还有多远」。 */
+  var span = n === 1 ? 0 : (n === 2 ? 132 : n === 3 ? 176 : n === 4 ? 214 : n === 5 ? 214 : 224);
+  if (n === 1) return [270];
+
+  var a0 = 270 - span/2, a1 = 270 + span/2, N = 512;
+  var cum = [0], pts = [], i;
+  for (i = 0; i <= N; i++){
+    var a = (a0 + (a1 - a0) * i / N) * Math.PI/180;
+    pts.push({ x: ring.rx * Math.cos(a), y: ring.ry * Math.sin(a) });
+    if (i > 0){
+      var dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
+      cum.push(cum[i-1] + Math.sqrt(dx*dx + dy*dy));
+    }
+  }
+  var total = cum[N], out = [];
+  for (i = 0; i < n; i++){
+    var target = total * i / (n - 1);
+    var lo = 0, hi = N;
+    while (lo < hi - 1){
+      var mid = (lo + hi) >> 1;
+      if (cum[mid] < target) lo = mid; else hi = mid;
+    }
+    var seg = (cum[hi] - cum[lo]) || 1;
+    out.push(a0 + (a1 - a0) * (lo + (target - cum[lo]) / seg) / N);
+  }
+  return out;
+}
+function onRing(g, deg){
+  var a = deg * Math.PI/180;
+  return { x: g.ring.cx + g.ring.rx * Math.cos(a),
+           y: g.ring.cy + g.ring.ry * Math.sin(a) };
+}
+
+/* =============================== 准备态（房间） =============================== */
+/* 参考微乐：房间不是「另一页」，而是这张桌子的无牌状态。
+ * 同一圈座位、同一块毡面，只是中央从「第几轮 / 第几组」换成房号与就绪计数，
+ * 座位下面的分数换成「已准备 / 等待」，底部主按钮换成「准备 / 开始」。
+ * 这样开局没有跳变：牌是从空托盘里长出来的，不是换一屏之后才出现。 */
+
+var rdyTimers = [];
+function clearRdyTimers(){
+  rdyTimers.forEach(function(t){ clearTimeout(t); });
+  rdyTimers = [];
+}
+function later(ms, fn){ rdyTimers.push(setTimeout(fn, ms)); }
+
+function readyCount(){
+  var on = S.rdy ? 1 : 0;
+  chairs().forEach(function(k){ if (k !== 'me' && S.rdyOthers[k]) on++; });
+  return on;
+}
+
+function roomHTML(g){
+  var all = S.n, on = readyCount(), allOn = on >= all;
+  var dots = chairs().map(function(k){
+    var r = k === 'me' ? S.rdy : !!S.rdyOthers[k];
+    return '<i class="dt' + (r ? ' on' : '') + '"></i>';
+  }).join('');
+  var last = (S.lastDelta === null || S.lastDelta === undefined) ? ''
+    : '<div class="last">\u4e0a\u5c40\u51c0\u5f97 <b class="' + (S.lastDelta > 0 ? 'p' : (S.lastDelta < 0 ? 'n' : '')) + '">'
+      + (S.lastDelta > 0 ? '+' : '') + S.lastDelta + '</b></div>';
+  return '<div class="room" style="left:' + g.plaque.x + 'px;top:' + (g.plaque.y + 8) + 'px">'
+    + '<div class="rid">\u623f\u53f7<b>4821</b></div>'
+    + '<div class="rule"><span>\u4e24\u8f6e</span><i></i><span>\u9010\u7ec4\u7ed3\u7b97</span><i></i><span>\u5e95\u5206 1</span><i></i><span>' + all + ' \u4eba</span></div>'
+    + (allOn
+        ? '<div class="big cd">' + Math.max(1, S.countdown || 3) + '</div>'
+        : '<div class="big">\u7b49\u5f85\u51c6\u5907</div>')
+    + '<div class="cnt">' + on + '/' + all + ' \u5df2\u51c6\u5907' + (allOn ? ' \u00b7 \u5f00\u59cb\u4e2d' : '') + '</div>'
+    + '<div class="dots">' + dots + '</div>'
+    + last + '</div>';
+}
+
+/* 准备态的托盘区：本房间规则。
+ * 内容就是「我接下来要打的到底是什么」—— 这是等别人准备时唯一真正想知道的信息，
+ * 也顺带把这块本来会空掉 870 设计px 的区域占满。 */
+function roomInfoHTML(g){
+  var start = (SCENES[0] && SCENES[0].start) || {};
+  var base = start.me != null ? start.me : 12;
+  function chain(r){
+    return (GROUPS[r] || []).map(function(x, i){
+      return idxChar(i) + ' ' + x.t;
+    }).join(' <em>\u2192</em> ');
+  }
+  var hme = hashOf('me');
+  var tot = 160 + hme % 300, win = Math.round(tot * (0.34 + (hme % 30) / 100));
+  var rows = [
+    ['\u7b2c\u4e00\u8f6e', chain(1)],
+    ['\u7b2c\u4e8c\u8f6e', chain(2)],
+    ['\u89c1\u5e95', S.policy === 'end' ? '\u7acb\u5373\u5c40\u7ec8' : '\u51fa\u5c40\u8005\u9000\u51fa \u00b7 \u5176\u4f59\u7ee7\u7eed'],
+    ['\u8d77\u59cb\u5206', base + ' \u5206 \u00b7 \u6bcf\u7ec4\u7ed3\u7b97\u540e\u5ef6\u7eed'],
+    ['\u6211\u7684\u6218\u7ee9', tot + ' \u5c40 \u00b7 \u80dc\u7387 ' + Math.round(win / tot * 100) + '%']
+  ].map(function(r){
+    return '<div class="r"><i>' + r[0] + '</i><b>' + r[1] + '</b></div>';
+  }).join('');
+  /* 铺满「组带 + 手牌」两块：只占组带那一块会空出下半屏，看着像没做完 */
+  var top = g.tray.y, bottom = g.act.y - 18;
+  return '<div class="rminfo" style="left:' + g.tray.x + 'px;top:' + top + 'px;width:' + g.tray.w + 'px;height:' + (bottom - top) + 'px">'
+    + '<div class="card"><div class="cap">\u672c\u623f\u95f4</div>' + rows
+    + '<div class="ft">\u5168\u5458\u51c6\u5907\u540e 3 \u79d2\u81ea\u52a8\u53d1\u724c \u00b7 \u6bcf\u6bd4\u5b8c\u4e00\u7ec4\u7acb\u5373\u7ed3\u7b97</div></div>'
+    + '</div>';
+}
+
+/* 底部三格：表情 | 准备·开始 | 退出房间。
+ * 退出按钮在两种 phase 里都在同一个位置，只有文案变 —— 用户不用重新找。 */
+function readyActs(g){
+  var all = S.n, allOn = readyCount() >= all;
+  var label, cls;
+  if (allOn){ label = '\u5f00\u59cb\u6e38\u620f \u00b7 ' + Math.max(1, S.countdown || 3); cls = 'btn-primary'; }
+  else if (S.rdy){ label = '\u53d6\u6d88\u51c6\u5907'; cls = 'btn-ghost'; }
+  else { label = '\u51c6 \u5907'; cls = 'btn-primary'; }
+  return '<div class="acts" style="left:' + g.act.x + 'px;top:' + g.act.y + 'px;width:' + g.act.w + 'px;height:' + g.act.h + 'px">'
+    + emoBtnHTML(g)
+    + '<button class="btn ' + cls + '" data-actry="1" style="flex:1;height:100%;font-size:28px;border-radius:14px">' + label + '</button>'
+    + '<button class="btn btn-ghost" data-leave="1" style="width:150px;height:100%;font-size:22px">\u9000\u51fa\u623f\u95f4</button>'
+    + '</div>';
+}
+
+function renderReady(g){
+  var angles = oppAngles(S.n - 1, g.ring);
+  var av = curAv(g), fs = g.compact ? 22 : 21;
+  var seats = '';
+  angles.forEach(function(deg, i){
+    var key = 's' + i, pos = onRing(g, deg);
+    seats += seatHTML(key, pos, { av:av, fs:fs, W:g.W, st:'idle',
+      rdy:!!S.rdyOthers[key], sel:!!S.panel && S.panel.key === key, score:0 });
+    seats += bubbleHTML(key, pos, av, g.W);
+  });
+  var mePos = { x:g.me.x, y:g.me.y };
+  seats += seatHTML('me', mePos, { me:true, av:av, fs:fs, noTag:true, W:g.W, st:'idle',
+    rdy:!!S.rdy, sel:!!S.panel && S.panel.key === 'me', score:0 });
+  seats += bubbleHTML('me', mePos, av, g.W);
+
+  var html = ''
+    + '<div class="felt" style="left:' + g.felt.x + 'px;top:' + g.felt.y + 'px;width:' + g.felt.w + 'px;height:' + g.felt.h + 'px"><div class="felt-in"></div></div>'
+    + seats
+    + flyerHTML(g)
+    + roomHTML(g)
+    + roomInfoHTML(g)
+    + readyActs(g)
+    + (S.panel ? panelHTML(g) : '')
+    + (S.pick ? avpickHTML(g) : '')
+    + askHTML() + toastHTML(g);
+  mount(g, html);
+}
+
+/* ---- 阶段切换：只有这两个函数能改 S.phase，别处一律调它们 ---- */
+function toReady(delta, msg){
+  clearRdyTimers();
+  S.phase = 'ready';
+  S.rdy = false; S.rdyOthers = {};
+  S.cdOn = false; S.countdown = 0;
+  S.panel = null; S.pick = null; S.ask = null; S.fx = null;
+  S.fly = null; S.bubble = {}; S.bubbleSeq = {};
+  if (delta !== undefined) S.lastDelta = delta;
+  setToast(msg || null);
+  render();
+}
+
+function startGame(){
+  clearRdyTimers();
+  S.phase = 'play';
+  S.rdy = false; S.rdyOthers = {};
+  S.cdOn = false; S.countdown = 0;
+  S.panel = null; S.pick = null; S.ask = null;
+  S.lastDelta = null; S.toast = null;
+  buildScenes();          /* 新一局 = 分数从起始分重算，和以前「再开一局」一致 */
+  S.idx = 0; S.fx = null;
+  render();
+}
+
+function toggleReady(){
+  if (S.rdy){
+    S.rdy = false;
+    clearRdyTimers();
+    S.cdOn = false; S.countdown = 0;
+    render();
+    return;
+  }
+  S.rdy = true;
+  render();
+  simulateReady();
+}
+
+/* 原型里其他玩家是假的：按节奏陆续准备，用来验证
+ * 「人没齐 → 全员就绪 → 3s 倒计时 → 发牌」这条链真的能走通。 */
+function simulateReady(){
+  var others = chairs().filter(function(k){ return k !== 'me'; });
+  others.forEach(function(k, i){
+    if (S.rdyOthers[k]) return;
+    later(650 + i * 700, function(){
+      if (S.phase !== 'ready' || !S.rdy) return;
+      S.rdyOthers[k] = true;
+      render();
+      if (readyCount() >= S.n) startCountdown();
+    });
+  });
+  if (readyCount() >= S.n) startCountdown();
+}
+
+function startCountdown(){
+  if (S.cdOn) return;                 /* 每个对手的定时器都会走到这里，只认第一个 */
+  S.cdOn = true; S.countdown = 3;
+  (function tick(){
+    if (S.phase !== 'ready'){ S.cdOn = false; return; }
+    if (S.countdown <= 0){ S.cdOn = false; startGame(); return; }
+    render();
+    later(1000, function(){ S.countdown--; tick(); });
+  })();
+}
+
+/* ---- 退出确认与轻提示 ---- */
+var toastTimer = null;
+function setToast(t){
+  S.toast = t;
+  clearTimeout(toastTimer);
+  if (!t) return;
+  toastTimer = setTimeout(function(){
+    S.toast = null;
+    if (S.phase === 'ready' || S.phase === 'play') render();
+  }, 1800);
+}
+function toastHTML(g){
+  if (!S.toast) return '';
+  return '<div class="toast" style="top:' + (g.act.y - 62) + 'px">' + S.toast + '</div>';
+}
+function askHTML(){
+  if (!S.ask) return '';
+  var inPlay = S.phase === 'play';
+  return '<div class="scrim" data-askno="1"></div>'
+    + '<div class="ask">'
+    + '<b>' + (inPlay ? '\u9000\u51fa\u672c\u5c40\uff1f' : '\u9000\u51fa\u623f\u95f4\uff1f') + '</b>'
+    + '<p>' + (inPlay
+        ? '\u672c\u5c40\u5206\u6570\u4f1a\u6e05\u96f6\u3002\u9000\u51fa\u540e\u56de\u5230\u51c6\u5907\u754c\u9762\uff0c\u53ef\u4ee5\u91cd\u65b0\u5f00\u4e00\u5c40\u3002'
+        : '\u9000\u51fa\u540e\u4f1a\u6e05\u7a7a\u51c6\u5907\u72b6\u6001\uff0c\u4f60\u53ef\u4ee5\u91cd\u65b0\u8fdb\u5165\u623f\u95f4\u3002')
+      + '</p>'
+    + '<div class="row"><button class="no" data-askno="1">\u53d6\u6d88</button>'
+    + '<button class="yes" data-askyes="1">\u786e\u8ba4\u9000\u51fa</button></div></div>';
+}
+
+/* =============================== 渲染 =============================== */
+/* 头像：预设底纹（pat）或上传照片（photo）。老数据没有这两个字段时退化成
+ * 「昵称首字 + 哈希色」—— 和线上现在完全一致，不迁移也能显示。 */
+function avInner(p, bdg){
+  if (p.photo) return '<img src="' + PHOTO_SVG + '" alt="">' + bdg;
+  return '<span>' + esc1((p.n || '?').slice(0,1)) + '</span>' + bdg;
+}
+function esc1(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+/* =============================== 渲染 =============================== */
+function chairs(){
+  var out = ['me'];
+  for (var i = 0; i < S.n - 1; i++) out.push('s' + i);
+  return out;
+}
+function playerOf(key){
+  if (key === 'me'){
+    return { n:'\u5f20\u4e09', c: PALETTES[S.me.ci || 0] || PALETTES[0], pat:S.me.pat, photo:S.me.photo };
+  }
+  var p = POOL[parseInt(key.slice(1), 10) % POOL.length];
+  return { n:p.n, c:p.c, pat:p.pat, photo:p.photo };
+}
+function idxChar(i){ return '\u2460\u2461\u2462\u2463'[i] || '\u2022'; }
+
+function seatHTML(key, pos, opts){
+  var p = playerOf(key);
+  var av = opts.av || 60, fs = opts.fs || 17;
+  var s = opts.score || 0;
+  var cls = 'seat' + (opts.me ? ' me' : '') + (opts.out ? ' dim' : '') + (opts.win ? ' win' : '');
+  var scCls = s > 0 ? 'pos' : (s < 0 ? 'neg' : 'zero');
+  var bdg = '';
+  if (opts.out) bdg = '<div class="bdg out">\u51fa</div>';
+  else if (opts.st === 'ok') bdg = '<div class="bdg ok">\u2713</div>';
+  else if (opts.st === 'wait') bdg = '<div class="bdg wait">\u2026</div>';
+  var avCls = 'av p' + (p.pat == null ? 0 : p.pat) + (p.photo ? ' has-photo' : '') + (opts.sel ? ' sel' : '');
+  /* 到两边更近的那一侧还剩多少，全部给昵称框用（左右各留 8 设计px 呼吸） */
+  var nmw = Math.round(Math.max(72, Math.min(132, (Math.min(pos.x, opts.W - pos.x) - 8) * 2)));
+  var dl = '';
+  if (opts.dl){
+    dl = '<div class="dl ' + (opts.dl > 0 ? 'p' : 'n') + (pos.x > opts.W - 150 ? ' lft' : '') + '">'
+      + (opts.dl > 0 ? '+' : '') + opts.dl + '</div>';
+  }
+  return '<div class="' + cls + '" data-seat="' + key + '" style="left:' + pos.x + 'px;top:' + pos.y + 'px;'
+    + '--av:' + av + 'px;--fs:' + fs + 'px;--nmw:' + nmw + 'px;--c1:' + p.c[0] + ';--c2:' + p.c[1] + '">'
+    + (opts.win ? '<div class="crown">\ud83d\udc51</div>' : '')
+    + (opts.out ? '<div class="out-tag">\u5df2\u51fa\u5c40</div>' : '')
+    + (opts.me && !opts.noTag ? '<div class="you">\u4f60</div>' : '')
+    + '<div class="' + avCls + '">' + avInner(p, bdg) + '</div>'
+    + '<div class="nm">' + p.n + '</div>'
+    /* 准备态：座位下面挂「已准备 / 等待」，不是分数 —— 房里还没有分数 */
+    + (opts.rdy === undefined
+        ? '<div class="sc ' + scCls + '">' + (s > 0 ? '+' : '') + s + '</div>'
+        : '<div class="rdy' + (opts.rdy ? ' on' : '') + '">' + (opts.rdy ? '\u5df2\u51c6\u5907' : '\u7b49\u5f85') + '</div>')
+    + dl + '</div>';
+}
+
+/* 表情/短语统一取值器：'e3' → 第 4 张绿球，'p2' → 第 3 条短语。
+ * 气泡、飞行、面板三处共用它，否则表情在这三个位置上会长得不一样。 */
+function emoTag(v, size){
+  if (!v) return '';
+  if (v.charAt(0) === 'e'){
+    return '<span class="ev" style="width:' + size + 'px;height:' + size + 'px">'
+      + emoImg(parseInt(v.slice(1), 10) || 0) + '</span>';
+  }
+  if (v.charAt(0) === 'p'){
+    var t = PHRASES[parseInt(v.slice(1), 10)] || '';
+    return '<span class="ptx" style="font-size:' + Math.round(size * 0.4) + 'px">' + t + '</span>';
+  }
+  return '<span class="ptx">' + v + '</span>';
+}
+
+/* 气泡的几何是唯一真相：气泡自己、飞行落点都读它。
+ * 上一版飞行落点是「头像中心」，气泡却在头像右侧 —— 飞到地方再跳一下，很突兀。 */
+function bubBox(pos, av, W, v){
+  av = av || 76;
+  var gx = av * 0.5 + 8;                    /* 头像半径 + 8 设计px 的呼吸 */
+  if (v.charAt(0) === 'p'){
+    var txt = PHRASES[parseInt(v.slice(1), 10)] || '';
+    var fs = Math.round(av * 0.34);
+    var w = Math.min(W - 24, Math.round(txt.length * fs * 1.02 + 44));
+    var hh = Math.round(fs * 1.95);
+    var lft = pos.x + gx + w > W - 10;
+    return { phr:true, lft:lft, fs:fs, w:w, h:hh,
+      x: lft ? pos.x - gx - w : pos.x + gx,
+      y: pos.y - av * 0.5 - hh + 10 };
+  }
+  var size = Math.round(av * 1.42);         /* 表情比头像大一圈，参考图是这个比例 */
+  var lft2 = pos.x + gx + size > W - 6;
+  return { phr:false, lft:lft2, w:size, h:size,
+    x: lft2 ? pos.x - gx - size : pos.x + gx,
+    y: pos.y - size * 0.72 };
+}
+
+/* 气泡本体。at 传 {x:0,y:0} 时是给飞行层当内容用的（外层负责位移）。 */
+function bubMarkup(b, v, at){
+  var x = at ? at.x : b.x, y = at ? at.y : b.y;
+  if (b.phr){
+    var txt = PHRASES[parseInt(v.slice(1), 10)] || '';
+    return '<div class="bub phr' + (b.lft ? ' lft' : '') + '" style="left:' + x + 'px;top:' + y
+      + 'px;width:' + b.w + 'px;height:' + b.h + 'px;font-size:' + b.fs + 'px">' + esc1(txt) + '</div>';
+  }
+  return '<div class="bub face' + (b.lft ? ' lft' : '') + '" style="left:' + x + 'px;top:' + y
+    + 'px;width:' + b.w + 'px;height:' + b.h + 'px">'
+    + emoImg(parseInt(v.slice(1), 10) || 0) + '</div>';
+}
+
+function bubbleHTML(key, pos, av, W){
+  var v = S.bubble[key];
+  if (!v) return '';
+  return bubMarkup(bubBox(pos, av, W, v), v);
+}
+
+function plaqueHTML(SC, g){
+  var grp = (GROUPS[S.round] || [])[S.step] || { t:'' };
+  var meta = '<div class="pl-meta"><span>\u7b2c <b>' + (SC.round || 1) + '</b> \u8f6e</span><i></i>'
+    + '<span>\u623f\u53f7 <b>4821</b></span>';
+  if (SC.kind !== 'break' && SC.kind !== 'final' && grp.t){
+    meta += '<i></i><span>' + idxChar(SC.step) + ' <b>' + grp.t + '</b></span>';
+  }
+  meta += '</div>';
+
+  var phase, extra = '';
+  if (SC.kind === 'divide'){
+    var done = S.n - 2, dots = '';
+    for (var i = 0; i < S.n; i++) dots += '<i class="dot' + (i < done ? ' on' : '') + '"></i>';
+    phase = '\u5206\u724c\u4e2d';
+    extra = '<div class="pl-timer">\u5269 42s</div>'
+      + '<div class="pl-prog"><span>\u5df2\u63d0\u4ea4 ' + done + '/' + S.n + '</span><span class="dots">' + dots + '</span></div>'
+      + (S.n === 2 ? duelHTML(SC) : '<div class="pl-hint">\u628a 6 \u5f20\u724c\u62d6\u8fdb\u4e0b\u65b9\u7684\u7ec4\u91cc</div>');
+  } else if (SC.kind === 'reveal'){
+    phase = '\u63ed\u724c\u4e2d';
+    extra = '<div class="pl-hint">\u672c\u7ec4\u5148\u7ed3\u7b97 \u00b7 \u4e0d\u7b49\u6574\u8f6e\u8d70\u5b8c</div>';
+  } else if (SC.kind === 'settle'){
+    var w = playerOf(SC.res.winner);
+    phase = w.n + ' \u8d62';
+    extra = '<div class="pl-win">' + winLine(SC.res) + '</div>'
+      + (SC.busts && SC.busts.length
+        ? '<div class="pl-bust">' + SC.busts.map(function(k){ return playerOf(k).n; }).join(' / ') + ' \u89c1\u5e95 \u51fa\u5c40</div>'
+        : '')
+      + '<div class="pl-timer">\u4e0b\u4e00\u7ec4 \u00b7 3s</div>';
+  } else if (SC.kind === 'break'){
+    phase = '\u7b2c\u4e00\u8f6e\u7ed3\u675f';
+    extra = '<div class="pl-hint">\u5206\u6570\u5ef6\u7eed \u00b7 3s \u540e\u53d1\u7b2c\u4e8c\u8f6e\u724c</div>';
+  } else {
+    phase = '\u672c\u5c40\u7ed3\u675f';
+    extra = '';
+  }
+  return '<div class="plaque' + (S.n === 2 && SC.kind === 'divide' ? ' duel' : '') + '" style="left:' + g.plaque.x + 'px;top:' + g.plaque.y + 'px">'
+    + meta + '<div class="pl-phase">' + phase + '</div>' + extra + '</div>';
+}
+function winLine(res){
+  var w = res.entries[0];
+  return w.r.label + ' \u00b7 \u6bcf\u5bb6 ' + res.per + ' \u5206';
+}
+function duelHTML(SC){
+  var mine = (SC.scores && SC.scores.me) || 0;
+  var op = playerOf('s0'), opS = (SC.scores && SC.scores.s0) || 0;
+  var gap = Math.abs(mine - opS);
+  var sg = function(v){ return (v > 0 ? '+' : '') + v; };
+  var cl = function(v){ return v > 0 ? 'up' : (v < 0 ? 'dn' : 'eq'); };
+  return '<div class="pl-duel">'
+    + '<b class="' + cl(mine) + '">\u4f60 ' + sg(mine) + '</b>'
+    + '<span>\u5206\u5dee ' + gap + '</span>'
+    + '<b class="' + cl(opS) + '">' + sg(opS) + ' ' + op.n + '</b></div>';
+}
+
+/* 表情条已删（用户要求去掉「谁发谁」那串），这里只留组带渲染 */
+function bandHTML(g, blank){
+  var list = GROUPS[S.round] || [];
+  var mine = blank ? [] : myHands(S.round);
+  var out = '';
+  list.forEach(function(grp, idx){
+    var y = g.band.start + idx * (g.band.h + g.band.gap);
+    var cards = mine[idx] || [];
+    var availW = g.band.w - 30 - g.band.meta - 10;
+    var baseW = Math.round((g.band.h - 20) * (144/202));
+    var gapx = 6;
+    var w = Math.min(baseW, Math.floor((availW - (grp.n-1)*gapx) / grp.n));
+    var h = Math.round(w * (202/144));
+    var inner = '';
+    for (var i = 0; i < grp.n; i++){
+      if (cards[i]) inner += cardEl(cards[i][0], cards[i][1], w, h);
+      else inner += '<div class="slot-empty" style="--w:' + w + 'px;--h:' + h + 'px"></div>';
+    }
+    /* 已经结算过的组打勾：逐组结算之后，「这一组比完了」必须能一眼看出来 */
+    var settled = settledStep(S.round, idx);
+    var active = idx === S.step;
+    out += '<div class="band' + (active ? ' active' : '') + '" style="left:' + g.band.x + 'px;top:' + y + 'px;'
+      + 'width:' + g.band.w + 'px;height:' + g.band.h + 'px;--sc:' + grp.c + '">'
+      + '<div class="cards">' + inner + '</div>'
+      + '<div class="meta"><div class="t"><em>' + idxChar(idx) + '</em>' + grp.t
+      + (settled ? ' <span style="color:#7FE0A8;font-size:19px">\u2713</span>' : '') + '</div>'
+      + (g.band.h >= 150 ? '<div class="s">' + grp.hint + '</div>' : '')
+      + '<div class="c">' + cards.length + '/' + grp.n + '</div></div></div>';
+  });
+  return out;
+}
+function myHands(round){
+  return (GROUPS[round] || []).map(function(grp){
+    var m = (DEAL[round] || {})[grp.k] || {};
+    return m.me || [];
+  });
+}
+/* 当前场景之前，这一轮已经结算到第几组 */
+function settledStep(round, idx){
+  var SC = sceneNow();
+  if (!SC) return false;
+  if (SC.round !== round) return round < SC.round;
+  return idx < (SC.step || 0) || (SC.kind === 'break' || SC.kind === 'final');
+}
+
+/* 结算条：一组一行，按名次排。赢家金底、行尾是本组得失。
+ * 为什么不用弹窗：一局要结算 3~5 次，弹窗会把节奏切碎，而且会盖住刚翻开的牌。 */
+function sstripHTML(SC, g){
+  var res = SC.res;
+  if (!res) return '';
+  var n = res.entries.length;
+  /* 行高必须把「内边距 + 标题 + 页脚 + 行间距」一起预留掉。
+   * 旧式 (tray.h-74)/n 只留了内边距，5 人局横屏实测行内容 414 > 列表 356，
+   * 第 5 名被 .list 的 overflow:hidden 直接吃掉 —— 页面级越界检查看不出来。
+   * reserve 取 112 而不是 104：104 时横屏 5 人实测 listH 356 / rowsH 359，
+   * 第 5 行副标题「已提交 · 已结算」被裁掉半截，而断言容差恰好是 3px，一直判绿。 */
+  var reserve = 112, gap2 = 6;
+  var rh = Math.max(52, Math.min(96, Math.floor((g.tray.h - reserve - (n - 1) * gap2) / n)));
+  var mcw = Math.max(20, Math.min(38, Math.floor((g.tray.w - 420) / 5)));
+  var mch = Math.round(mcw * 202/144);
+  var rows = res.entries.map(function(e, i){
+    var p = playerOf(e.k), isself = e.k === 'me';
+    var dl = (SC.kind === 'settle') ? (res.delta[e.k] || 0) : null;
+    var dlTxt = (dl == null) ? '\u5f85\u7ed3\u7b97' : ((dl > 0 ? '+' : '') + dl);
+    var dlCls = (dl == null) ? 'z' : (dl > 0 ? 'p' : 'n');
+    var mini = e.cards.map(function(c){
+      return cardEl(c[0], c[1], mcw, mch);
+    }).join('');
+    /* 特殊牌型的橙色标签只贴赢家那一行。
+     * 一组里可能同时有豹子、或者牛牛 + 两个五花牛 —— 那些是「这组有看头」，
+     * 但特写动画只属于赢家；标签跟着动画走，才不会出现「动画没放却有红标」。 */
+    /* 特殊牌型的橙色标签只贴赢家那一行，且**直接复用 res.fx** —— 也就是「这一组会不会放特写」。
+     * 旧写法自己拼条件 `t>=10 || t===6 || jokerWin`，漏了牛牛 type=9，于是牛牛有动画却没标签；
+     * 而 t===6 又不看 mode，斗牛牛7 会误挂标。改成读 fx 之后，「标签跟着动画走」才是构造上成立的。 */
+    var spec = i === 0 && !!res.fx;
+    /* data-p 是给分数 e2e 用的定位锚点：结算条按名次排，DOM 位置和玩家 key 没有对应关系，
+     * 靠昵称文本反查会在「同名玩家 / 昵称里带 · 你」时出错。不影响视觉。 */
+    return '<div class="r' + (i === 0 ? ' win' : '') + '" data-p="' + e.k + '">'
+      + '<div class="rk">' + (i + 1) + '</div>'
+      + '<div class="avs p' + (p.pat == null ? 0 : p.pat) + '" style="--c1:' + p.c[0] + ';--c2:' + p.c[1] + '">'
+      + (p.photo ? '<img src="' + PHOTO_SVG + '" alt="">' : esc1(p.n.slice(0,1))) + '</div>'
+      + '<div class="who"><b>' + p.n + (isself ? ' \u00b7 \u4f60' : '') + '</b><span>'
+      + (SC.busts && SC.busts.indexOf(e.k) >= 0 ? '\u89c1\u5e95 \u51fa\u5c40' : '\u5df2\u63d0\u4ea4 \u00b7 \u5df2\u7ed3\u7b97') + '</span></div>'
+      + '<div class="ty' + (spec ? ' spec' : '') + '">' + e.r.label + '</div>'
+      + '<div class="mini">' + mini + '</div>'
+      + '<div class="dl ' + dlCls + '">' + dlTxt + '</div></div>';
+  }).join('');
+  var note = '';
+  if (res.mode === 'piaosanye'){
+    var leo = 0; res.entries.forEach(function(e){ if (e.r.t === Engine.PSY_TYPE.LEOPARD) leo++; });
+    note = '\u8c79\u5b50 ' + leo + ' \u4e2a \u00b7 \u57fa\u7840 1 + ' + leo + ' = \u6bcf\u5bb6 ' + res.per + ' \u5206';
+  } else if (res.mode === 'douniu'){
+    note = '\u4e94\u82b1\u725b 4 / \u725b\u725b 3 / \u725b8-9 2 / \u725b1-7 1\uff1b\u6ca1\u725b\u989d\u5916\u4ed8 5 \u5206';
+  } else if (res.mode === 'tenhalf'){
+    note = '\u6b63\u597d 10.5 \u6536\u53cc\u500d \u00b7 \u7206\u724c\u5224\u8d1f';
+  } else {
+    note = '\u5927\u738b\u6700\u5927 \u00b7 \u540c\u70b9\u6bd4\u82b1\u8272';
+  }
+  var ft = '<div class="ft"><span>' + note + '</span><span class="sp" style="flex:1"></span>'
+    + '<span' + (SC.busts && SC.busts.length ? ' class="warn"' : '') + '>'
+    + (SC.kind === 'reveal' ? '\u63ed\u724c\u4e2d\u2026' : '\u4e0b\u4e00\u7ec4 3s \u540e') + '</span></div>';
+  return '<div class="sstrip" style="left:' + g.tray.x + 'px;top:' + g.tray.y + 'px;width:' + g.tray.w + 'px;'
+    + 'height:' + g.tray.h + 'px;--rh:' + rh + 'px;--av2:' + Math.min(52, rh - 12) + 'px">'
+    + '<div class="cap"><b>' + idxChar(SC.step) + ' ' + res.grp.t + '</b>'
+    + '<em>' + (SC.kind === 'reveal' ? '\u63ed\u724c' : '\u7ed3\u7b97') + '</em>'
+    + '<span class="sp"></span><span>' + res.entries.length + ' \u4eba\u53c2\u4e0e</span></div>'
+    + '<div class="list">' + rows + '</div>' + ft + '</div>';
+}
+
+function handHTML(g){
+  var cards = myHands(S.round).reduce(function(a, b){ return a.concat(b); }, []);
+  var n = cards.length || 1;
+  var cw = g.hand.cw, ch = g.hand.ch;
+  var step = Math.min(g.hand.step, Math.floor((g.hand.area - cw - 16) / Math.max(1, n - 1)));
+  var out = '';
+  cards.forEach(function(c, i){
+    var t = i - (n-1)/2;
+    var x = g.hand.cx + t*step;
+    var rot = t * 4.0;
+    var y = g.hand.y + Math.abs(t)*3 + t*t*1.1;
+    out += '<div class="hwrap" style="left:' + (x - cw/2) + 'px;top:' + y + 'px;'
+      + 'transform:rotate(' + rot + 'deg);transform-origin:50% 120%">'
+      + cardEl(c[0], c[1], cw, ch) + '</div>';
+  });
+  return out;
+}
+
+/* 表情入口在两种 phase 里长得一模一样，抽出来免得两处走样 */
+function emoBtnHTML(g){
+  return '<button class="btn btn-ghost" data-feltemo="1" style="width:' + Math.round(g.act.h * 0.98) + 'px;height:100%;'
+    + 'border-radius:14px;position:relative;flex:0 0 auto" aria-label="\u8868\u60c5">'
+    + '<svg viewBox="0 0 24 24" width="62%" height="62%">'
+    + '<path d="M3.2 5.6A2.6 2.6 0 0 1 5.8 3h10.4a2.6 2.6 0 0 1 2.6 2.6v6.8a2.6 2.6 0 0 1-2.6 2.6H9.4l-4.6 3.9v-3.9h-.6a2.6 2.6 0 0 1-2.6-2.6z" fill="#C7E2FF"/>'
+    + '<path d="M8.4 15h10.4a2.6 2.6 0 0 0 2.6-2.6V7.2" fill="none" stroke="#7FA8CC" stroke-width="1.6" stroke-linecap="round"/>'
+    + '<circle cx="11" cy="8.9" r="1.15" fill="#39536B"/><circle cx="15.4" cy="8.9" r="1.15" fill="#39536B"/></svg>'
+    + '</button>';
+}
+
+function actsHTML(SC, g){
+  var label = '\u63d0\u4ea4 6 \u5f20\u724c', dis = false;
+  if (SC.kind === 'reveal'){ label = '\u63ed\u724c\u4e2d\u2026'; dis = true; }
+  else if (SC.kind === 'settle'){ label = '\u4e0b\u4e00\u7ec4 \u00b7 3s'; }
+  else if (SC.kind === 'break'){ label = '\u53d1\u724c\u4e2d\u2026'; dis = true; }
+  else if (SC.kind === 'final'){ label = '\u518d\u6765\u4e00\u5c40'; }
+  /* 局终的「再来一局」不是立刻发牌：先回准备态（房间），跟真人对局一样等人到齐。
+     这条路径以前是「看结算 → 回房间」，房间页取消后就是回到这张桌子的准备态。 */
+  var again = SC.kind === 'final' ? ' data-again="1"' : '';
+  return '<div class="acts" style="left:' + g.act.x + 'px;top:' + g.act.y + 'px;width:' + g.act.w + 'px;height:' + g.act.h + 'px">'
+    + emoBtnHTML(g)
+    + '<button class="btn btn-primary" ' + (dis ? 'disabled' : '') + again + ' style="flex:1;height:100%;font-size:28px;border-radius:14px">' + label + '</button>'
+    + '<button class="btn btn-ghost" data-leave="1" style="width:150px;height:100%;font-size:22px">\u9000\u51fa</button>'
+    + '</div>';
+}
+
+function flyerHTML(g){
+  if (!S.fly) return '';
+  var f = S.fly;
+  var b = { phr:f.phr, lft:false, w:f.w, h:f.h, fs:f.fs, x:0, y:0 };
+  /* 飞行体就是「气泡本体 + 位移外壳」：起点在自己头像中心、终点正好是气泡矩形。
+   * 落在气泡位置后 470ms 换成真气泡，两者同名同尺寸，看不出切换。 */
+  return '<div class="flyer" style="left:' + f.bx + 'px;top:' + f.by + 'px;width:' + f.w + 'px;height:' + f.h
+    + 'px;--dx:' + (f.sx - f.bx) + 'px;--dy:' + (f.sy - f.by) + 'px">'
+    + bubMarkup(b, f.em, { x:0, y:0 }) + '</div>';
+}
+
+/* 换头像面板：上半是「当前」，中间是预设库，下面是上传入口。 */
+function avpickHTML(g){
+  var cells = '';
+  for (var ci = 0; ci < PALETTES.length; ci++){
+    for (var p = 0; p < 8; p++){
+      var on = (S.me.pat === p && S.me.ci === ci && !S.me.photo);
+      cells += '<div class="cell' + (on ? ' on' : '') + ' p' + p + '" data-pick="' + p + '-' + ci + '"'
+        + ' style="--c1:' + PALETTES[ci][0] + ';--c2:' + PALETTES[ci][1] + '">'
+        + '\u4f60'.slice(0, 1) + '</div>';
+    }
+  }
+  var cur = S.me.photo
+    ? '<div class="big"><img src="' + PHOTO_SVG + '" alt=""></div>'
+    : '<div class="big p' + S.me.pat + '" style="--c1:' + PALETTES[S.me.ci||0][0] + ';--c2:' + PALETTES[S.me.ci||0][1] + '">\u4f60</div>';
+  return '<div class="scrim" data-close="1"></div>'
+    + '<div class="avpick" style="width:' + Math.min(640, g.W*0.82) + 'px">'
+    + '<div class="ttl"><b>\u6362\u5934\u50cf</b><button class="x" data-close="1">\u2715</button></div>'
+    + '<div class="cur">' + cur
+    + '<div class="txt"><b>' + (S.me.photo ? '\u6b63\u5728\u4f7f\u7528\u4f60\u4e0a\u4f20\u7684\u7167\u7247' : '\u9884\u8bbe\u5934\u50cf \u00b7 \u7b2c ' + (S.me.pat + 1) + ' \u6b3e') + '</b>'
+    + '\u5934\u50cf\u53ea\u5728\u724c\u684c\u4e0e\u623f\u95f4\u91cc\u51fa\u73b0\uff0c\u6392\u884c\u699c\u4ecd\u7136\u53ea\u770b\u6635\u79f0\u3002</div></div>'
+    + '<div class="sec">\u9884\u8bbe \u00b7 8 \u79cd\u5e95\u7eb9 \u00d7 6 \u7ec4\u914d\u8272</div>'
+    + '<div class="grid">' + cells + '</div>'
+    + '<div class="up" data-upload="1"><div class="ic">\u2191</div>'
+    + '<div>\u4ece\u76f8\u518c\u9009\u62e9\u7167\u7247<small>\u4f1a\u81ea\u52a8\u88c1\u6210\u5706\u5f62\u3001\u538b\u5230 256\u00d7256\uff08\u7ea6 30KB\uff09</small></div></div>'
+    + '<div class="foot"><button class="no" data-close="1">\u53d6\u6d88</button><button class="ok" data-close="1">\u5b8c\u6210</button></div>'
+    + '</div>';
+}
+
+/* ======================= 统一面板：表情 / 短语 / 个人信息 =======================
+ * 三条入口，一个组件：
+ *   操作栏的对话气泡按钮 → 给自己发（tab=表情）
+ *   点别人头像          → 定向发给他（tab=表情，可以再切「个人信息」）
+ *   点自己头像          → 直接看自己的战绩（tab=个人信息）
+ * 位置统一贴着被点的那个人：先右、再左、再下、再上，取第一个放得下的方向。
+ * 谁是对象，靠位置说，不靠文案说 —— 所以标题只有 表情 / 短语 / 个人信息 三个字。 */
+var TABS = [['emo', '\u8868\u60c5'], ['phr', '\u77ed\u8bed'], ['stat', '\u4e2a\u4eba\u4fe1\u606f']];
+var TAB_NAME = { emo:'\u8868\u60c5', phr:'\u77ed\u8bed', stat:'\u4e2a\u4eba\u4fe1\u606f' };
+
+function anchorOf(g, key){
+  if (key === 'me') return { x:g.me.x, y:g.me.y, r:44 };
+  var angles = oppAngles(S.n - 1, g.ring);
+  var i = parseInt(String(key).replace('s', ''), 10) || 0;
+  var p = onRing(g, angles[i] || 270);
+  return { x:p.x, y:p.y, r:48 };
+}
+
+function panelBox(g){
+  var tab = (S.panel && S.panel.tab) || 'emo';
+  var w = g.compact ? Math.min(560, g.W - 24) : Math.min(620, g.W - 40);
+  var bodyW = w - 96;                       /* 96 = 右侧竖排 tab */
+  var hdH = 92;
+  var bodyH;
+  if (tab === 'emo'){
+    /* 表情格子是正方形的，行高由列宽决定（aspect-ratio:1），所以格子大小必须和
+     * 排版用的是同一个数 —— 上一版在这里钳到 96，结果列宽 117，第 4 行被滚动区切掉。 */
+    var cell = Math.floor((bodyW - 24 - 30) / 4);
+    var rowsN = Math.ceil(EMO_LIST.length / 4);
+    bodyH = rowsN * cell + (rowsN - 1) * 10 + 28;
+  } else if (tab === 'phr'){
+    bodyH = PHRASES.length * 52 + (PHRASES.length - 1) * 7 + 24;
+  } else {
+    /* 战绩内容比表情多一大截：给足高度，让「最近五场」不用滚就能看完 */
+    bodyH = Math.min(660, Math.round(g.H * 0.70));
+  }
+  var h = Math.min(hdH + bodyH, g.H - 20);
+  return { w:w, h:h, bodyW:bodyW };
+}
+
+function panelPos(g, key, w, h){
+  var a = anchorOf(g, key), gap = 16, P = 8;
+  var cxp = function(x){ return Math.max(P, Math.min(x, g.W - P - w)); };
+  /* 左右优先：面板窄得下来的时候，这才是真正的「头像旁边」。
+   * 竖屏 560 宽的面板在 750 的画布上左右基本放不下（座位环几乎占满），
+   * 所以要接着试「正下方 / 正上方」，并且把面板往头像那一侧靠，而不是机械居中。 */
+  var r = { s:'r', x:a.x + a.r + gap, y:a.y - h/2 };
+  if (r.x + w <= g.W - P && r.y >= P && r.y + h <= g.H - P) return r;
+  var l = { s:'l', x:a.x - a.r - gap - w, y:a.y - h/2 };
+  if (l.x >= P && l.y >= P && l.y + h <= g.H - P) return l;
+
+  var lean = a.x > g.W / 2 ? a.x + a.r - w : a.x - a.r;   /* 贴着头像那一侧对齐 */
+  var d = { s:'d', x:cxp(lean), y:a.y + a.r + gap };
+  if (d.y + h <= g.H - P) return d;
+  var u = { s:'u', x:cxp(lean), y:a.y - a.r - gap - h };
+  if (u.y >= P) return u;
+
+  /* 四个方向都塞不进（横屏 + 个人信息这种高卡片）：
+     靠到**离头像最远的那一侧**，纵向仍然对齐头像。
+     上一版是「横向居中、纵向夹紧」，结果整个人正好盖在被点的那颗头像上 ——
+     「我发给谁 / 我在看谁」这条信息直接没了。靠边至少让头像留在画面里。 */
+  var dockRight = a.x < g.W / 2;
+  return { s:dockRight ? 'r' : 'l',
+    x:dockRight ? (g.W - P - w) : P,
+    y:Math.max(P, Math.min(a.y - h/2, g.H - P - h)) };
+}
+
+function panelHTML(g){
+  if (!S.panel) return '';
+  var key = S.panel.key, tab = S.panel.tab || 'emo';
+  var p = playerOf(key), isSelf = key === 'me';
+  var box = panelBox(g);
+  var pos = panelPos(g, key, box.w, box.h);
+  var main;
+  if (tab === 'stat'){
+    main = '<div class="statb">' + statBody(key, box.bodyW >= 520) + '</div>';
+  } else {
+    var cell = Math.floor((box.bodyW - 24 - 30) / 4);
+    var cells = '';
+    if (tab === 'emo'){
+      EMO_LIST.forEach(function(f, i){
+        cells += '<div class="cell" data-emo="e' + i + '" title="' + f.n + '">' + emoImg(i) + '</div>';
+      });
+    } else {
+      PHRASES.forEach(function(t, i){
+        cells += '<div class="cell ph" data-emo="p' + i + '" style="--ts:21px">' + t + '</div>';
+      });
+    }
+    main = '<div class="grid' + (tab === 'phr' ? ' phr' : '') + '">' + cells + '</div>';
+  }
+  var tabs = TABS.map(function(t){
+    return '<button class="' + (tab === t[0] ? 'on' : '') + '" data-tab="' + t[0] + '">' + t[1] + '</button>';
+  }).join('');
+  return '<div class="tap" data-close="1"></div>'
+    + '<div class="panel" style="left:' + pos.x + 'px;top:' + pos.y + 'px;width:' + box.w + 'px;height:' + box.h + 'px">'
+    + '<div class="hd">'
+    + '<div class="av p' + (p.pat == null ? 0 : p.pat) + '" style="--c1:' + p.c[0] + ';--c2:' + p.c[1] + '">'
+    + (p.photo ? '<img src="' + PHOTO_SVG + '" alt="">' : esc1(p.n.slice(0, 1))) + '</div>'
+    + '<div class="who"><b>' + TAB_NAME[tab] + '</b><span>' + p.n + (isSelf ? ' \u00b7 \u4f60' : '') + '</span></div>'
+    + '<button class="x" data-close="1">\u2715</button></div>'
+    + '<div class="body"><div class="main">' + main + '</div>'
+    + '<div class="tabs">' + tabs + '</div></div></div>';
+}
+
+/* =============================== 战绩页 =============================== */
+/* 参照微乐麻将的「个人信息」：左边 6 项，右边牌风雷达。
+ * 现有的「总局数 / 胜率 / 总得分」保留，补上总胜局、最高连胜、单局最大得分，
+ * 雷达五维是新增的「牌风」——微乐用速度/防守/互动/策略/获胜，我们用同一套词。 */
+function hashOf(s){
+  var h = 7;
+  for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 100000;
+  return h;
+}
+function styleOf(key){
+  var h = hashOf(key);
+  var v = [];
+  for (var i = 0; i < 5; i++){
+    v.push(0.34 + ((h >> (i * 3)) % 62) / 100);
+  }
+  v[4] = Math.min(0.95, v[4] + 0.08);
+  return v;
+}
+function radarSVG(vals){
+  var w = 260, h = 236, cx = w/2, cy = h/2 + 6, R = 82;
+  function pt(i, k){
+    var a = (-90 + i * 72) * Math.PI / 180;
+    return [ (cx + R * k * Math.cos(a)).toFixed(1), (cy + R * k * Math.sin(a)).toFixed(1) ];
+  }
+  function poly(k){
+    var out = [];
+    for (var i = 0; i < 5; i++) out.push(pt(i, k).join(','));
+    return out.join(' ');
+  }
+  var grid = '';
+  [0.25, 0.5, 0.75, 1].forEach(function(k){
+    grid += '<polygon points="' + poly(k) + '" fill="none" stroke="#1B8A6C" stroke-opacity="' + (k === 1 ? 0.42 : 0.16) + '" stroke-width="1"/>';
+  });
+  var axes = '';
+  for (var i = 0; i < 5; i++){
+    var e = pt(i, 1), p0 = pt(i, 1);
+    axes += '<line x1="' + cx + '" y1="' + cy + '" x2="' + p0[0] + '" y2="' + p0[1] + '" stroke="#1B8A6C" stroke-opacity=".14"/>';
+    var lp = pt(i, 1.26), anchor = (i === 0 ? 'middle' : (Math.cos((-90 + i * 72) * Math.PI/180) > 0 ? 'start' : 'end'));
+    axes += '<text x="' + lp[0] + '" y="' + (parseFloat(lp[1]) + 5) + '" text-anchor="' + anchor
+      + '" font-size="15" fill="#4A4F5A">' + STYLE_KEYS[i] + '</text>';
+  }
+  var shape = [];
+  for (var j = 0; j < 5; j++) shape.push(pt(j, vals[j]).join(','));
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '">' + grid + axes
+    + '<polygon points="' + shape.join(' ') + '" fill="#2AA98A" fill-opacity=".30" stroke="#12876B" stroke-width="2"/>'
+    + shape.map(function(s){ var a = s.split(','); return '<circle cx="' + a[0] + '" cy="' + a[1] + '" r="2.6" fill="#0E7A60"/>'; }).join('')
+    + '</svg>';
+}
+/* 战绩内容：六项 KPI + 牌风雷达 + 最近五场。
+ * 只产出「内容」，外壳（标题条 / 关闭 / 右侧 tab）全部由 panelHTML 统一提供；
+ * 也不再自带「发表情」按钮 —— 上面那列 tab 已经能切回表情了，卡里再放一个就是重复。 */
+function statBody(key, wide){
+  var h = hashOf(key);
+  var total = 160 + h % 300;
+  var wins = Math.round(total * (0.34 + (h % 30) / 100));
+  var net = ((h >> 3) % 2 ? 1 : -1) * (20 + h % 170);
+  var rows = [
+    ['10-30 21:14 \u00b7 \u6597\u725b', '+3'],
+    ['10-30 20:52 \u00b7 \u98d8\u4e09\u53f6', '-1'],
+    ['10-30 20:31 \u00b7 \u5341\u70b9\u534a', '+2'],
+    ['10-29 22:08 \u00b7 \u6597\u725b', '+5'],
+    ['10-29 21:47 \u00b7 \u5224\u5927\u5c0f', '-2']
+  ].map(function(r){
+    var cls = r[1].charAt(0) === '+' ? 'color:#C62828' : 'color:#0E7A4B';
+    return '<div class="row"><span>' + r[0] + '</span><b style="' + cls + ';font-variant-numeric:tabular-nums">' + r[1] + '</b></div>';
+  }).join('');
+  var kpi = [
+    [total, '\u603b\u5c40\u6570', '#3A1D00'],
+    [wins, '\u603b\u80dc\u5c40', '#3A1D00'],
+    [Math.round(wins / total * 100) + '%', '\u603b\u80dc\u7387', '#3A1D00'],
+    [4 + h % 9, '\u6700\u9ad8\u8fde\u80dc', '#3A1D00'],
+    [40 + h % 90, '\u5355\u5c40\u6700\u9ad8', '#3A1D00'],
+    [(net > 0 ? '+' : '') + net, '\u603b\u5f97\u5206', net >= 0 ? '#C62828' : '#0E7A4B']
+  ].map(function(k){
+    return '<div class="kpi"><b style="color:' + k[2] + '">' + k[0] + '</b><span>' + k[1] + '</span></div>';
+  }).join('');
+  var k6 = '<div class="k6">' + kpi + '</div>';
+  var radar = '<div class="radar"><div class="cap2">\u724c \u98ce</div>' + radarSVG(styleOf(key)) + '</div>';
+  /* 宽画布（横屏 / 桌面）把 KPI 与雷达并排：竖着摞会高到必须滚动才能看全最近五场 */
+  return (wide ? '<div class="top">' + k6 + radar + '</div>' : k6 + radar)
+    + '<div class="recent"><div class="row"><i>\u6700\u8fd1\u4e94\u573a</i><i>\u51c0\u80dc</i></div>' + rows + '</div>';
+}
+
+/* =============================== 牌型特效 =============================== */
+/* 四种要「放特写」的牌型。设计取向：一眼能认出牌型 + 一句为什么赢，
+ * 不做长时间的镜头运动（一局要放 3~5 次，超过 1.6 秒就会烦）。 */
+function fxHTML(g){
+  var f = S.fx;
+  if (!f) return '';
+  var n = f.cards.length;
+  var big = n >= 5 ? 84 : (n === 3 ? 94 : 104);
+  var cw = big, ch = Math.round(big * 202/144);
+  var mk = f.mk || [];
+  var cards = f.cards.map(function(c, i){
+    var badge = '';
+    if (f.kind === 'nn' && mk.indexOf(i) >= 0) badge = '<span class="mkb" style="left:50%;top:-10px">10</span>';
+    return '<div style="position:relative;--d:' + (i * 0.09).toFixed(2) + 's">'
+      + cardEl(c[0], c[1], cw, ch, mk.indexOf(i) >= 0 ? 'mk' : '') + badge + '</div>';
+  }).join('');
+  var pts = '';
+  for (var i = 0; i < 14; i++){
+    pts += '<i class="pt" style="--a:' + (i * (360/14)).toFixed(0) + 'deg;--r:' + (170 + (i % 4) * 45) + 'px;--d:' + ((i % 5) * 0.05).toFixed(2) + 's;--pc:'
+      + (f.kind === 'wh' ? (i % 2 ? '#D9A6FF' : '#FFD978') : (f.kind === 'bz' ? (i % 2 ? '#FF8A6A' : '#FFD978') : (i % 2 ? '#FFE08A' : '#FFC15C'))) + '"></i>';
+  }
+  var waves = '';
+  [0, 0.14, 0.28].forEach(function(d){ waves += '<i class="wave" style="--d:' + d + 's"></i>'; });
+  return '<div class="fx ' + f.kind + '" style="left:' + g.felt.x + 'px;top:' + g.felt.y + 'px;width:' + g.felt.w + 'px;height:' + g.felt.h + 'px"><div class="core">'
+    + '<div class="halo"></div>' + waves + pts
+    + '<div class="cards">' + cards + '</div>'
+    + '<div class="lbl">' + f.label + '</div>'
+    + '</div></div>';
+}
+
+/* 轮次交替卡：一局中间唯一一个「停一下」的位置。
+ * 它要回答两件事：本轮各家净得多少、下一轮什么时候发牌。 */
+function brkHTML(SC, g){
+  if (SC.kind !== 'break') return '';
+  var keys = chairs();
+  var rows = keys.map(function(k){
+    var d = ((SC.scores || {})[k] || 0) - ((SC.start || {})[k] || 0);
+    return '<div class="rr"><span>' + playerOf(k).n + (k === 'me' ? ' \u00b7 \u4f60' : '') + '</span>'
+      + '<b class="' + (d > 0 ? 'p' : (d < 0 ? 'n' : '')) + '">' + (d > 0 ? '+' : '') + d + '</b></div>';
+  }).join('');
+  /* 下一轮怎么开始：把第二轮的组顺序直接摆出来，玩家不用猜。
+   * 注意用 SC.round 而不是 S.round —— 停在 break 这一幕时全局轮次已经翻到 2 了。
+   * 箭头必须是 <b> 的兄弟节点，塞进 <b> 里会让「② 斗牛」粘成一格。 */
+  var nextRound = (SC.round || 1) + 1;
+  var nxList = GROUPS[nextRound] || [];
+  var nx = nxList.length
+    ? '<div class="nx"><span class="lbl">\u4e0b\u4e00\u8f6e</span><span class="g">'
+      + nxList.map(function(g2, i){
+          return (i ? '<i>\u2192</i>' : '') + '<b>' + idxChar(i) + g2.t + '</b>';
+        }).join('')
+      + '</span></div>'
+    : '';
+  return '<div class="brk" style="left:' + (g.tray.x + g.tray.w/2) + 'px;top:' + (g.tray.y + g.tray.h/2) + 'px">'
+    + '<div class="t">\u7b2c\u4e00\u8f6e <em>\u5df2\u7ed3\u7b97</em></div>'
+    + '<div class="rows">' + rows + '</div>'
+    + nx
+    + '<div class="next">\u5206\u6570\u5ef6\u7eed \u00b7 3s \u540e\u53d1\u7b2c\u4e8c\u8f6e\u724c</div></div>';
+}
+
+/* 局终卡 */
+function finHTML(SC, g){
+  if (SC.kind !== 'final') return '';
+  var keys = chairs().slice().sort(function(a, b){
+    return ((SC.scores || {})[b] || 0) - ((SC.scores || {})[a] || 0);
+  });
+  var rows = keys.map(function(k, i){
+    var s = (SC.scores || {})[k] || 0;
+    return '<div class="rr"><span>' + (i + 1) + '. ' + playerOf(k).n + (k === 'me' ? ' \u00b7 \u4f60' : '')
+      + (SC.out && SC.out[k] ? ' <span style="color:#FFB4A8;font-size:17px">\u5df2\u51fa\u5c40</span>' : '') + '</span>'
+      + '<b class="' + (s > 0 ? 'p' : (s < 0 ? 'n' : '')) + '">' + (s > 0 ? '+' : '') + s + '</b></div>';
+  }).join('');
+  var t = SC.reason === 'bust' ? '\u6709\u4eba\u89c1\u5e95 \u00b7 \u672c\u5c40\u7ed3\u675f'
+    : (SC.reason === 'last' ? '\u53ea\u5269\u4e00\u4eba \u00b7 \u672c\u5c40\u7ed3\u675f' : '\u4e24\u8f6e\u6253\u5b8c \u00b7 \u672c\u5c40\u7ed3\u675f');
+  return '<div class="brk" style="left:' + (g.tray.x + g.tray.w/2) + 'px;top:' + (g.tray.y + g.tray.h/2) + 'px">'
+    + '<div class="t">' + t + '</div><div class="rows">' + rows + '</div>'
+    + '<div class="next">\u70b9\u300c\u518d\u6765\u4e00\u5c40\u300d\u56de\u5230\u51c6\u5907 \u00b7 \u5206\u6570\u4ece\u96f6\u5f00\u59cb</div></div>';
+}
+
+/* =============================== 逐组结算 =============================== */
+/* 一局要结算 3 次（第一轮 1+2+3 三组）或 5 次（两轮）。
+ * 每比完一组立刻结算 —— 这是这次改规则的核心：比大小已经把人打到 0 分，
+ * 就不能再让他靠后面两组翻回来。 */
+function ensureHands(round, idx, alive){
+  var mode = GROUPS[round][idx].k;
+  DEAL[round][mode] = DEAL[round][mode] || {};
+  var hands = DEAL[round][mode];
+  var used = {};
+  Object.keys(DEAL[round]).forEach(function(m){
+    Object.keys(DEAL[round][m] || {}).forEach(function(k){
+      (DEAL[round][m][k] || []).forEach(function(c){ used[c[0] + c[1]] = 1; });
+    });
+  });
+  var need = GROUPS[round][idx].n;
+  alive.forEach(function(k){
+    if (hands[k] && hands[k].length === need) return;
+    var pick = [];
+    for (var r = 2; r <= 14 && pick.length < need; r++){
+      ['diamond','club','heart','spade'].forEach(function(s){
+        if (pick.length >= need) return;
+        var id = r + s;
+        if (used[id]) return;
+        used[id] = 1; pick.push([r, s]);
+      });
+    }
+    hands[k] = pick;
+  });
+  return hands;
+}
+
+function runGroup(round, idx, alive){
+  var grp = GROUPS[round][idx], mode = grp.k;
+  var hands = ensureHands(round, idx, alive);
+  var cmp = Engine[CMP[mode]];
+  var entries = alive.map(function(k){
+    var cards = hands[k], eh = ecards(cards);
+    return { k:k, cards:cards, eh:eh, r:evalHand(mode, cards, eh) };
+  }).sort(function(a, b){ return cmp(b.eh, a.eh); });   /* 名次：降序，第一名在前 */
+
+  /* 胜负和分数都交给引擎，包括「赢家有牛才罚没牛」这类前提 —— 这里一行规则都不写。
+   * 上一版在这里手写了 per / delta / 罚分三件事，结果全桌没牛时多扣 5 分（31% 的组）。 */
+  var st = Engine.settleGroup(mode, entries.map(function(e){
+    return { id:e.k, hand:e.eh };
+  }));
+  /* 排序和 settleGroup 用的是同一个比较器，本该一致；真不一致时以 settleGroup 为准，
+   * 免得「赢家」和「-0 分」挂在不同人身上。 */
+  var winEntry = entries.filter(function(e){ return e.k === st.winnerId; })[0] || entries[0];
+  return {
+    mode:mode, grp:grp, step:idx, entries:entries,
+    winner:st.winnerId, per:st.winPoints, delta:st.deltas,
+    tieIds:st.tieIds, fx:specialOf(mode, winEntry)
+  };
+}
+
+/* 四种「要有特写」的牌型。
+ * 只对**赢家**调用 —— 同一组里可能同时出现两个五花牛、或者豹子 + 十点半，
+ * 但特写是「赢的那一手」的奖励，不是「这组里有特殊牌」的通知；
+ * 一局要结算 3~5 次，每次都放两三个特写就没法看了。
+ * 牌型名自带信息量，所以不再跟一句解释（「全手 JQK · 每家收 4 分」这类）。
+ *
+ * 判断依据全部来自引擎的牌型编码：豹子读 PSY_TYPE.LEOPARD、牛牛/五花牛读 douNiuType 的 type。
+ * 上一版这里用 `r.t === 6` 这种裸数字，其中「牛牛」写成了 t===9 而当时原型把牛9 也编码成 9，
+ * 于是牛9 赢了会放牛牛特写（随机 800 组里 18.5%）。 */
+function specialOf(mode, e){
+  var r = e.r;
+  if (mode === 'tenhalf' && r.jokerWin)
+    return { kind:'jh', cards:e.cards, label:'10.5', mk:[] };
+  if (mode === 'piaosanye' && r.t === Engine.PSY_TYPE.LEOPARD)
+    return { kind:'bz', cards:e.cards, label:'\u8c79\u5b50', mk:[] };
+  if (mode === 'douniu' && r.t === 9)
+    return { kind:'nn', cards:e.cards, label:'\u725b\u725b', mk:niuTrio(e.cards) };
+  if (mode === 'douniu' && r.t === 10)
+    return { kind:'wh', cards:e.cards, label:'\u4e94\u82b1\u725b', mk:[0,1,2,3,4] };
+  return null;
+}
+
+function buildScenes(){
+  SCENES = [];
+  var list = chairs();
+  var start = S.scen === 'A' ? SCORE_A : SCORE_B;
+  var score = {}, out = {}, alive = [];
+  list.forEach(function(k){ score[k] = start[k] || 12; out[k] = false; alive.push(k); });
+  function snap(o){ return cp(o); }
+
+  SCENES.push({ kind:'divide', round:1, step:0, alive:alive.slice(), scores:snap(score),
+    out:snap(out), busts:[], res:null, start:snap(score) });
+
+  for (var r = 1; r <= 2; r++){
+    var roundStart = snap(score);
+    if (r > 1){
+      /* 第二轮是重新发牌，同样要有一幕「分牌」—— 否则流程从第一轮结算直接跳进第二轮的对比，
+       * 中间那 60 秒选牌在原型里就消失了，节奏会显得莫名快。 */
+      SCENES.push({ kind:'divide', round:r, step:0, alive:alive.slice(), scores:snap(score),
+        out:snap(out), busts:[], res:null, start:roundStart });
+    }
+    for (var i = 0; i < GROUPS[r].length; i++){
+      if (alive.length < 2) break;
+      var res = runGroup(r, i, alive);
+      var before = snap(score);
+      alive.forEach(function(k){ score[k] += res.delta[k]; });
+      var busts = alive.filter(function(k){ return score[k] <= 0; });
+      SCENES.push({ kind:'reveal', round:r, step:i, alive:alive.slice(), scores:before,
+        out:snap(out), busts:[], res:res, start:roundStart });
+      SCENES.push({ kind:'settle', round:r, step:i, alive:alive.slice(), scores:snap(score),
+        out:snap(out), busts:busts, res:res, start:roundStart });
+      if (busts.length){
+        if (S.policy === 'end'){
+          var o2 = snap(out);
+          busts.forEach(function(k){ o2[k] = true; });
+          SCENES.push({ kind:'final', round:r, step:i, alive:alive.slice(), scores:snap(score),
+            out:o2, busts:busts, res:res, reason:'bust', start:roundStart });
+          return;
+        }
+        busts.forEach(function(k){ out[k] = true; });
+        alive = alive.filter(function(k){ return !out[k]; });
+        if (alive.length <= 1){
+          SCENES.push({ kind:'final', round:r, step:i, alive:alive.slice(), scores:snap(score),
+            out:snap(out), busts:busts, res:res, reason:'last', start:roundStart });
+          return;
+        }
+      }
+    }
+    if (r === 1){
+      SCENES.push({ kind:'break', round:1, step:0, alive:alive.slice(), scores:snap(score),
+        out:snap(out), busts:[], res:null, start:roundStart });
+    }
+  }
+  /* ★ 与线上不一致，勿参照（R6 收口，见 docs/v82-implementation-plan.md §8.1）。
+   * 原型这里把「两轮打完」当成「本局结束 · 分数从零开始」，
+   * 而线上只有**见底**才结束一局；没人见底就续打下一把、分数延续。
+   *
+   * 两个原因：
+   *   ① 规则卡写的是「见底：分数 ≤ 0 出局，最后一人胜出」—— 一局由**多把**组成，
+   *      两轮只是一把，一把打完当然不是一局打完；
+   *   ② 两轮清零等于取消「局」这个概念，规则卡那一行就没意义了。
+   *
+   * 保留这个分支只是为了能演示「一局打完长什么样」，不是线上行为。 */
+  SCENES.push({ kind:'final', round:2, step:0, alive:alive.slice(), scores:snap(score),
+    out:snap(out), busts:[], res:null, reason:'end', start:roundStart });
+}
+
+function sceneLabel(SC){
+  var pre = SC.round === 2 ? 'R2 \u00b7 ' : '';
+  var grp = (GROUPS[SC.round] || [])[SC.step] || { t:'' };
+  if (SC.kind === 'divide') return pre + '\u5206\u724c\uff08\u9009 6 \u5f20\uff09';
+  if (SC.kind === 'reveal') return pre + idxChar(SC.step) + ' ' + grp.t + ' \u00b7 \u63ed\u724c';
+  if (SC.kind === 'settle') return pre + idxChar(SC.step) + ' ' + grp.t + ' \u00b7 \u7ed3\u7b97';
+  if (SC.kind === 'break') return '\u8f6e\u6b21\u4ea4\u66ff';
+  return '\u5c40\u7ec8';
+}
+
+/* =============================== 渲染 =============================== */
+function render(){
+  if (!SCENES.length) buildScenes();
+  var SC = sceneNow() || SCENES[0];
+  S.round = SC.kind === 'break' ? 2 : SC.round;
+  S.step = SC.step || 0;
+
+  var g = geo();
+  var design = document.getElementById('design');
+  var dev = document.getElementById('device');
+
+  var availH = Math.max(320, (document.getElementById('stage').clientHeight || window.innerHeight) - 8);
+  var availW = Math.max(320, (document.getElementById('stage').clientWidth || 900) - 8);
+  var k = Math.min(availW / g.W, availH / g.H, 1.0);
+
+  design.style.width = g.W + 'px';
+  design.style.height = g.H + 'px';
+  design.style.transform = 'scale(' + k + ')';
+  dev.style.width = Math.round(g.W * k) + 'px';
+  dev.style.height = Math.round(g.H * k) + 'px';
+
+  /* 准备态：同一张桌子，只是没有牌 */
+  if (S.phase === 'ready'){ renderReady(g); return; }
+
+  var nOpp = S.n - 1;
+  var angles = oppAngles(nOpp, g.ring);
+  var av = curAv(g);
+  var fs = g.compact ? 22 : 21;
+
+  var isSettle = SC.kind === 'settle';
+  var seats = '';
+  angles.forEach(function(deg, i){
+    var key = 's' + i, pos = onRing(g, deg);
+    var outHere = !!(SC.out && SC.out[key]) || (SC.busts || []).indexOf(key) >= 0;
+    seats += seatHTML(key, pos, {
+      av:av, fs:fs, W:g.W, st:'ok',
+      score:(SC.scores || {})[key] || 0,
+      out:outHere,
+      sel:!!S.panel && S.panel.key === key,
+      win:isSettle && !!SC.res && SC.res.winner === key,
+      dl:isSettle && SC.res ? (SC.res.delta[key] || 0) : 0
+    });
+    seats += bubbleHTML(key, pos, av, g.W);
+  });
+  var mePos = { x:g.me.x, y:g.me.y };
+  var meOut = !!(SC.out && SC.out.me) || (SC.busts || []).indexOf('me') >= 0;
+  seats += seatHTML('me', mePos, {
+    me:true, av:av, fs:fs, noTag:true, W:g.W, st:'ok',
+    score:(SC.scores || {}).me || 0,
+    out:meOut,
+    sel:!!S.panel && S.panel.key === 'me',
+    win:isSettle && !!SC.res && SC.res.winner === 'me',
+    dl:isSettle && SC.res ? (SC.res.delta.me || 0) : 0
+  });
+  seats += bubbleHTML('me', mePos, av, g.W);
+
+  var tray;
+  if (SC.kind === 'reveal' || SC.kind === 'settle') tray = sstripHTML(SC, g);
+  else if (SC.kind === 'break' || SC.kind === 'final') tray = '';
+  else tray = bandHTML(g, false);
+
+  var hand = SC.kind === 'break' ? '' : handHTML(g);
+  var feltShake = S.fx && (S.fx.kind === 'bz' || S.fx.kind === 'wh') ? ' shake' : '';
+
+  var html = ''
+    + '<div class="felt' + feltShake + '" style="left:' + g.felt.x + 'px;top:' + g.felt.y + 'px;width:' + g.felt.w + 'px;height:' + g.felt.h + 'px"><div class="felt-in"></div></div>'
+    + (S.fx ? '' : plaqueHTML(SC, g))
+    + seats
+    + flyerHTML(g)
+    + tray
+    + hand
+    + actsHTML(SC, g)
+    + finHTML(SC, g)
+    + brkHTML(SC, g)
+    + (S.panel ? '' : fxHTML(g));
+
+  if (S.panel) html += panelHTML(g);
+  if (S.pick) html += avpickHTML(g);
+  html += askHTML() + toastHTML(g);
+
+  mount(g, html);
+}
+
+/* 两种 phase 的收尾完全一样：塞进画布 → 量面板高度 → 刷新侧栏账本与场景表 */
+function mount(g, html){
+  document.getElementById('design').innerHTML = html;
+  fitPanel(g);
+  renderLedger(g);
+  renderSceneList();
+}
+
+/* 战绩这一档的高度没法事先算准（雷达是 SVG、KPI 是两行网格、最近五场行数固定但不等于总高），
+ * 所以渲染完量一次真实内容高，再把面板撑到刚好放下 —— 否则最后一条会被滚动区切一半，
+ * 看着像坏了。撑高之后还要重算一次落点（可能撑出画面）。 */
+function fitPanel(g){
+  if (!S.panel || S.panel.tab !== 'stat') return;
+  var el = document.querySelector('.panel');
+  if (!el) return;
+  var body = el.querySelector('.statb');
+  if (!body || !body.children.length) return;
+  /* 不能用 scrollHeight：.statb 是 flex:1 的滚动容器，内容比它矮时 scrollHeight 会等于
+   * clientHeight，量出来永远「刚好装下」，面板就再也收不回去了。
+   * 也不能直接拿 getBoundingClientRect 相加 —— 整块设计稿被 transform:scale(k) 缩过，
+   * 每个子元素都是缩放后的屏幕像素，而 offsetHeight 是设计 px。这里先量出 k 再换算。 */
+  var kids = body.children;
+  var k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+  if (!k) k = 1;
+  var top0 = kids[0].getBoundingClientRect().top;
+  var last = kids[kids.length - 1].getBoundingClientRect();
+  var gap = 12, pad = 28;                                /* 与 .statb 的 gap / padding 对齐 */
+  var contentH = (last.bottom - top0) / k + (kids.length - 1) * gap + pad;
+  var hd = el.offsetHeight - body.clientHeight;           /* 标题条高度（padding 已在 contentH 里） */
+  var h = Math.min(contentH + hd, g.H - 20);
+  if (Math.abs(h - el.offsetHeight) < 2) return;
+  el.style.height = h + 'px';
+  var pos = panelPos(g, S.panel.key, el.offsetWidth, h);
+  el.style.left = pos.x + 'px';
+  el.style.top = pos.y + 'px';
+}
+
+function renderLedger(g){
+  var nGroups = (GROUPS[S.round] || []).length;
+  var bandsH = nGroups*g.band.h + (nGroups-1)*g.band.gap;
+  var avS = AV_SIZES[S.av] || AV_SIZES.m;
+  var avWant = avS[g.compact ? 'por' : (S.mode === 'desktop' ? 'desk' : 'wide')];
+  var avNow = curAv(g);
+  var rows = [
+    ['\u753b\u5e03', g.W + ' \u00d7 ' + g.H],
+    ['\u9876\u680f', '\u5df2\u5220\u9664'],
+    ['\u5706\u684c\u533a', Math.round(g.felt.h) + ''],
+    [nGroups + ' \u7ec4\u6258\u76d8', Math.round(bandsH) + ''],
+    ['\u6258\u76d8\u533a\uff08\u7ed3\u7b97\u6761\uff09', Math.round(g.tray.h) + ''],
+    ['\u624b\u724c\u533a', g.hand.ch + ''],
+    ['\u64cd\u4f5c\u680f', g.act.h + ''],
+    ['\u5934\u50cf\u76f4\u5f84', avNow + (avNow < avWant ? ' \u00b7 \u5df2\u6536\u655b' : '')]
+  ];
+  /* 竖屏是三块纵向叠起来的，可以直接相加；
+   * 横屏 / 桌面是「左桌右盘」两栏，高度相加必然超过 100% —— 那种算法是错的，
+   * 双栏该取两栏里更满的那一栏。 */
+  var ratio = g.compact
+    ? (g.felt.h + bandsH + g.hand.ch + g.act.h) / g.H
+    : Math.max(g.felt.h / g.H, (bandsH + g.hand.ch + g.act.h) / g.H);
+  document.getElementById('ledger').innerHTML =
+    rows.map(function(r){ return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; }).join('')
+    + '<tr class="sum"><td>' + (g.compact ? '\u7eb5\u5411\u5360\u7528' : '\u66f4\u6ee1\u7684\u90a3\u4e00\u680f') + '</td><td>'
+    + Math.round(ratio*100) + '%</td></tr>';
+}
+
+/* =============================== 流程播放 =============================== */
+/* 「进入下一次比牌」的节奏表。这三个数字是本轮唯一的产品判断之一：
+ *   揭晓 1.2s —— 牌翻过来、牌型名出现，够看清；
+ *   结算 3.0s —— 看一眼 5 家的 +/− 和自己的总分变化；
+ *   交替 2.8s —— 只有第一轮结束那一下需要停：要报「本轮各家净得」。
+ * 少一档都不行：揭晓太快看不清谁赢，结算太短来不及看分，交替没有就不知道进第二轮了。 */
+var TIMING = { divide:1500, reveal:1400, settle:3200, break:2800, final:0 };
+var playTimer = null;
+
+function goto(i){
+  /* 从场景表 / 播放整局进来，一定是对局态 —— 场景是「对局内」的东西 */
+  clearRdyTimers();
+  S.phase = 'play'; S.ask = null; S.cdOn = false; S.countdown = 0;
+  S.idx = Math.max(0, Math.min(i, SCENES.length - 1));
+  var SC = sceneNow();
+  S.fx = (SC.kind === 'settle' && SC.res && SC.res.fx) ? SC.res.fx : null;
+  render();
+}
+function stopPlay(){
+  clearTimeout(playTimer); playTimer = null; S.playing = false;
+  var b = document.getElementById('btn-play');
+  if (b) b.textContent = '\u25b6 \u64ad\u653e\u6574\u5c40\uff08\u770b\u7ed3\u7b97\u8282\u594f\uff09';
+}
+function playFlow(){
+  stopPlay();
+  S.panel = null; S.pick = null;
+  S.playing = true;
+  var b = document.getElementById('btn-play');
+  if (b) b.textContent = '\u25a0 \u505c\u6b62\u64ad\u653e';
+  goto(0);
+  (function step(){
+    if (!S.playing) return;
+    var SC = sceneNow();
+    if (S.idx >= SCENES.length - 1){ stopPlay(); return; }
+    var t = TIMING[SC.kind] || 1600;
+    if (SC.kind === 'settle' && SC.res && SC.res.fx) t += 1400;
+    playTimer = setTimeout(function(){ if (!S.playing) return; goto(S.idx + 1); step(); }, t);
+  })();
+}
+
+/* 四种牌型的特效画廊：不进流程也能单独看 */
+var FX_GALLERY = [
+  { kind:'jh', cards:[[15,'joker'],[13,'heart']], label:'10.5', mk:[] },
+  { kind:'bz', cards:[[7,'spade'],[7,'heart'],[7,'diamond']], label:'\u8c79\u5b50', mk:[] },
+  { kind:'nn', cards:[[10,'spade'],[6,'heart'],[4,'club'],[8,'diamond'],[2,'spade']], label:'\u725b\u725b', mk:[0,1,2] },
+  { kind:'wh', cards:[[11,'club'],[12,'club'],[13,'club'],[11,'heart'],[12,'heart']], label:'\u4e94\u82b1\u725b', mk:[0,1,2,3,4] }
+];
+var fxTimer = null, fxAt = 0;
+
+/* =============================== 交互 =============================== */
+/* 入口映射：
+ *   点别人头像  → 贴着那个人的面板，默认「表情」，同一张卡里切「短语 / 个人信息」
+ *   点自己头像  → 同一张卡，默认「个人信息」
+ *   操作栏气泡  → 同一张卡，贴着自己，默认「表情」
+ *   长按        → 取消了。上一版长按发表情、点击查战绩，两件事抢同一块热区，
+ *                 人一多几乎必然误触；现在点击只有一个语义。 */
+function openSeat(key){
+  S.pick = null;
+  /* 点别人：默认「表情」，同一张卡里可以切到「个人信息」；
+   * 点自己：直接「个人信息」—— 自己的战绩是查得最频繁的，不该多点一次。 */
+  S.panel = { key:key, tab: key === 'me' ? 'stat' : 'emo' };
+  render();
+}
+
+document.getElementById('design').addEventListener('click', function(e){
+  var t = e.target;
+
+  /* ---- 准备态 / 退出确认（放在最前，模态优先吃点击） ---- */
+  if (t.closest('[data-askyes]')){
+    var wasPlay = S.phase === 'play';
+    var SCa = sceneNow();
+    var dA = (wasPlay && SCa && SCa.scores && SCa.start)
+      ? ((SCa.scores.me || 0) - (SCa.start.me || 0)) : null;
+    S.ask = null;
+    /* 退出 = 本局作废、回到准备界面。底部「退出」在两种 phase 都在同一位置，
+       只是文案不同（对局中叫「退出」，房里叫「退出房间」）。 */
+    toReady(dA, wasPlay ? '\u5df2\u9000\u51fa\u672c\u5c40 \u00b7 \u56de\u5230\u51c6\u5907' : '\u5df2\u9000\u51fa\u623f\u95f4 \u00b7 \u539f\u578b\u505c\u5728\u51c6\u5907\u754c\u9762');
+    return;
+  }
+  if (t.closest('[data-askno]')){ S.ask = null; render(); return; }
+  if (t.closest('[data-leave]')){ S.ask = 'leave'; render(); return; }
+
+  if (t.closest('[data-actry]')){
+    if (readyCount() >= S.n) startGame();
+    else toggleReady();
+    return;
+  }
+  if (t.closest('[data-again]')){
+    var SCb = sceneNow();
+    var dB = (SCb && SCb.scores && SCb.start) ? ((SCb.scores.me || 0) - (SCb.start.me || 0)) : null;
+    toReady(dB, '\u672c\u5c40\u7ed3\u675f \u00b7 \u51c6\u5907\u4e0b\u4e00\u5c40');
+    return;
+  }
+
+  var sc = t.closest('[data-scene]');
+  if (sc){ stopPlay(); goto(parseInt(sc.dataset.scene, 10)); return; }
+
+  var pk = t.closest('[data-pick]');
+  if (pk){
+    var parts = pk.dataset.pick.split('-');
+    S.me.pat = parseInt(parts[0], 10); S.me.ci = parseInt(parts[1], 10); S.me.photo = false;
+    render(); return;
+  }
+  if (t.closest('[data-upload]')){ S.me.photo = true; render(); return; }
+
+  if (t.closest('[data-feltemo]')){
+    S.panel = { key:'me', tab:'emo' }; S.pick = null; render(); return;
+  }
+  if (t.closest('[data-emo]')){
+    var em = t.closest('[data-emo]').dataset.emo;
+    fireEmoji(S.panel ? S.panel.key : 'me', em);
+    return;
+  }
+  if (t.closest('[data-tab]')){
+    if (S.panel) S.panel.tab = t.closest('[data-tab]').dataset.tab;
+    render(); return;
+  }
+  if (t.closest('[data-close]')){
+    S.panel = null; S.pick = null; render(); return;
+  }
+  var seat = t.closest('[data-seat]');
+  if (seat) openSeat(seat.dataset.seat);
+});
+
+/* 一条表情只有两层，都是同一条消息的投影：
+ *   飞行  自己的头像中心 → 对方头像旁的那块地，走直线，给「谁发给谁」的空间线索
+ *   气泡  落在飞行终点就地浮出，位置与飞行的终点完全重合（见 bubBox），不跳
+ * 自己给自己发不走飞行 —— 起点终点是同一个人，飞一下只会像闪了一下。
+ * 每条带自增序号，各管各的生命周期：连发两条不能互相清掉。 */
+var emojiSeq = 0;
+
+function fireEmoji(toKey, em){
+  var seq = ++emojiSeq;
+  var g = geo();
+  var toPos = anchorOf(g, toKey);
+  S.panel = null;
+
+  function land(){
+    S.bubble[toKey] = em;
+    S.bubbleSeq[toKey] = seq;
+    render();
+  }
+
+  if (toKey === 'me'){
+    S.fly = null;
+    land();                                  /* 自己发：直接出现在自己头像旁 */
+  } else {
+    var b = bubBox(toPos, curAv(g), g.W, em);
+    S.fly = { to:toKey, em:em, seq:seq, phr:b.phr, fs:b.fs,
+      bx:b.x + b.w/2, by:b.y + b.h/2, w:b.w, h:b.h,
+      sx:g.me.x, sy:g.me.y };
+    render();
+    /* 470ms：飞行结束，把飞行体换成真气泡 —— 两者位置尺寸完全一致，看不出切换 */
+    setTimeout(function(){
+      if (S.fly && S.fly.seq === seq) S.fly = null;
+      land();
+    }, 470);
+  }
+
+  /* 2600ms：气泡谢幕，只清自己那条 */
+  setTimeout(function(){
+    if (S.bubbleSeq[toKey] === seq) delete S.bubble[toKey];
+    if (!S.panel && !S.pick) render();
+  }, 2600);
+}
+
+/* 控制栏 */
+function bindSeg(id, apply){
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('click', function(e){
+    var b = e.target.closest('button');
+    if (!b) return;
+    [].forEach.call(this.querySelectorAll('button'), function(x){ x.classList.remove('on'); });
+    b.classList.add('on');
+    apply(b.dataset.v);
+    render();
+  });
+}
+bindSeg('seg-mode',   function(v){ S.mode = v; S.panel = null; S.pick = null; });
+bindSeg('seg-n',      function(v){
+  S.n = parseInt(v, 10); S.panel = null; S.idx = 0;
+  S.rdyOthers = {}; S.rdy = false; S.cdOn = false; S.countdown = 0;
+  clearRdyTimers();
+  buildScenes();
+});
+bindSeg('seg-av',     function(v){ S.av = v; });
+bindSeg('seg-scen',   function(v){ S.scen = v; S.idx = 0; S.fx = null; buildScenes(); });
+bindSeg('seg-policy', function(v){ S.policy = v; S.idx = 0; S.fx = null; buildScenes(); });
+
+document.getElementById('btn-ready').addEventListener('click', function(){
+  stopPlay();
+  toReady(null, null);
+});
+
+document.getElementById('btn-avatar').addEventListener('click', function(){
+  S.pick = true; S.panel = null; render();
+});
+
+document.getElementById('btn-play').addEventListener('click', function(){
+  if (S.playing) stopPlay(); else playFlow();
+});
+
+document.getElementById('btn-fx').addEventListener('click', function(){
+  clearInterval(fxTimer);
+  S.panel = null; S.pick = null;
+  fxAt = 0;
+  function show(){
+    S.fx = FX_GALLERY[fxAt % FX_GALLERY.length];
+    /* 重放同一个特效时要把节点换掉，否则 CSS 动画不会从头再跑一遍 */
+    var el = document.querySelector('.fx');
+    if (el) el.remove();
+    render();
+    fxAt++;
+  }
+  show();
+  fxTimer = setInterval(show, 2600);
+});
+
+document.getElementById('btn-emo').addEventListener('click', function(){
+  stopPlay();
+  goto(0);
+  setTimeout(function(){ openSeat('s1'); }, 200);
+});
+
+/* 侧栏的流程列表 */
+function renderSceneList(){
+  var el = document.getElementById('scenes');
+  if (!el) return;
+  el.innerHTML = SCENES.map(function(SC, i){
+    return '<button class="' + ((S.phase === 'play' && i === S.idx) ? 'on' : '') + (SC.res && SC.res.fx ? ' fx' : '') + '" data-scene="' + i + '">'
+      + '<i>' + (i + 1) + '</i><span>' + sceneLabel(SC) + '</span></button>';
+  }).join('');
+}
+document.getElementById('scenes').addEventListener('click', function(e){
+  var b = e.target.closest('button');
+  if (!b) return;
+  stopPlay();
+  goto(parseInt(b.dataset.scene, 10));
+});
+
+/* 调试/演示钩子：截图脚本和手工排查都用它。正式实现里不会存在这个东西。 */
+window.__proto = {
+  S:S, render:render, fire:fireEmoji, goto:goto, play:playFlow,
+  scenes:function(){ return SCENES; },
+  set:function(k, v){ S[k] = v; render(); },
+  ready:toReady, start:startGame, toggleReady:toggleReady,
+  rdyCount:function(){ return readyCount(); }
+};
+
+window.addEventListener('resize', render);
+buildScenes();
+/* 打开原型先落在「准备界面」—— 这一版没有单独的房间页，它就是这张桌子的第一屏 */
+toReady(null, null);
+})();
+</script>
+</body>
+</html>

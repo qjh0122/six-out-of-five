@@ -1,0 +1,387 @@
+/* ============================================================================
+   表情 / 短语（v82 R4）
+   —— 这一屏的**唯一目的**是「一句话说不出来的时候，替你说一句」。
+   所以它只做两件事：选人、选表情；不做聊天记录、不做输入框、不落库。
+
+   尺寸全部按设计像素（竖屏 750 宽基准 / 横屏 1624×750）。
+   ============================================================================ */
+
+/* ---------- 牌桌上的入口（顶栏第一行，我的分左边） ----------
+   为什么不放毡面中间：座位条 .slots 是整宽的纵向列表，中间没有稳定的空地，
+   摆上去一定会压在某个人的座位卡上；顶栏这一行本来就只在右端有一格，
+   在它左边加一个圆钮既不打乱布局，也不会随「几个人」变化而漂。
+   ★ 这个按钮是 renderTopBar 每次重绘整块 innerHTML 生成的，
+     所以事件必须用委托（见 game.js 的 bindTopBarTap），不能直接绑在元素上。 */
+/* 尺寸按**手指**定，不按观感定：设计像素 ×0.52（竖屏 390 宽）= CSS 像素，
+   56 只有 29 —— 比 iOS 的 44pt 下限小一截。88 设计 px = 45.7 CSS px，
+   正好过线；代价是顶栏这一行从 58 长到 88 设计 px，
+   换来的是「不用瞄准也能点中」。 */
+.gt-emo {
+  flex: 0 0 auto;
+  /* ★ v105：88 只是个下界，真正生效的是 --tap-min = max(88, ceil(44/scale))。
+   * 写死 88 在 scale 0.48（安卓 800×360 横屏）上只有 42 CSS px ——
+   * 差 2 个像素就是「点不准」，而这是对局里唯一的表情入口。 */
+  width: max(88px, var(--tap-min, 88px));
+  height: max(88px, var(--tap-min, 88px));
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(245, 193, 92, 0.34);
+  background: linear-gradient(180deg, rgba(48, 70, 60, 0.96), rgba(14, 26, 21, 0.97));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: #F5C15C;
+  cursor: pointer;
+  transition: transform 0.12s;
+  padding: 0;
+}
+.gt-emo:active { transform: scale(0.93); }
+.gt-emo svg { width: 42px; height: 42px; display: block; }
+/* 有未读表情时点一下红点（还没做「未读表情」的功能，先把位置留出来：
+   真的需要时只加一个 class，不用再动布局）。 */
+.gt-emo .dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #E0402F;
+  transform: translate(16px, -16px);
+}
+
+/* ---------- 统一浮层面板（v89 · §6.1）----------
+ *
+ * 为什么不是居中弹窗：这是「点谁弹谁」的面板，**位置本身就是信息的一部分** ——
+ * 面板出现在被点的那个人旁边，玩家不用回头找「我刚才点的是谁」。
+ * 落点规则（右 → 左 → 下 → 上）在 game.js 的 placeSeatSheet 里，这里只管长相。
+ *
+ * 金边而不是白描边：桌面上已经有毡面、座位、中央牌三层深绿，
+ * 再来一张纯白边的卡会像「另一个 App 的弹窗」，金边才和牌桌是同一套语言。 */
+.seat-sheet-bd {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  z-index: 55;
+  background: rgba(3, 16, 10, 0.34);
+  /* 只挡点击，不做模糊：面板贴着的人要能看见（这是它存在的理由） */
+}
+.seat-sheet {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 56;
+  width: 520px;
+  max-height: 640px;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 14px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #FFF9EC, #F9EBD0);
+  border: 2px solid rgba(245, 193, 92, 0.62);
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.48);
+  /* 贴着座位的那一侧不要圆角边框那么厚 —— 用箭头尖示意「是从这个人身上弹出来的」 */
+  transform-origin: var(--ss-origin, 50% 50%);
+  animation: ssPop 0.16s ease-out;
+}
+@keyframes ssPop {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.ss-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-right: 44px;
+}
+.ss-av {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  font-weight: 800;
+  color: #FFF4DE;
+  background: #115444;
+  /* 金环改成外描边：inset 阴影画在背景之上、内容之下，
+   * 换成头像图（真子元素）之后会被整个盖住，等于这条装饰线消失。 */
+  box-shadow: 0 0 0 2px rgba(245, 193, 92, 0.5);
+}
+/* 面板头里的 AI 座位：和牌桌上的机器人座位同一套记号（虚线灰边） */
+.ss-av.is-bot {
+  background: #33415C;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+  border: 1px dashed rgba(255, 255, 255, 0.5);
+}
+.ss-id { display: flex; flex-direction: column; min-width: 0; }
+.ss-id b { font-size: 28px; font-weight: 800; color: #2A1B06; letter-spacing: 0.5px; }
+.ss-id i { font-style: normal; font-size: 20px; color: rgba(42, 27, 6, 0.58); }
+.ss-close {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(42, 27, 6, 0.55);
+  cursor: pointer;
+}
+.ss-close svg { width: 30px; height: 30px; display: block; margin: auto; }
+.ss-close:active { background: rgba(42, 27, 6, 0.08); }
+.ss-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin: 12px 0 2px;
+  border-radius: 999px;
+  background: rgba(42, 27, 6, 0.08);
+  align-self: flex-start;
+}
+.ss-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 信息档：复用战绩卡那套 .pf-stats / .pf-stat / .pf-record（records.css） */
+.ss-info {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 0 2px;
+}
+.ss-note {
+  margin: 18px 4px;
+  font-size: 22px;
+  line-height: 1.5;
+  color: rgba(42, 27, 6, 0.62);
+}
+.emoji-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(42, 27, 6, 0.08);
+}
+.emoji-tab {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 8px 22px;
+  font-size: 24px;
+  font-weight: 700;
+  color: rgba(42, 27, 6, 0.56);
+  cursor: pointer;
+}
+.emoji-tab.is-on {
+  background: #115444;
+  color: #FFF4DE;
+}
+
+/* ---------- 发给谁 ----------
+   一行 chips：全场 + 每个人。不做下拉，也不做「先点头像再发」——
+   头像点击已经是「看档案」，同一个手势不能有两套含义。 */
+.emoji-to {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+  padding: 14px 0 10px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.emoji-to::-webkit-scrollbar { display: none; }
+.emoji-who {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(42, 27, 6, 0.14);
+  background: rgba(42, 27, 6, 0.04);
+  font-size: 22px;
+  font-weight: 700;
+  color: #3A2A12;
+  cursor: pointer;
+}
+.emoji-who .av {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+/* 选中态用与「准备」同一档的绿：整个 App 里「已选中」只有这一种颜色 */
+.emoji-who.is-on {
+  background: #115444;
+  border-color: #115444;
+  color: #FFF4DE;
+}
+
+/* ---------- 13 张表情 ----------
+   4 列 × 4 行（13 个占 4 行最后一格空着，视觉上比 13 个排成 3-5-5 更规整）。
+   格子比图大一圈：手指落点 139×124 设计像素，约 70×62 CSS 像素，够点。 */
+.emoji-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 4px 0 2px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  align-content: start;
+}
+.emoji-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  border-radius: 18px;
+  border: 1px solid rgba(42, 27, 6, 0.10);
+  background: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: transform 0.1s, background 0.12s;
+}
+.emoji-cell:active { transform: scale(0.94); background: rgba(245, 193, 92, 0.28); }
+/* 96×96 的原图按 96 设计像素摆，2 倍屏下正好 1:1，不会被放大糊掉 */
+.emoji-cell img {
+  width: 96px;
+  height: 96px;
+  display: block;
+  pointer-events: none;
+}
+
+/* ---------- 8 条短语 ---------- */
+.emoji-phr {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 2px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.phrase-row {
+  flex: 0 0 auto;
+  text-align: left;
+  padding: 16px 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(42, 27, 6, 0.10);
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 26px;
+  line-height: 1.35;
+  color: #2A1B06;
+  cursor: pointer;
+}
+.phrase-row:active { background: rgba(245, 193, 92, 0.28); }
+
+/* ============================================================================
+   飞行动画层
+   ★ 挂在 #stage 外面（见 index.html 的注释）：#stage 上有 transform: scale()，
+     在里面 getBoundingClientRect 拿到的是缩放后的坐标，还要往回收一次 scale。
+     放在外面直接就是视口坐标，1 行代码省掉一整类「位置差几像素」的问题。
+   ============================================================================ */
+.emoji-layer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  inset: 0;
+  z-index: 900;
+  pointer-events: none;
+  overflow: hidden;
+}
+/* 外层：只管「在哪」。transform 由 JS 写成 translate3d，用 transition 而不是
+   keyframes —— 终点是两个头像的实测坐标，CSS 里根本不知道。 */
+.emoji-fly {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 64px;
+  height: 64px;
+  will-change: transform, opacity;
+  transition: transform 0.42s cubic-bezier(0.22, 0.9, 0.28, 1), opacity 0.3s ease;
+}
+.emoji-fly .emoji-pop {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* 短语用气泡：整句话跟着飞过去，落点停 1.6 秒。
+   气泡样式写在**内层**：外层的宽高要跟着内容走（宽度由文案决定），
+   而内层的 padding/背景/阴影才是看得见的那张纸。 */
+.emoji-fly.is-phrase {
+  width: auto;
+  height: auto;
+  max-width: 460px;
+}
+.emoji-fly.is-phrase .emoji-pop {
+  padding: 10px 18px;
+  border-radius: 18px;
+  background: #FFFBF0;
+  color: #2A1B06;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+/* 落下后轻轻回弹一下：让人知道「这条落在他那儿了」，而不是「飘过去消失了」。
+   ★ 动画只碰内层。CSS 动画会**整个覆盖** transform，写在同一个元素上就会把
+     外层的位移一起清成 identity —— 表情会跳回屏幕左上角。探针第一次跑就抓到了。 */
+@keyframes emojiPop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.16); }
+  100% { transform: scale(1); }
+}
+.emoji-fly.is-landed .emoji-pop { animation: emojiPop 0.34s ease-out; }
+
+/* ---------- 横屏 ----------
+   横屏的设计空间是 1624×750：宽度富余、高度紧张。
+   所以卡片变宽 + 7 列 2 行，把 615 的高度预算用在「一眼全看到」上。 */
+#stage.ls .seat-sheet {
+  width: 620px;
+  max-height: 620px;
+  padding: 14px 18px 12px;
+}
+#stage.ls .emoji-tab { font-size: max(24px, var(--ls-fs-floor, 24px)); }
+#stage.ls .emoji-to { padding: 10px 0 8px; }
+#stage.ls .emoji-who { font-size: max(22px, var(--ls-fs-floor, 22px)); }
+#stage.ls .emoji-grid {
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+#stage.ls .emoji-cell { padding: 6px 0; }
+#stage.ls .emoji-cell img { width: 88px; height: 88px; }
+#stage.ls .emoji-phr { gap: 6px; }
+#stage.ls .phrase-row {
+  padding: 12px 18px;
+  font-size: max(26px, var(--ls-fs-floor, 24px));
+}
+/* 横屏同样是 88：0.52 的缩放下也是 45.7 CSS px。
+   不为「横屏高度紧张」缩小触摸目标 —— 那个预算是靠汇总卡横排让出来的，
+   不该从手指上省。 */
+/* 横屏同一条规矩：热区不跟着横屏缩小。这里必须也是 max() ——
+ * `#stage.ls .gt-emo` 与 `#game-top.gt-ring .gt-emo` 特异性相同（1 id + 2 class），
+ * 这条在后面，写死 88 会把圆桌那条 max() 盖掉（v105 实测踩过：computed 仍是 88）。 */
+#stage.ls .gt-emo { width: max(88px, var(--tap-min, 88px)); height: max(88px, var(--tap-min, 88px)); }
+#stage.ls .gt-emo svg { width: 40px; height: 40px; }
