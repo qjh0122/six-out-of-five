@@ -100,6 +100,8 @@ const MSG_STRIKE_MAX = 3;
 /* 昵称清洗统一走 server/text.js：以前三处各写一遍，其中两处按**码元**截断，
  * 会把 emoji 切成孤立代理项（存进档案后前端显示成 `�`，而且再也改不回来）。 */
 const { cleanNickname } = require('./text.js');
+/* 房间快照：进程重启后把进行中的对局捞回来（见 roomsState.js 顶部）。 */
+const roomsState = require('./roomsState.js');
 
 class Hub {
   constructor(options) {
@@ -149,6 +151,74 @@ class Hub {
      * （测试里经常 new Hub() 然后立刻结束，别让一个 interval 把 Node 挂着）。 */
     this._hbTimer = setInterval(() => this._heartbeat(), HEARTBEAT_MS);
     if (this._hbTimer.unref) this._hbTimer.unref();
+
+    /* ---------------------------- 房间快照（P2-3） ----------------------------
+     * 不传 statePath 就完全不落盘：单测里 new Hub() 几百次，
+     * 不该因此多出一堆临时文件。生产由 index.js 传数据目录下的路径。 */
+    this.statePath = opts.statePath || '';
+    this._stateTimer = null;
+    this._stateSaves = 0;      // 排障用：真写了几次
+    if (this.statePath) this._restoreRooms();
+  }
+
+  /* ============================ 房间快照 ============================ */
+
+  /** 启动时把上次的桌子捞回来。
+   *
+   * 恢复哪些：房间对象、座位令牌、回收计时器、分牌计时器。
+   * **不恢复**：连接（全断了，玩家要自己重连回座）、限流计数（清零是对的）。
+   *
+   * 玩家的 `connected` 一律置 false —— 重启那一刻确实没有连接。
+   * 客户端拿着令牌 `resume` 回来，走的是原来那条路，不需要新的协议。 */
+  _restoreRooms() {
+    const snap = roomsState.load(this.statePath);
+    if (!snap) return 0;
+    let n = 0;
+    snap.rooms.forEach((room) => {
+      try {
+        if (!room.roomId || this.rooms.has(room.roomId)) return;
+        (room.players || []).forEach((p) => { if (p) p.connected = false; });
+        room.updatedAt = room.updatedAt || Date.now();
+        this.rooms.set(room.roomId, room);
+        this._armRoomRecycle(room.roomId);
+        /* 广播一次把分牌计时器装回去（_armSplitTimers 是幂等的，且挂在 _broadcast 里）。
+         * 此刻没有任何连接，这次广播只会落到 0 个客户端 —— 不会泄露手牌。 */
+        this._broadcast(room.roomId);
+        n += 1;
+      } catch (e) {
+        /* 单个房间恢复失败不该连累其他桌：跳过它，继续下一个。 */
+        this.log('room restore failed', room.roomId, e && e.message);
+      }
+    });
+    snap.tokens.forEach((pair) => {
+      if (this.rooms.has(String(pair[0]).split('#')[0])) this._tokens.set(pair[0], pair[1]);
+    });
+    if (n) this.log('rooms restored', n, 'tokens', snap.tokens.length);
+    return n;
+  }
+
+  /** 落盘（去抖）。高频调用只保留最后一次 —— 一局里每次提交都会广播。 */
+  _scheduleStateSave() {
+    if (!this.statePath || this._stateTimer) return;
+    this._stateTimer = setTimeout(() => {
+      this._stateTimer = null;
+      this._saveStateNow();
+    }, 400);
+    if (this._stateTimer.unref) this._stateTimer.unref();
+  }
+
+  /** 立刻落盘。删房间这种「少了一张桌子」的变化不等去抖。 */
+  _saveStateNow() {
+    if (!this.statePath) return false;
+    const rooms = [];
+    this.rooms.forEach((room) => { rooms.push(room); });
+    const ok = roomsState.save(this.statePath, {
+      rooms: rooms,
+      tokens: Array.from(this._tokens.entries())
+    });
+    this._stateSaves += 1;
+    if (!ok) this.log('state save failed', this.statePath);
+    return ok;
   }
 
   /* ============================ 连接生命周期 ============================ */
@@ -1013,6 +1083,9 @@ class Hub {
      * 幂等由 _armOneSplitTimer(…, true) 保证，重复调用不会重计时。 */
     this._armSplitTimers(room);
     this._persistSettlement(room);
+    /* 每一处状态变化最后都会走到广播，所以快照挂在这里最省事：
+     * 不需要在 20 多个动作里各补一行（那样漏一个就是「某类变化重启后丢」）。 */
+    this._scheduleStateSave();
 
     this.conns.forEach((ctx, client) => {
       if (ctx.roomId !== roomId) return;
@@ -1309,6 +1382,9 @@ class Hub {
 
   _deleteRoom(roomId) {
     this.rooms.delete(roomId);
+    /* 少了一张桌子是「立刻要落盘」的变化：等到去抖窗口过去再崩，
+     * 重启后这张已经解散的桌子会复活。 */
+    this._saveStateNow();
     this._tokens.forEach((_v, key) => { if (key.indexOf(roomId + '#') === 0) this._tokens.delete(key); });
     this._clearSplitTimers(roomId);
     this._clearDissolve(roomId);

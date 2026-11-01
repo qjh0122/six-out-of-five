@@ -621,6 +621,31 @@
     return rows;
   }
 
+  /* 本局冠军块。并列第一时把名字都写上，分差那一句就不写（没有「领先」可言）。 */
+  function crownBlock(room) {
+    var rows = settleRank(room.players);
+    var champs = rows.filter(function (r) { return r.champion; });
+    var box = el('div', 'settle-crown');
+    if (!champs.length) { box.classList.add('hidden'); return box; }
+    var names = champs.map(function (r) { return (r.p && r.p.nickname) || '玩家'; }).join('、');
+    var top = champs[0].p;
+    var head = el('p', 'sc-k', champs.length > 1 ? '并列冠军' : '本局冠军');
+    var name = el('p', 'sc-name', names);
+    var net = el('p', 'sc-net', (top.score > 0 ? '+' : '') + top.score + ' 分');
+    box.appendChild(head);
+    box.appendChild(name);
+    box.appendChild(net);
+    /* 分差：只有「唯一冠军 + 有第二名」时才成立。并列冠军之间没有分差，
+     * 全员弃局时也没有第二名 —— 这两种情况宁可不写，也不要编一个数出来。 */
+    var second = rows.filter(function (r) { return r.rank === 2; })[0];
+    if (champs.length === 1 && second) {
+      var gap = top.score - second.p.score;
+      box.appendChild(el('p', 'sc-gap',
+        '领先第二名 ' + (second.p && second.p.nickname ? second.p.nickname + ' ' : '') + gap + ' 分'));
+    }
+    return box;
+  }
+
   function settleListEl(room) {
     var rows = settleRank(room.players);
     /* 并列冠军要单独说一句「并列」：两颗皇冠并排，看着像「两个人并列」，
@@ -817,6 +842,10 @@
     /* 内层包一层：让「列表 + 尾注」作为一个整体居中，
      * 而不是各自靠上排、把空白全堆在中间。 */
     var inner = el('div', 'settle-inner');
+    /* ★ v115（C-1）：结算页顶部补一块「本局冠军」。
+     * 之前只有一个皇冠图标挂在第一名那一行 —— 打了半小时，收尾是一张表。
+     * 这块要回答三个问题：谁赢的、赢多少、领先多少。 */
+    inner.appendChild(crownBlock(room));
     inner.appendChild(settleListEl(room));
     inner.appendChild(el('p', 'settle-tip', settleTipText(room)));
     /* 含 AI 的局不算战绩 —— 这一句必须在结算页说。
@@ -866,6 +895,8 @@
     var body = $('#prev-result-body');
     body.innerHTML = '';
     var inner = el('div', 'settle-inner');
+    /* 这里**不放**冠军块：这是「回看上一把」的窄弹窗，玩家点开是为了查自己那几组。
+     * 冠军已经在结算页顶部那块里看过了，弹窗再重复一遍只会把它挤得更长。 */
     inner.appendChild(settleListEl(room));
     /* 只放原因，不放算法公式 —— 公式是给第一次看结算页的人解释用的，
      * 这里玩家是回来查分数的，不需要再被教一遍（而且窄容器里会折成两行）。 */
@@ -902,6 +933,9 @@
       roundNet: roundNet,
       maybeBreakCard: maybeBreakCard,
       settleRank: settleRank,
+      /* 导出只为测试：这是纯「一段 DOM」，没有副作用，也没有外部状态。
+       * 不导出的话「并列冠军不写分差」这条分支只能靠源码 grep 守，等于没守。 */
+      crownBlock: crownBlock,
       settleListEl: settleListEl,
       settleReasonText: settleReasonText,
       settleTipText: settleTipText,

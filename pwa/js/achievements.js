@@ -120,7 +120,7 @@
       lw: 0,           // 通赔总次数（l1 + l2）
       /* 小牌对撞（v112）：全场每个人都是该组的小牌型。
        * 大牌对撞是「两个人各有货」，小牌对撞是「一桌人都没货」—— 分母口径不同，
-       * 所以不能塞进 vsn，否则「强者运强」的胜率会被一群爆点稀释。 */
+       * 所以不能塞进 vsn，否则「遇强则强」的胜率会被一群爆点稀释。 */
       smv: 0,          // 全场都是小牌，我赢
       sml: 0,          // 全场都是小牌，我输
       smn: 0,          // 分母：参与「全场都是小牌」的组数
@@ -256,7 +256,7 @@
 
       /* 小牌对撞（v112）：这一组**所有出牌的人**都是该组的小牌型。
        * 和大牌对撞的分母分开算 —— 两者的「可遇性」完全不同，
-       * 混进同一个 vsn 会让「强者运强」的胜率被一群爆点稀释。
+       * 混进同一个 vsn 会让「遇强则强」的胜率被一群爆点稀释。
        * 要求 entries ≥ 2：一个人自己爆点不算对撞。 */
       if (entries.length >= 2 && smallIds.length === entries.length) {
         entries.forEach(function (e) {
@@ -413,7 +413,9 @@
       desc: '既要同花、又要连号，还得落在同一组里。到这一步，运气已经不是主要解释了',
       cur: function (c) { return tn(c, 'sf'); }, need: 5 },
     { id: 'h8', series: 'type', rarity: 'epic', name: '牛魔王', typeKey: 'nn',
-      desc: '五张凑出整十，剩下两张再凑出个牛。你大概是靠这个吃饭的',
+      /* 斗牛是「三张凑十、剩下两张凑牛」，不是「五张凑整十」——
+       * 五张凑整十是错的，照着读会以为要把五张都用上。 */
+      desc: '三张凑十，剩下两张凑牛。你大概是靠这个吃饭的',
       cur: function (c) { return tn(c, 'nn'); }, need: 30 },
     { id: 'h10', series: 'type', rarity: 'legend', name: '花牛成精', typeKey: 'wh',
       desc: '五张全是花牌，全程没让数字出现。见过的人都记住了',
@@ -430,32 +432,47 @@
       desc: '斗牛五张凑不出整十，只能看着别人有牛',
       cur: function (c) { return tn(c, 'mn'); }, need: 1 },
 
-    /* ---------- 系列二 · 对撞（大牌撞大牌 4 条 + 小牌撞小牌 2 条） ---------- */
-    { id: 'c1', series: 'vs', rarity: 'epic', name: '虎口夺食',
-      desc: '对方也拿着大牌型，你还是把他吃了。记的是次数',
+    /* ---------- 系列二 · 对撞（8 条，四种 × 两档） ----------
+     *
+     * v115 按用户口径重排成对称的八条：
+     *   大牌撞大牌：赢的次数 / 输的次数 / 胜率 ≥50% / 胜率 <50%
+     *   小牌撞小牌：赢的次数 / 输的次数 / 胜率 ≥50% / 胜率 <50%
+     *
+     * 两条胜率成就**互斥**：≥50% 与 <50% 不可能同时成立，正好 50% 时前者亮、后者不亮。
+     * 胜率类都带一个最低次数门槛（大牌 10 次 / 小牌 5 次）：不设门槛的话，
+     * 撞一次赢一次就是 100%，一局就能点亮，那不叫「运强」，叫「运气好一次」。
+     */
+    /* ---- 大牌撞大牌：一条「硬」字线，赢家的名字带刺，输家的名字带软 ---- */
+    { id: 'c4', series: 'vs', rarity: 'epic', name: '硬茬子',
+      desc: '硬碰硬赢下来的次数。大牌撞大牌，撞完还站着的那个人是你',
       cur: function (c) { return g(c, 'vs'); }, need: 1 },
-    { id: 'c2', series: 'vs', rarity: 'rare', name: '豹落平阳',
-      desc: '你拿着大牌，遇上了更大的那一手。输得不冤，也记一笔',
+    { id: 'c8', series: 'vs', rarity: 'rare', name: '软脚虾',
+      desc: '硬碰硬输下来的次数。撞上去才知道对面有多硬',
       cur: function (c) { return g(c, 'vsl'); }, need: 1 },
-    { id: 'c4', series: 'vs', rarity: 'epic', name: '牌桌屠夫',
-      desc: '硬碰硬赢下来的次数。你专挑有牌的人下手',
-      cur: function (c) { return g(c, 'vs'); }, need: 20 },
-    { id: 'c3', series: 'vs', rarity: 'legend', name: '强者运强',
-      desc: '大牌撞大牌，你还赢下六成。运气这次站在强的那边',
-      cur: function (c) { return g(c, 'vsn'); }, need: 10,
-      /* 双条件成就：把「胜率」塞进 extra 里单独判，
-       * 页面上的进度条按分母走（撞够 10 次），达不达成看 extra */
-      extra: function (c) { return g(c, 'vsn') > 0 && g(c, 'vs') / g(c, 'vsn') >= 0.6; } },
+    { id: 'c3', series: 'vs', rarity: 'legend', name: '遇强则强',
+      desc: '硬碰硬赢多输少。对手的牌越好，这两个字越值钱',
+      cur: function (c) { return g(c, 'vsn'); }, need: 10, rateOf: 'vs',
+      extra: function (c) { return g(c, 'vsn') >= 10 && g(c, 'vs') / g(c, 'vsn') >= 0.5; } },
+    { id: 'c7', series: 'vs', rarity: 'epic', name: '外强中干',
+      desc: '硬碰硬输多赢少。看着像有牌，一撞就散',
+      cur: function (c) { return g(c, 'vsn'); }, need: 10, rateOf: 'vs',
+      extra: function (c) { return g(c, 'vsn') >= 10 && g(c, 'vs') / g(c, 'vsn') < 0.5; } },
 
-    /* ---- 小牌对撞（v112）：全场每个人都是该组的小牌型 ----
-     * 和大牌对撞正好相反：大牌对撞是「两个人各有货」，小牌对撞是「一桌人都没货」。
-     * 后者的场面更难得 —— 一桌人十点半同时爆掉，比一个人拿豹子更容易被记住。 */
-    { id: 'c5', series: 'vs', rarity: 'epic', name: '矮子里拔将军',
-      desc: '一桌人全是小牌（爆点 / 散牌 / 没牛），你那张最不惨的够用了。记的是次数',
+    /* ---- 小牌撞小牌：一条「鸡」字线。全桌都没货，赢了是鸡头，输了是鸡飞蛋打 ---- */
+    { id: 'c5', series: 'vs', rarity: 'epic', name: '宁为鸡头',
+      desc: '一桌人全是小牌（爆点 / 散牌 / 没牛）时，你赢下来的次数。烂牌堆里也得有个头',
       cur: function (c) { return g(c, 'smv'); }, need: 1 },
-    { id: 'c6', series: 'vs', rarity: 'rare', name: '一窝比惨',
-      desc: '全场都是小牌，比到最后还是你垫底。这种场面躲不掉，记着就好',
+    { id: 'c6', series: 'vs', rarity: 'rare', name: '鸡飞蛋打',
+      desc: '全场都是小牌，输的还是你。这种局不体面，但很常见',
       cur: function (c) { return g(c, 'sml'); }, need: 1 },
+    { id: 'c9', series: 'vs', rarity: 'legend', name: '矮子里拔将军',
+      desc: '小牌局里赢多输少。牌烂不烂是一回事，怎么打是另一回事',
+      cur: function (c) { return g(c, 'smn'); }, need: 5, rateOf: 'sm',
+      extra: function (c) { return g(c, 'smn') >= 5 && g(c, 'smv') / g(c, 'smn') >= 0.5; } },
+    { id: 'c10', series: 'vs', rarity: 'epic', name: '矬子里垫底',
+      desc: '小牌局里输多赢少。一桌都没牌，垫底的还是你',
+      cur: function (c) { return g(c, 'smn'); }, need: 5, rateOf: 'sm',
+      extra: function (c) { return g(c, 'smn') >= 5 && g(c, 'smv') / g(c, 'smn') < 0.5; } },
 
     /* ---------- 系列三 · 通吃 ---------- */
     { id: 's1', series: 'sweep', rarity: 'epic', name: '一巡清场',
@@ -557,7 +574,9 @@
       var cur = Math.max(0, num(def.cur(ctx)));
       var need = def.need || 1;
       var ok = cur >= need;
-      /* 双条件成就（强者运强）：进度条按分母走，达不达成还要看 extra */
+      /* 双条件成就（遇强则强 / 外强中干、矮子里拔将军 / 矬子里垫底）：
+       * 进度条按分母走，达不达成还要看 extra 里的胜率 ——
+       * 分母够了但胜率不在自己这一侧，就只亮对面那条，两条永不并亮。 */
       if (ok && typeof def.extra === 'function') ok = !!def.extra(ctx);
       if (ok) unlocked += 1;
       if (!bySeries[def.series]) bySeries[def.series] = { total: 0, unlocked: 0 };
@@ -570,6 +589,12 @@
       if (def.typeKey) {
         var seenN = num(ctx.n[TYPE_MODE[def.typeKey]]);
         rate = seenN > 0 ? num(ctx.t[def.typeKey]) / seenN : null;
+      } else if (def.rateOf === 'vs') {
+        /* 硬碰硬胜率：分子 vs（对撞赢），分母 vsn（对撞次数） */
+        rate = num(ctx.vsn) > 0 ? num(ctx.vs) / num(ctx.vsn) : null;
+      } else if (def.rateOf === 'sm') {
+        /* 小牌对撞胜率：分子 smv，分母 smn */
+        rate = num(ctx.smn) > 0 ? num(ctx.smv) / num(ctx.smn) : null;
       }
       return {
         id: def.id, series: def.series, rarity: def.rarity,

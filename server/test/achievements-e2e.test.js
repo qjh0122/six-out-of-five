@@ -164,8 +164,8 @@ function mk(id, nick) {
 
   const pub = profiles.get(A.playerId);
   eq(pub.ach, undefined, '★ 对外档案不带明细');
-  eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 33 靠它）');
-  eq(pub.achTotal, 33, '总数 33（v114 去重 5 条 + 补 4 条通赔）');
+  eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 34 靠它）');
+  eq(pub.achTotal, 35, '总数 35（v114 去重 + 通赔；v115 对撞重排成 8 条）');
 
   const pubB = profiles.get(B.playerId);
   const selfB = profiles.getSelf(B.playerId);

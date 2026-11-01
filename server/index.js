@@ -136,6 +136,15 @@ const AUTH_SECRET = auth.loadSecret(AUTH_SECRET_FILE);
 const hub = new Hub({
   profiles: profiles,
   log: log,
+  /* 房间快照放在数据目录（项目外），和 profiles.json 同一个位置：
+   * 部署覆盖代码时它不会被动到，重启后正在进行的对局能捞回来（P2-3）。
+   *
+   * ★ 用 PROFILE_FILE 指档案时**默认不落盘**：那种用法几乎全是测试，
+   *   而它们的档案文件通常就放在系统临时目录里 —— 快照会落在同一个 tmp 目录、
+   *   跨测试跑累积。第一版没设这个开关，e2e 立刻红了一条「房间已全部回收 →
+   *   还是 3 间」：它捡到了上一次跑剩下的桌子。要开就显式给 ROOMS_STATE_FILE。 */
+  statePath: process.env.ROOMS_STATE_FILE
+    || (process.env.PROFILE_FILE ? '' : path.join(path.dirname(profiles.file), 'rooms-state.json')),
   resolveToken: function (token) {
     const payload = auth.verifyToken(token, AUTH_SECRET);
     if (!payload) return '';
