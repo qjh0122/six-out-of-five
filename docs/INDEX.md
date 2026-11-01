@@ -49,6 +49,7 @@
 | [`deletion-spec.md`](./deletion-spec.md) | 删号后的数据级联删除 | ⚠️ **三个方案只做了两个**：方案 1+3 已上线（v80），方案 2（对局账本级联删除）**明确没做**，因为选了「只抹身份、不动分数」 |
 | [`pattern-fx-audit.md`](./pattern-fx-audit.md) | 牌型特效在哪个阶段可见 | ✅ 已落地（v92–v98）。**本文有两轮，第二轮推翻了第一轮的一个结论** |
 | [`circle-table-analysis.md`](./circle-table-analysis.md) | 圆桌化改造的需求分析 | 📌 **快照性质**：设计依据，基线 v81。实际落地状态看归档的 `circle-table-rollout-status` |
+| [`achievements-plan.md`](./achievements-plan.md) | 成就系统：数据可行性、22 个成就定义、页面布局、五步实施拆解 | ⏳ **待确认**：需求分析完成，代码未动。文末有 5 个待拍板问题 |
 
 ---
 

@@ -26,7 +26,7 @@
 ## 不在范围内
 
 - 需要物理接触设备的攻击
-- 已明确接受的取舍（见 [`docs/BACKLOG.md`](../docs/BACKLOG.md) §6「明确接受的取舍」）：
+- 已明确接受的取舍（见 [`docs/BACKLOG.md`](docs/BACKLOG.md) §6「明确接受的取舍」）：
   - 令牌 90 天有效期（熟人局场景，刻意换体验）
   - 无手机号注册（没有短信成本与合规负担，是优点不是缺陷）
   - `/ws` 不被 Service Worker 拦截（联机必须在线）
@@ -52,5 +52,5 @@
 ## 已知的历史问题
 
 这个仓库的前身（`five-out-of-six`）曾把一份 admin 密钥提交进 git 历史。
-处理方式与现状见 [`docs/repo-public-plan.md`](../docs/repo-public-plan.md) §2：
+处理方式与现状见 [`docs/repo-public-plan.md`](docs/repo-public-plan.md) §2：
 密钥已轮换、只走环境变量、历史已清洗。**若你发现任何残留，请按上面的渠道报告。**
