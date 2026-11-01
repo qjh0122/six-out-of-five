@@ -289,6 +289,7 @@ class Hub {
       case 'restart': return this.restart(client, reqId);
       case 'wantNext': return this.wantNext(client, reqId);
       case 'unWantNext': return this.unWantNext(client, reqId);
+      case 'dropNext': return this.dropNext(client, payload, reqId);
       case 'proposeDissolve': return this.proposeDissolve(client, reqId);
       case 'voteDissolve': return this.voteDissolve(client, payload, reqId);
       case 'cancelDissolve': return this.cancelDissolve(client, reqId);
@@ -529,6 +530,21 @@ class Hub {
     this._broadcast(found.roomId);
   }
 
+  /* 「不等他」：把一个已报名但一直不准备的人退回结算页。
+   * 不踢人、不判弃 —— 只撤报名，所以他还在房间、名次还在。
+   * 调用 _maybeAutoStart：这一步本身是「让人更接近开局」，必须接。 */
+  dropNext(client, payload, reqId) {
+    const found = this._requireRoom(client, reqId);
+    if (!found) return;
+    const targetId = String((payload && payload.targetId) || '');
+    if (!targetId) return this._fail(client, reqId, '缺少要跳过的人');
+    const res = SM.dropFromNext(found.room, found.playerId, targetId);
+    if (!res.ok) return this._fail(client, reqId, res.error);
+    this._ok(client, reqId, {});
+    this._maybeAutoStart(found.roomId);
+    this._broadcast(found.roomId);
+  }
+
   /* 全员就绪 → 自动开局。
    *
    * 只在「用户表达了准备好了」的那几个入口调用（ready / wantNext / restart），
@@ -733,8 +749,10 @@ class Hub {
 
   /**
    * 房主补一个 AI 玩家。
-   * 为什么限定在 WAITING：对局中加人会瞬间改变在场人数与结算口径，
+   * 为什么限定在 WAITING 与 SETTLED：对局中加人会瞬间改变在场人数与结算口径，
    * 既破坏公平也让「人数不足结束」的判断变得不可预期。
+   * 而**结算期**加人没有这个问题（这一把已经算完了），它恰好是「剩 1 人开不了下一把」
+   * 这个死锁的唯一出路 —— 那一把还没开始，补进来只是为了凑够人数。
    */
   addBot(client, reqId) {
     const found = this._requireRoom(client, reqId);
@@ -742,7 +760,10 @@ class Hub {
     const room = found.room;
 
     if (room.ownerId !== found.playerId) return this._fail(client, reqId, '只有房主可以补 AI');
-    if (room.phase !== SM.PHASE.WAITING) return this._fail(client, reqId, '对局已开始，无法补 AI');
+    const wasSettled = room.phase === SM.PHASE.SETTLED;
+    if (room.phase !== SM.PHASE.WAITING && !wasSettled) {
+      return this._fail(client, reqId, '对局已开始，无法补 AI');
+    }
 
     const active = SM.activePlayers(room);
     if (active.length >= SM.capOf(room)) return this._fail(client, reqId, '房间已满（最多 ' + SM.capOf(room) + ' 人）');
@@ -753,10 +774,19 @@ class Hub {
     const nickname = '机器人' + (botCount + 1);
 
     const res = SM.joinRoom(room, { id: botId, nickname: nickname, isBot: true });
-    /* 中途补进来的 AI 也算「这一把含 AI」——它立刻参与后续分牌与计分。
-     * 快照只在开局时做（见 SM.startGame），所以这里必须补一刀。 */
-    room.handHadBot = true;
     if (!res.ok) return this._fail(client, reqId, res.error);
+    /* 结算期补的 AI 不参与**已经打完**的那一把，所以不能标 handHadBot ——
+     * 标了这一把会被判成「含 AI 局」，战绩与排行榜口径都会跟着变。
+     * 下一把开局时 startNextRound 会按当时的座位重算这个标记。 */
+    if (!wasSettled) {
+      /* 中途补进来的 AI 也算「这一把含 AI」——它立刻参与后续分牌与计分。
+       * 快照只在开局时做（见 SM.startGame），所以这里必须补一刀。 */
+      room.handHadBot = true;
+    } else {
+      /* 结算期补的 AI 要直接进「下一把」的名单：先报名，再准备（顺序不能反 ——
+       * wantNext 会把 ready 归 false）。 */
+      SM.wantNext(room, botId);
+    }
     SM.setReady(room, botId, true); // AI 永远准备好
 
     this._ok(client, reqId, { botId: botId });

@@ -36,7 +36,7 @@ var empty = {
 var h0 = AV.pageHtml(empty, Ach, { isMe: true });
 ok(typeof h0 === 'string' && h0.length > 500, '空档案也能渲染出整页（不抛、不空串）');
 ok(h0.indexOf('0') >= 0, '顶部显示 0 个已解锁');
-ok(h0.indexOf('刚好十点半') >= 0, '★ 一条都没解锁时，成就名字照样显示');
+ok(h0.indexOf('十点半成瘾') >= 0, '★ 一条都没解锁时，成就名字照样显示');
 ok(h0.indexOf('还没打过带牌型的局') >= 0, '空态给出解释（而不是一片空网格）');
 eq(h0.indexOf('is-ok'), -1, '空档案没有任何卡片带 is-ok');
 
@@ -57,8 +57,8 @@ var prof = {
 };
 var h = AV.pageHtml(prof, Ach, { isMe: true });
 
-ok(h.indexOf('刚好十点半') >= 0, '名字在');
-ok(h.indexOf('不多不少，正好 10.5') >= 0, '描述在');
+ok(h.indexOf('十点半成瘾') >= 0, '名字在');
+ok(h.indexOf('不多不少正好 10.5') >= 0, '描述在（v114：描述不再写「十次」这类门槛）');
 ok(h.indexOf('is-ok') >= 0, '有解锁的卡片');
 /* v112：牌型成就展示的是**次数**（+ 出现率），不再画 3/10 的进度条 ——
  * 玩得久的人早就顶满了，停在 20/20 会让人以为系统不记了。 */

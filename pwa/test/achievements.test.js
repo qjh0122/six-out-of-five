@@ -220,26 +220,27 @@ eq(st2.types.filter(function (t) { return t.label === '十点半'; })[0].rate, 1
 /* ================================================================
  * 八、目录与判定
  * ================================================================ */
-eq(Ach.TOTAL, 34, '成就总数 34（牌型 13 + 对撞 6 + 通吃 4 + 战绩 11）');
+/* v114：去掉 5 条「首次拿到」的重复成就（与「N 次」那条重复）+ 补 4 条通赔 */
+eq(Ach.TOTAL, 33, '成就总数 33（牌型 8 + 对撞 6 + 通吃通赔 8 + 战绩 11）');
 
 var emptyEval = Ach.evaluate(Ach.blank(), { games: 0, longestStreak: 0, bestNet: 0 });
-eq(emptyEval.total, 34, 'evaluate 返回全部条目（未解锁也要返回，页面要显示名字）');
+eq(emptyEval.total, 33, 'evaluate 返回全部条目（未解锁也要返回，页面要显示名字）');
 eq(emptyEval.unlocked, 0, '空档案一个都没解锁');
 ok(emptyEval.list.every(function (i) { return typeof i.name === 'string' && i.name.length > 0; }),
   '未解锁条目也带名字（用户裁定：不做 ??? 猜谜）');
 
 var byS = emptyEval.bySeries;
-eq(byS.type.total, 13, '牌型系列 13 条（大牌 10 + 小牌 3）');
+eq(byS.type.total, 8, '牌型系列 8 条（5 种大牌各一条「N 次」+ 3 种小牌）');
 eq(byS.vs.total, 6, '对撞系列 6 条（大牌对撞 4 + 小牌对撞 2）');
-eq(byS.sweep.total, 4, '通吃系列 4 条');
+eq(byS.sweep.total, 8, '通吃 / 通赔各 4 条');
 eq(byS.record.total, 11, '战绩系列 11 条（含两条连败、两条新整把成就；人间清醒已删）');
 
-/* 单条判定：拿到 1 次十点半 → h1 解锁、h2（10 次）没解锁 */
+/* 单条判定：拿到 1 次十点半 → h2 还没解锁（门槛 10 次），但**次数已经记上** */
 var oneTh = Ach.evaluate({ t: { th: 1 } }, { games: 1, longestStreak: 0, bestNet: 0 });
 function findEval(e, id) {
   return e.list.filter(function (i) { return i.id === id; })[0];
 }
-eq(findEval(oneTh, 'h1').ok, true, '刚好十点半：1 次即解锁');
+eq(findEval(oneTh, 'h2').raw, 1, '拿到 1 次，raw 就是 1（卡片展示的是次数）');
 eq(findEval(oneTh, 'h2').ok, false, '十点半成瘾：需要 10 次');
 eq(findEval(oneTh, 'h2').cur, 1, '进度条显示 1 / 10');
 
@@ -268,7 +269,7 @@ eq(findEval(justUnder, 'r9').ok, false, '没有 r12 计数就拿不到一夜暴�
 
 /* 传 null / 缺字段不能抛 */
 var nullEval = Ach.evaluate(null, null);
-eq(nullEval.total, 34, 'ACH 为 null 时按空桶处理，不抛');
+eq(nullEval.total, 33, 'ACH 为 null 时按空桶处理，不抛');
 eq(nullEval.unlocked, 0, '仍然是 0 解锁');
 
 /* sinceText */

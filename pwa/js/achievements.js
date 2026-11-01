@@ -94,7 +94,7 @@
   ];
 
   var RARITY_LABEL = { normal: '普通', rare: '稀有', epic: '史诗', legend: '传说' };
-  var SERIES_LABEL = { type: '牌型', vs: '对撞', sweep: '通吃', record: '战绩' };
+  var SERIES_LABEL = { type: '牌型', vs: '对撞', sweep: '通吃 · 通赔', record: '战绩' };
 
   function num(v) { return Number(v) || 0; }
 
@@ -111,6 +111,13 @@
       s2: 0,           // 第二轮 2 组全赢
       sa: 0,           // 一把 5 组全赢
       sw: 0,           // 通吃总次数（s1+s2，不含 sa 额外加权）
+      /* 通赔（v114）：与通吃一一对应，只是把「全赢」换成「全输」。
+       * 判定要求**每组都参与了且每组都没赢** —— 只看「没赢」是不够的：
+       * 中途弃权的人后面几组根本没参与，那不是通赔，那是没打。 */
+      l1: 0,           // 第一轮 3 组全输
+      l2: 0,           // 第二轮 2 组全输
+      la: 0,           // 一把 5 组全输
+      lw: 0,           // 通赔总次数（l1 + l2）
       /* 小牌对撞（v112）：全场每个人都是该组的小牌型。
        * 大牌对撞是「两个人各有货」，小牌对撞是「一桌人都没货」—— 分母口径不同，
        * 所以不能塞进 vsn，否则「强者运强」的胜率会被一群爆点稀释。 */
@@ -169,7 +176,7 @@
     return dst;
   }
 
-  var COUNT_KEYS = ['vs', 'vsl', 'vsn', 's1', 's2', 'sa', 'sw', 'smv', 'sml', 'smn', 'r7', 'r8', 'r9', 'r10', 'r12'];
+  var COUNT_KEYS = ['vs', 'vsl', 'vsn', 's1', 's2', 'sa', 'sw', 'l1', 'l2', 'la', 'lw', 'smv', 'sml', 'smn', 'r7', 'r8', 'r9', 'r10', 'r12'];
   var TYPE_KEY_KNOWN = { th: 1, sf: 1, lp: 1, nn: 1, wh: 1, bz: 1, sp: 1, mn: 1 };
   var MODE_KNOWN = { tenhalf: 1, piaosanye: 1, douniu: 1 };
   /* 大牌型 / 小牌型的键集合分开存：TYPE_KEY 是两者的合集（计数时都要认），
@@ -206,6 +213,8 @@
     if (!list.length) return run;
 
     var wins = {};   // 本轮各组赢家 → 赢了几组
+    var parts = {};  // 每人参与了几组（通赔要求「每组都参与」）
+    var losts = {};  // 每人「参与了但没赢」几组
 
     list.forEach(function (g) {
       if (!g) return;
@@ -221,6 +230,8 @@
       var smallIds = [];
       entries.forEach(function (e) {
         var b = bucketOf(e.id);
+        parts[e.id] = num(parts[e.id]) + 1;
+        if (e.id !== g.winnerId) losts[e.id] = num(losts[e.id]) + 1;
         /* 分母按**人**计：每参与一次该模式组 +1。
          * 所以「十点半出现率 50%」的含义是「我打过的十点半里有一半拿到 10.5」，
          * 而不是「全场有一半的十点半是 10.5」。
@@ -275,6 +286,25 @@
         b.s2 = num(b.s2) + 1;
         b.sw = num(b.sw) + 1;
         if (run._r1[pid]) b.sa = num(b.sa) + 1;
+      }
+    });
+
+    /* 通赔：这一轮每一组都参与了、且每一组都不是赢家。
+     * 与通吃对称，但多一道「参与」校验 —— 通吃不需要它（赢的那组必然参与了），
+     * 通赔需要（没参与的组也不可能是赢家，会被误判成「全输」）。 */
+    Object.keys(parts).forEach(function (pid) {
+      if (num(parts[pid]) !== total) return;
+      if (num(losts[pid]) !== total) return;
+      var b = bucketOf(pid);
+      if (round === 1) {
+        run._l1 = run._l1 || {};
+        run._l1[pid] = 1;
+        b.l1 = num(b.l1) + 1;
+        b.lw = num(b.lw) + 1;
+      } else {
+        b.l2 = num(b.l2) + 1;
+        b.lw = num(b.lw) + 1;
+        if (run._l1 && run._l1[pid]) b.la = num(b.la) + 1;
       }
     });
 
@@ -373,35 +403,20 @@
    */
   var CATALOG = [
     /* ---------- 系列一 · 牌型（大牌 10 条 + 小牌 3 条，全部展示次数与概率） ---------- */
-    { id: 'h1', series: 'type', rarity: 'rare', name: '刚好十点半', typeKey: 'th',
-      desc: '不多不少，正好 10.5。多一点是爆，少一点是输',
-      cur: function (c) { return tn(c, 'th'); }, need: 1 },
     { id: 'h2', series: 'type', rarity: 'epic', name: '十点半成瘾', typeKey: 'th',
-      desc: '十次卡在这条线上，你已经知道那半张牌该往哪放',
+      desc: '不多不少正好 10.5 的那种手气。落到这条线上，你已经知道那半张牌该往哪放',
       cur: function (c) { return tn(c, 'th'); }, need: 10 },
-    { id: 'h3', series: 'type', rarity: 'rare', name: '豹纹加身', typeKey: 'lp',
-      desc: '三张一样的牌。第一次穿上这件外套',
-      cur: function (c) { return tn(c, 'lp'); }, need: 1 },
     { id: 'h4', series: 'type', rarity: 'epic', name: '豹子头', typeKey: 'lp',
-      desc: '十次豹子，牌桌上有人开始怕你了',
+      desc: '三张一样的牌。牌桌上出了豹子，第一反应是先看是谁的',
       cur: function (c) { return tn(c, 'lp'); }, need: 10 },
-    { id: 'h5', series: 'type', rarity: 'epic', name: '一气呵成', typeKey: 'sf',
-      desc: '同花顺——既要同花，又要连号，还得是同一组牌',
-      cur: function (c) { return tn(c, 'sf'); }, need: 1 },
     { id: 'h6', series: 'type', rarity: 'legend', name: '同花顺专业户', typeKey: 'sf',
-      desc: '五次同花顺。到这一步，运气已经不是主要解释了',
+      desc: '既要同花、又要连号，还得落在同一组里。到这一步，运气已经不是主要解释了',
       cur: function (c) { return tn(c, 'sf'); }, need: 5 },
-    { id: 'h7', series: 'type', rarity: 'normal', name: '牛气冲天', typeKey: 'nn',
-      desc: '五张凑出一个整十，剩下两张再凑出个牛',
-      cur: function (c) { return tn(c, 'nn'); }, need: 1 },
     { id: 'h8', series: 'type', rarity: 'epic', name: '牛魔王', typeKey: 'nn',
-      desc: '三十次牛牛。你大概是靠这个吃饭的',
+      desc: '五张凑出整十，剩下两张再凑出个牛。你大概是靠这个吃饭的',
       cur: function (c) { return tn(c, 'nn'); }, need: 30 },
-    { id: 'h9', series: 'type', rarity: 'legend', name: '五朵金花', typeKey: 'wh',
-      desc: '五张全是花牌，全程没让数字出现',
-      cur: function (c) { return tn(c, 'wh'); }, need: 1 },
     { id: 'h10', series: 'type', rarity: 'legend', name: '花牛成精', typeKey: 'wh',
-      desc: '五次五花牛。见过的人都记住了',
+      desc: '五张全是花牌，全程没让数字出现。见过的人都记住了',
       cur: function (c) { return tn(c, 'wh'); }, need: 5 },
 
     /* ---- 小牌型（v112 新增）：三种牌组各有一条「最惨」的记法 ---- */
@@ -409,7 +424,7 @@
       desc: '十点半里把自己玩爆。这一组已经没得救，好歹爆得明白',
       cur: function (c) { return tn(c, 'bz'); }, need: 1 },
     { id: 'h12', series: 'type', rarity: 'normal', name: '一手散珠', typeKey: 'sp',
-      desc: '飘三叶五张各管各的，牌型一个都没凑上',
+      desc: '飘三叶三张各管各的，牌型一个都没凑上',
       cur: function (c) { return tn(c, 'sp'); }, need: 1 },
     { id: 'h13', series: 'type', rarity: 'normal', name: '无牛可牵', typeKey: 'mn',
       desc: '斗牛五张凑不出整十，只能看着别人有牛',
@@ -426,7 +441,7 @@
       desc: '硬碰硬赢下来的次数。你专挑有牌的人下手',
       cur: function (c) { return g(c, 'vs'); }, need: 20 },
     { id: 'c3', series: 'vs', rarity: 'legend', name: '强者运强',
-      desc: '大牌对撞十次以上，还赢下六成。运气这次站在强的那边',
+      desc: '大牌撞大牌，你还赢下六成。运气这次站在强的那边',
       cur: function (c) { return g(c, 'vsn'); }, need: 10,
       /* 双条件成就：把「胜率」塞进 extra 里单独判，
        * 页面上的进度条按分母走（撞够 10 次），达不达成看 extra */
@@ -455,6 +470,23 @@
     { id: 's4', series: 'sweep', rarity: 'epic', name: '常胜将军',
       desc: '通吃的次数。不管一轮还是两轮，反正都是你的',
       cur: function (c) { return g(c, 'sw'); }, need: 10 },
+
+    /* ---- 通赔（v114）：与上面四条一一对应，把「全赢」换成「全输」 ----
+     * 为什么补这一组：通吃是「这一轮全是我的」，通赔是「这一轮全不是我的」。
+     * 后者发生的频率比前者高得多（一个人牌差时整轮没戏），而首版只记喜不记悲 ——
+     * 牌桌上真正会被拿出来讲的是「我那轮一把没赢」，不是「我又通吃了」。 */
+    { id: 's5', series: 'sweep', rarity: 'epic', name: '一巡散场',
+      desc: '第一轮三组全输。这一轮没你的分，只有你送出去的',
+      cur: function (c) { return g(c, 'l1'); }, need: 1 },
+    { id: 's6', series: 'sweep', rarity: 'rare', name: '双赔',
+      desc: '第二轮两组全输。收尾的时候，你一次都没站住',
+      cur: function (c) { return g(c, 'l2'); }, need: 1 },
+    { id: 's7', series: 'sweep', rarity: 'legend', name: '五子皆输',
+      desc: '一把里五组全输。别人收你的分，收到手软',
+      cur: function (c) { return g(c, 'la'); }, need: 1 },
+    { id: 's8', series: 'sweep', rarity: 'epic', name: '常败将军',
+      desc: '通赔的次数。不管一轮还是两轮，反正都不是你的',
+      cur: function (c) { return g(c, 'lw'); }, need: 10 },
 
     /* ---------- 系列四 · 战绩 ----------
      * 只有这六条保留进度条：它们问的是「还差多少」。
@@ -508,6 +540,7 @@
       t: a.t || {}, n: a.n || {},
       vs: num(a.vs), vsl: num(a.vsl), vsn: num(a.vsn),
       s1: num(a.s1), s2: num(a.s2), sa: num(a.sa), sw: num(a.sw),
+      l1: num(a.l1), l2: num(a.l2), la: num(a.la), lw: num(a.lw),
       smv: num(a.smv), sml: num(a.sml), smn: num(a.smn),
       r7: num(a.r7), r8: num(a.r8), r9: num(a.r9), r10: num(a.r10), r12: num(a.r12),
       games: num(stats.games),

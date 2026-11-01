@@ -50,13 +50,15 @@
   var SERIES_ORDER = ['type', 'vs', 'sweep', 'record'];
 
   function seriesTitle(key) {
-    return { type: '牌型', vs: '对撞', sweep: '通吃', record: '战绩' }[key] || key;
+    /* 通吃系列里有一半是通赔（v114 补的），标题必须写清，
+     * 否则玩家看到「一把五组全输」出现在「通吃」下面会以为是 bug。 */
+    return { type: '牌型', vs: '对撞', sweep: '通吃 · 通赔', record: '战绩' }[key] || key;
   }
   function seriesHint(key) {
     return {
       type: '每种牌型拿到过几次、占参与的几分之几。分母是「参与该组的次数」，不是打了多少把。大牌小牌都记',
       vs: '大牌撞大牌算对撞；一桌人全是小牌（爆点 / 散牌 / 没牛）也算，两种分开记',
-      sweep: '一轮里所有组都赢下来。第二轮只有两组，所以「双杀」比「一巡清场」容易',
+      sweep: '一轮里所有组都赢下来算通吃，全输算通赔。第二轮只有两组，所以「双杀 / 双赔」比「一巡」容易',
       record: '场次与连胜看还差多少，其余成就记的是次数——玩得越久数字越大'
     }[key] || '';
   }

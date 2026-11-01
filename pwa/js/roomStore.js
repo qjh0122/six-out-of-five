@@ -719,6 +719,11 @@
           .then(function () { return { ok: true }; })
           .catch(function (e) { return { ok: false, error: e.message }; });
       },
+      dropNext: function (roomId, playerId, targetId) {
+        return request({ type: 'dropNext', targetId: targetId })
+          .then(function () { return { ok: true }; })
+          .catch(function (e) { return { ok: false, error: e.message }; });
+      },
       unWantNext: function (roomId, playerId) {
         return request({ type: 'unWantNext' })
           .then(function () { return { ok: true }; })
