@@ -1151,6 +1151,36 @@
     return { ok: true, room: room };
   }
 
+  /* 「不等他」：已准备的人把**未准备的报名者**退回结算页（v114 / P4-B-1）。
+   *
+   * 解决的是这个死局：有人点了「开始下一把」、却不点准备 ——
+   * 而 `canStartNext` 要求「已报名的全部准备好了」，于是整桌永远开不了下一把，
+   * 没有超时、踢不掉、就位态连「结束本局」都是灰的。
+   *
+   * 与「踢人」的区别要守住：只撤掉他的**报名**，人还在房间、名次还在、
+   * 分数还在，下一把打完他还能重新报名。所以不需要征得他同意，
+   * 也不产生任何战绩/成就影响。
+   *
+   * 只允许「已准备的人」发起：正停在结算页看战绩的人，不该被别人替他做决定。
+   */
+  function dropFromNext(room, actorId, targetId) {
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.phase !== PHASE.SETTLED) return { ok: false, error: '新的一把已经开始了', code: 'NEXT_STARTED' };
+    var actor = findPlayer(room, actorId);
+    var target = findPlayer(room, targetId);
+    if (!actor || actor.left || !actor.wantNext || !actor.ready) {
+      return { ok: false, error: '准备好之后才能催别人' };
+    }
+    if (!target || target.left) return { ok: false, error: '找不到要跳过的人' };
+    if (target.id === actor.id) return { ok: false, error: '不能跳过自己' };
+    if (!target.wantNext) return { ok: true, room: room };   // 幂等：他已经回结算页了
+    if (target.ready) return { ok: false, error: '他已经准备好了' };
+    target.wantNext = false;
+    target.ready = false;
+    room.updatedAt = Date.now();
+    return { ok: true, room: room, targetId: target.id };
+  }
+
   /* 真正开下一局：只带已进入的人，分数重置，重新发牌。
    * 返回 removed 让调用方去通知那些没点的人 —— 他们已经不在这个房间里了，
    * 不通知的话他们的界面会停在结算页，点「开始下一局」才发现晚了。
@@ -1543,6 +1573,7 @@
     handKey: handKey,
     restart: restart,
     wantNext: wantNext,
+    dropFromNext: dropFromNext,
     unWantNext: unWantNext,
     nextRoundPlayers: nextRoundPlayers,
     canStartNext: canStartNext,

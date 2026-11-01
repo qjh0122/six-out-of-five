@@ -207,8 +207,14 @@ async function run() {
   console.log('\n[AI 只允许在等待阶段补]');
   let err2 = null;
   try { await me.request('addBot'); } catch (e) { err2 = e.message; }
-  if (room && room.phase !== SM.PHASE.WAITING) {
+  /* v114：规则从「只许 WAITING」放宽到「WAITING 或 SETTLED」。
+   * 结算期补 AI 不改变已打完那一把的任何口径（handHadBot 不标），
+   * 而它恰好是「剩 1 人开不了下一把」这个死锁的出路。
+   * 所以这里守的是「**对局中**仍然拒绝」—— 那才是真正要挡的那条。 */
+  if (room && (room.phase === SM.PHASE.ROUND1_SPLIT || room.phase === SM.PHASE.ROUND2_SPLIT)) {
     ok(err2 && err2.indexOf('无法补') >= 0, '对局中补 AI 被拒绝', err2);
+  } else if (room && room.phase === SM.PHASE.SETTLED) {
+    ok(!err2, '★ 结算期允许补 AI（剩 1 人时的唯一出路）', err2);
   } else {
     ok(true, '当前仍在等待阶段，跳过该断言');
   }

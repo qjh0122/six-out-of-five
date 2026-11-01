@@ -645,11 +645,12 @@
       hint.classList.add('ready');
     }
 
-    // 补 AI：仅房主、仅等待阶段、未满员、且没有解散投票在进行
+    // 补 AI：仅房主、等待阶段或结算期（就位态）、未满员、且没有解散投票在进行
     var addBotBtn = $('#btn-add-bot');
     if (addBotBtn) {
       var canAddBot = isOwner
-        && room.phase === StateMachine.PHASE.WAITING
+        && (room.phase === StateMachine.PHASE.WAITING
+          || (room.phase === StateMachine.PHASE.SETTLED && !!nextWait))
         && StateMachine.activePlayers(room).length < StateMachine.capOf(room)
         && !(room.dissolve && room.dissolve.active)
         && RoomStore.getMode() === 'ws';
@@ -821,7 +822,43 @@
        * 也是玩家进房后最该知道的一个数。 */
       + line('本局', StateMachine.handLimitOf(room) + ' 把 · 打满为止')
       + line('我的战绩', rankTxt)
-      + '</div>';
+      + '</div>'
+      /* ★ v114（B-1）「不等他」：只有**我已准备**、且确实有人报了名却没准备时才出现。
+       * 放在信息卡里而不是底部按钮条 —— 那条在横屏只有约 0.52 缩放，
+       * 再加一颗按钮会把它挤成两行（实测过：9.9px 那一档就是这么来的）。 */
+      + skipWaitHtml(room, me, nextWait);
+  }
+
+  /* 「不等他」按钮的标记。命名成函数是为了让 renderReadyCard 只读一行。 */
+  function staleNextPlayers(room, me, nextWait) {
+    if (!nextWait || !me || !me.ready || !me.wantNext) return [];
+    return StateMachine.nextRoundPlayers(room).filter(function (p) {
+      return !p.ready && p.id !== me.id;
+    });
+  }
+  function skipWaitHtml(room, me, nextWait) {
+    var stale = staleNextPlayers(room, me, nextWait);
+    if (!stale.length) return '';
+    return '<button type="button" class="tr-skip" data-skip-next="' + esc(stale[0].id) + '">'
+      + '不等 ' + esc(short(stale[0].nickname || '他')) + '，就我们开'
+      + (stale.length > 1 ? '（还有 ' + (stale.length - 1) + ' 人）' : '')
+      + '</button>';
+  }
+
+  /* 发起「不等他」。要确认一次：这一下会把对方退回结算页，
+   * 虽然人还在房间、名次还在，但他会错过这一把。 */
+  function onSkipStale(targetId) {
+    if (!state.room || blockedOffline()) return;
+    var target = null;
+    var list = state.room.players || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === targetId) { target = list[i]; break; }
+    var who = (target && target.nickname) || '他';
+    askConfirm('不等 ' + who + ' 了？',
+      '他会退回结算页，这一把不参加；人还在房间里，名次和分数都保留，这一把打完还能再报名。',
+      async function () {
+        var res = await RoomStore.dropNext(state.roomId, state.myId, targetId);
+        if (!res || !res.ok) { flash((res && res.error) || '操作失败'); Sfx.play('error'); return; }
+      });
   }
 
   /* ---------------------------- 对局页 ---------------------------- */
@@ -2955,8 +2992,11 @@
          *   · 别人开了下一局、而我没点 → 我不是被踢，是这一局本来就没我；
          *   · 房间真的被回收 → 已退出。
          * 都回首页，但原因不同，玩家需要知道自己错过了什么。 */
+        /* v114（B-3）：被挤出去的人要知道「怎么回来」。
+         * 以前只说「你没赶上」，听起来像这桌散了 —— 其实这一局打完之后，
+         * 用房号还能进来（房间没销毁）。把房号带上，他就有下一步动作。 */
         flash(meta && meta.reason === 'nextRoundStarted'
-          ? '新的一局已经开始了，你没赶上这一局'
+          ? ('新的一局已经开始了，你没赶上；这局打完用房号 ' + (state.roomId || '') + ' 还能进')
           : '已退出房间');
       } else {
         state.room = r;
@@ -3126,10 +3166,34 @@
     }
   }
 
-  async function onReady() {
+  /* ★ v114（B-2）：开下一把之前，先让「最急的人」看一眼代价。
+   * 只要还有人停在结算页（没报名），一旦已报名的人全部准备好，
+   * 那一把就会立刻开始，还在结算页的人会被挤出去 —— 他自己不会知道。
+   * 所以「我要准备」这一步加一次确认，把人数和后果说清。
+   * 只在「还没准备 → 准备」这个方向上问，取消准备不问。 */
+  function onReady() {
     var me = getMe(state.room);
     if (!me) return;
     if (blockedOffline()) return;
+    /* 只管「结算后的就位态」（phase 仍是 SETTLED + 我已报名）。
+     * 首次开局的准备不在此列：那时大家都在房间里等着，没有人会被挤出去。 */
+    if (!me.ready && state.room.phase === StateMachine.PHASE.SETTLED && me.wantNext) {
+      var waiting = (state.room.players || []).filter(function (p) {
+        return !p.left && !p.wantNext;
+      }).length;
+      if (waiting > 0) {
+        askConfirm('现在就开下一把？',
+          '还有 ' + waiting + ' 人停在结算页。全部准备好就会立刻开局，他们会被挤出去，这一把打完才能再进来。',
+          function () { return doReady(); });
+        return;
+      }
+    }
+    doReady();
+  }
+
+  async function doReady() {
+    var me = getMe(state.room);
+    if (!me) return;
     var restore = pressBusy($('#btn-ready'), me.ready ? '取消中…' : '准备中…');
     if (!restore) return;
     try {
@@ -4103,6 +4167,15 @@
     $('#btn-create-cancel').addEventListener('click', closeCreateModal);
     $('#btn-join').addEventListener('click', onJoin);
     $('#btn-ready').addEventListener('click', onReady);
+    /* 「不等他」用委托：按钮是渲染出来的，每次重建，不能逐个绑定。 */
+    var trCard = $('#tr-card');
+    if (trCard) {
+      trCard.addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest('[data-skip-next]') : null;
+        if (!btn) return;
+        onSkipStale(btn.getAttribute('data-skip-next'));
+      });
+    }
     $('#btn-add-bot').addEventListener('click', onAddBot);
     $('#btn-dissolve').addEventListener('click', onProposeDissolve);
     $('#btn-dissolve-agree').addEventListener('click', function () { onVoteDissolve(true); });

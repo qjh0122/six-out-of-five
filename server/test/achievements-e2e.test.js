@@ -164,11 +164,20 @@ function mk(id, nick) {
 
   const pub = profiles.get(A.playerId);
   eq(pub.ach, undefined, '★ 对外档案不带明细');
-  eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 34 靠它）');
-  eq(pub.achTotal, 34, '总数 34（v112 扩了小牌型 / 小牌对撞 / 连败 / 整把成就）');
+  eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 33 靠它）');
+  eq(pub.achTotal, 33, '总数 33（v114 去重 5 条 + 补 4 条通赔）');
 
   const pubB = profiles.get(B.playerId);
-  eq(pubB.achCount < self.achCount, true, '乙的解锁数确实比甲少（两个人的桶没串）');
+  const selfB = profiles.getSelf(B.playerId);
+  /* v114：原来这条写「乙的解锁数比甲少」，靠的是「甲拿到就解锁的那批首次成就」。
+   * 那 5 条删掉之后两边数量可能持平，而且**持平也可能是桶串了** —— 判据不成立。
+   * 换成直接对账：甲有五子登科（全赢）、乙没有；乙有五子皆输（全输）、甲没有。
+   * 这两个方向一起断，才真的证明「同一个房间的两个人各记各的」。 */
+  eq(self.ach.sa, 1, '甲的桶里有五子登科');
+  eq(selfB.ach.sa || 0, 0, '★ 乙的桶里没有（没有串到乙头上）');
+  eq(selfB.ach.la, 1, '★ 乙的桶里有五子皆输（全输也算一件事）');
+  eq(self.ach.la || 0, 0, '★ 甲没有（没有串到甲头上）');
+  ok(pubB.achCount >= 1, '乙的对外档案也有解锁数');
 
   /* 新建一个房间再来一把：确认上一局的桶没有残留 */
   console.log('\n[6] 第二局不继承上一局的数');

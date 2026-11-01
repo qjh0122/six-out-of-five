@@ -138,7 +138,7 @@ console.log('\n[4] 展示口径：只有六条画进度条');
   const prog = res.list.filter(function (x) { return x.mode === 'progress'; }).map(function (x) { return x.name; });
   eq(prog.join(','), '常客,老油条,势不可挡,十连胜,背到极点,衰神附体', '进度条成就正好这六条（顺序也钉住）');
   const counts = res.list.filter(function (x) { return x.mode === 'count'; });
-  eq(counts.length, 34 - 6, '其余 28 条都是次数口径');
+  eq(counts.length, 33 - 6, '其余 27 条都是次数口径（v114 去重 5 条 + 补 4 条通赔）');
   ok(counts.every(function (x) { return x.need >= 1; }), '次数口径的成就都有解锁门槛');
   /* 用户点名的例子：牌桌屠夫阈值 20，但**展示**的是累计次数，不是 0/20。
    * 门槛和展示是两件事 —— 门槛决定星亮不亮，展示决定玩家看到什么数字。 */

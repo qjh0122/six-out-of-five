@@ -928,6 +928,22 @@ input:focus {
 }
 .tr-k { color: var(--gray-aux); flex: 0 0 auto; }
 .tr-v { color: var(--text-main); text-align: right; }
+/* 「不等他，就我们开」（v114）：挂在信息卡里的一行文字按钮。
+ * 不放进底部动作条 —— 那条横屏只有 0.52 缩放，多一颗按钮会挤成两行。 */
+.tr-skip {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px 8px;
+  border: 1px dashed rgba(245, 193, 92, 0.45);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--gold);
+  font-size: 24px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.tr-skip:active { background: rgba(245, 193, 92, 0.12); }
 /* 动作条：和底部那些 ghost 按钮同宽，视觉上不会比「准备」窄一截 */
 .ready-acts {
   width: 100%;
