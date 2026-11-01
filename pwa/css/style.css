@@ -434,6 +434,17 @@ html.no-session #screen-auth { display: flex !important; }
 }
 .btn-secondary:active { box-shadow: 0 2px 0 var(--brand-green-deep); }
 
+/* 就位态那颗「已就位 ✓」。它虽然带 disabled，语义却是「已经完成」而不是「不可用」，
+ * 所以不沿用 .btn[disabled] 的灰底（灰底会让玩家以为按钮坏了，然后去刷新页面）。
+ * 用淡绿底 + 品牌绿字：一眼能看出「这一步我做完了、不用再点」。 */
+.btn.btn-secondary.is-done[disabled] {
+  background: rgba(18, 160, 127, 0.18) !important;
+  color: var(--brand-green) !important;
+  opacity: 1;
+  border: 2px solid rgba(18, 160, 127, 0.45);
+  cursor: default;
+}
+
 /* .btn-start（金色「开始游戏」）随按钮一起删了：开局改成全员准备后自动触发，
    那条金色渐变再也没有挂载点。留着只会让人以为还有个入口。 */
 

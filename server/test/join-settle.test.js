@@ -145,7 +145,9 @@ async function run() {
   const cMe = joined && SM.findPlayer(joined.room, c.playerId);
   ok(cMe && cMe.wantNext === true, '★ 自动算「报名下一局」（不带这个标记新一局会把他静默丢掉）');
   ok(cMe && cMe.joinedLate === true, '★ 标记「没打上一局」（前端不弹上一局结算、分数不写上局）');
-  eq(cMe && cMe.ready, false, '没有替他点准备');
+  /* C-2 只把「结算页点开始下一局」那条主路径改成一次点击；
+   * 从房号进来的这条仍要自己点一次准备（他还没看到这间房长什么样）。 */
+  eq(cMe && cMe.ready, false, '从房号进来的人仍要自己点一次准备');
   eq(cMe && cMe.score, CONFIG.INITIAL_SCORE, '分数是初始分');
 
   /* 广播：甲乙的推送里也要出现丙，否则房间页的座位表不会更新 */
@@ -155,13 +157,12 @@ async function run() {
   ok(c.lastRoom() && c.lastRoom().players.length === 3, '丙自己也收到了房间（进入房间页而不是空白）');
 
   console.log('\n[3] 三个人一起开下一局，丙手里要有牌');
+  /* C-2 之后甲乙点「开始下一局」时就已就位，不用再各点一次准备；
+   * 只剩丙（从房号进来的）还差这一步。他一点，三个人齐了，服务端直接开局。 */
   await b.request('wantNext');
   await wait(60);
+  eq(a.lastRoom().phase, SM.PHASE.SETTLED, '甲乙都就位了，但丙还没准备 → 停在结算态');
   await c.request('ready', { ready: true });
-  await wait(60);
-  await a.request('ready', { ready: true });   // 甲报名时 ready 已被清掉
-  await wait(80);
-  await b.request('ready', { ready: true });
   await wait(200);
   const next = c.lastRoom();
   eq(next.phase, SM.PHASE.ROUND1_SPLIT, '★ 下一局开了');

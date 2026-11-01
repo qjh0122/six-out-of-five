@@ -943,9 +943,13 @@ async function main() {
   const seatCount = await evaluate('document.querySelectorAll("#room-players .player-row").length');
   ok(seatCount >= 2, '补 AI 成功（房间里有 ' + seatCount + ' 人）');
 
-  /* 座位表指纹（新开一局的等待页）。等一会儿「继续下一把再回房间」时拿它做对照：
-   * 用户报的就是这两屏长得不一样 —— 一边 8 格挤满邀请卡，另一边只剩 3 格、
-   * 分数那列还写「—」。只断言人数不够，格子数 / 邀请卡数 / 每格的四行结构都要对上。 */
+  /* 座位表指纹（新开一局 / 首次开局的等待页）。
+   *
+   * 以前这里采两份（「新开一局」与「继续下一把回到房间」）做对照 ——
+   * 用户报过这两屏长得不一样（一边 8 格挤满邀请卡，另一边只剩 3 格、分数那列还写「—」）。
+   * C-2（v116）之后，2 人 AI 房里点「开始下一局」直接开打、不再有那一屏，
+   * 所以现在只剩这一份：它仍然能抓住「房子建成时座位表就画错了」，
+   * 但抓不到「就位态画错了」—— 那条留白记在 release-progress 的 v116 一节里。 */
   const seatSign = () => evaluate(`(function(){
     var g = document.getElementById('room-players');
     var rows = Array.prototype.map.call(g.children, function(c){
@@ -961,6 +965,8 @@ async function main() {
   })()`);
   const seatSignNew = await seatSign();
   console.log('    座位表（新开一局）' + JSON.stringify(seatSignNew));
+  ok(seatSignNew.slots >= seatSignNew.players && seatSignNew.players >= 2,
+    '★ 座位表里有我已补进来的 AI（格子数 ≥ 人数 ≥ 2）', JSON.stringify(seatSignNew));
   /* 房间页是横屏版式唯一没被别处截到的屏（对局页有 probe-table、结算页有下面那张），
    * 而它横屏走的是两栏排布，布局错了只能靠眼睛发现。 */
   /* 顶栏与玩家列表不许叠在一起：横屏改成 grid 之后，这里最容易出现
@@ -1192,85 +1198,52 @@ async function main() {
   if (SHOTS) console.log('    截图：' + (await shot('settle')));
 
   /* ---------------------------------------------------------------- */
-  /* ★ 就位态：结算后点「开始下一局」回到房间页（房间号不变）。
+  /* ★ C-2（v116）：结算后点「开始下一局」是一步到位 —— 报名即就位，
+   * 人数够的话服务端在这一次广播里就发牌，中间不再有「回房间页再点一次准备」那一屏。
    *
-   * 这是本次改动里唯一「新造出来的一屏状态」，静态测试只能证明按钮存在，
-   * 证明不了它们真的在视口里、真的点得到 —— 而 .screen 是 overflow:hidden，
-   * 多出来的一行按钮要是超了高度，会被**静默裁掉**，看起来就是「按钮没做」。 */
-  console.log('\n[7b] 就位态：开始下一局 → 回房间页 → 还能撤回');
-  const codeBefore = await evaluate('document.getElementById("room-code").textContent');
+   * 这一段的形状因此变了：以前验的是「回到准备态 + 能撤回」，现在验的是
+   * 「按一下就真的开打」。就位态本身没有消失（多真人房里，有人还在结算页时仍会出现），
+   * 但这个脚本只有一个真人 + 一个 AI，AI 在结算那一刻就自动报名了，
+   * 所以这里永远凑得够人、永远看不到就位态。
+   *
+   * 就位态的 UI（按钮在不在视口里、会不会被 overflow 静默裁掉）因此**失去了自动化覆盖**，
+   * 见 docs/release-progress.md v116 一节的「没验证到的」。
+   *
+   * 开打之后要「结束本局」回到结算页 —— 下面 [8] 的战绩是从结算页进的，
+   * 停在对局里会把那条链路截断。 */
+  console.log('\n[7b] 一次点击：结算页 →「开始下一局」→ 直接开打');
   await evaluate('document.getElementById("btn-next").click()');
-  /* 就位态同样画在牌桌上（v82），判据与建房时一致：准备按钮在视口里。 */
-  const inWait = await waitFor(READY_DRAWN, 8000, '点了「开始下一局」没回到准备态');
-  ok(inWait, '★ 点「开始下一局」回到准备态');
-  ok((await evaluate('__journey.vis("table-ready")')) === true, '★ 就位态也在牌桌上');
+  /* 判据用「真的进了牌桌」而不是「进了准备态」：C-2 要的正是跳过准备态。 */
+  const straightIn = await waitFor(IN_TABLE, 12000, '点了「开始下一局」没有直接开打');
+  ok(straightIn, '★ 点「开始下一局」直接开打（不再有「回房间页再点一次准备」）');
 
-  if (inWait) {
-    const codeAfter = await evaluate('document.getElementById("room-code").textContent');
-    ok(codeAfter === codeBefore, '★ 房间号没变（回的是同一个房间）', codeBefore + ' → ' + codeAfter);
+  if (straightIn) {
+    /* 确认框：房间里没有「停在结算页的真人」时不该弹 —— 弹了就是多点一次，
+     * 而 C-2 的全部意义就是少这一次。 */
+    ok(!(await evaluate('__journey.confirmOpen()')), '★ 没人在结算页时不再弹「现在就开下一局」确认框');
 
-    /* ★ 两种等待页必须是同一张座位表（用户报的「ui 不一致」）。
-     * 这里比的是结构指纹，不是像素：格子数 / 邀请卡数 / 每格的四行（头像·名字·状态·分数）。 */
-    const seatSignNext = await seatSign();
-    console.log('    座位表（继续下一把）' + JSON.stringify(seatSignNext));
-    if (SHOTS) console.log('    截图：' + (await shot('room-nextwait')));
-    ok(seatSignNext.slots === seatSignNew.slots,
-      '★ 就位态座位格数与新开一局一致（' + seatSignNext.slots + ' / ' + seatSignNew.slots + '）');
-    ok(seatSignNext.invites === seatSignNew.invites,
-      '★ 邀请卡数量一致（' + seatSignNext.invites + ' / ' + seatSignNew.invites + '）');
-    ok(seatSignNext.shape === seatSignNew.shape,
-      '★ 每格的四行结构一致（头像·名字·状态·分数）', seatSignNext.shape);
-    /* 分数那列不许写成「—」：上一局的分是真的，藏起来就是信息缺失 */
-    const scoreCells = await evaluate(`Array.prototype.map.call(
-      document.querySelectorAll('#room-players .player-row .player-score'),
-      function(e){ return e.textContent.trim(); })`);
-    ok(scoreCells.length > 0 && scoreCells.every(function(t){ return /\d/.test(t); }),
-      '★ 就位态座位卡上有分数（不再是一排「—」）', JSON.stringify(scoreCells));
+    const slotsNow = await evaluate('__journey.slotCount()');
+    ok(slotsNow >= 3, '★ 新一局真的发了牌（第一轮组槽 ≥3 组）', slotsNow);
 
-    const waitUi = await evaluate(`(function(){
-      function v(id){
-        var e = document.getElementById(id);
-        if (!e) return null;
-        var r = e.getBoundingClientRect();
-        var cs = getComputedStyle(e);
-        return {
-          hidden: cs.display === 'none' || cs.visibility === 'hidden',
-          w: Math.round(r.width), h: Math.round(r.height),
-          inside: r.top >= -1 && r.bottom <= innerHeight + 1 && r.width > 1 && r.height > 1,
-          text: (e.textContent || '').trim()
-        };
-      }
-      return { prev: v('btn-prev-replay'), back: v('btn-next-back'), dis: v('btn-dissolve') };
+    /* 上一局打完时我的分数会被清零：新一把从 0 起算。
+     * 结算页上那句「下一把分数从 0 分重新开始」说的就是这件事，这一条是它的实测版。 */
+    const zeroed = await evaluate(`(function(){
+      var t = document.getElementById('game-top');
+      return t ? t.textContent : '';
     })()`);
-    console.log('    就位态按钮：' + JSON.stringify(waitUi));
+    ok(/0/.test(zeroed || ''), '新一局分数从 0 起（顶栏能看到 0）', JSON.stringify(String(zeroed).slice(0, 60)));
 
-    ok(waitUi && waitUi.back && !waitUi.back.hidden, '★ 就位态露出「回结算页」（误点能反悔）');
-    ok(waitUi && waitUi.back && waitUi.back.inside,
-      '★ 它在视口内、没被 overflow 裁掉', waitUi && waitUi.back && (waitUi.back.h + 'px'));
-    /* 上一局已经打了 2 把，回放入口必须出现且可点 */
-    ok(waitUi && waitUi.prev && !waitUi.prev.hidden, '★ 就位态保留「看上一局过程」（结算页的入口随屏消失）');
-    ok(waitUi && waitUi.prev && waitUi.prev.inside,
-      '★ 它也在视口内', waitUi && waitUi.prev && (waitUi.prev.h + 'px'));
-    /* 这一刻 phase 还是 SETTLED，点「结束本局」必然被拒 —— 藏起来才对 */
-    ok(waitUi && waitUi.dis && waitUi.dis.hidden, '★ 就位态藏起「结束本局」（否则点了必报错）');
-
-    /* 真的能点开回放 */
-    await evaluate('document.getElementById("btn-prev-replay").click()');
-    const prevOpen = await waitFor('__journey.vis("replay-modal")', 5000, '就位态点回放入口没反应');
-    ok(prevOpen, '★ 就位态点「看上一局过程」能打开回放');
-    if (prevOpen) {
-      const prevTitle = await evaluate('(document.getElementById("replay-title")||{}).textContent');
-      ok(prevTitle === '上一局', '★ 标题写「上一局」（这一局已经打完了）', prevTitle);
-      await evaluate('document.getElementById("btn-replay-close").click()');
-      await sleep(300);
+    /* 回到结算页，给 [8] 铺路。这一把一分没打，服务端会判 voided，
+     * 不会往档案里记一场 —— 所以不会污染下面「战绩」和「排行榜」的期望值。 */
+    console.log('    收尾：结束本局，回到结算页');
+    await evaluate('document.getElementById("btn-dissolve-game").click()');
+    if (await evaluate('__journey.vis("dissolve-modal")')) {
+      await evaluate('document.getElementById("btn-dissolve-agree").click()');
     }
-
-    /* 撤回报名 → 应该回到结算页，而不是停在房间页干等 */
-    await evaluate('document.getElementById("btn-next-back").click()');
-    const backOk = await waitFor('__journey.vis("screen-settle")', 8000, '撤回后没回结算页');
-    ok(backOk, '★ 撤回「开始下一局」→ 回到结算页（以前是单向门，只能退房重进）');
+    const backSettle = await waitFor('__journey.vis("screen-settle")', 10000, '结束本局后没回结算页');
+    ok(backSettle, '★ 新一局结束本局 → 回到结算页（下面还要从这里进战绩）');
   } else {
-    await diag('就位态没进去');
+    await diag('点了「开始下一局」没直接开打');
   }
 
   /* ---------------------------------------------------------------- */
