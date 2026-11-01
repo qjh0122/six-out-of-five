@@ -60,8 +60,8 @@ ok(w1.ok === true, 'a 点「开始下一局」成功', w1.error);
 eq(room1.phase, SM.PHASE.SETTLED, '★ 报名后 phase 仍是 SETTLED（没点的人继续看结算页，不被顶走）');
 eq(SM.findPlayer(room1, 'a').wantNext, true, 'a 已标记进入下一局');
 ok(!SM.findPlayer(room1, 'b').wantNext, 'b 还没进入（没点就是没点）');
-eq(SM.findPlayer(room1, 'a').ready, false, '报名不等于准备（回房间后要自己点准备）');
-eq(SM.canStartNext(room1), false, '只报名不准备 → 还不能开');
+eq(SM.findPlayer(room1, 'a').ready, true, '★ 报名即就位（C-2 / v116：不再需要回房间页点一次准备）');
+eq(SM.canStartNext(room1), false, '只有 a 一人报名 → 人数不够，还不能开');
 
 /* ========================================================================== */
 console.log('\n[2] 没报名的人不能准备');
@@ -71,20 +71,18 @@ ok((r2.error || '').indexOf('开始下一局') >= 0, '提示说的是「先点�
 
 /* ========================================================================== */
 console.log('\n[3] 分母是报名者，不是房间里所有人');
+/* ★ C-2（v116）改口径：报名那一刻就置 ready，所以「两人都报名」= 「两人都就位」= 可以开。
+ * 这一条正是「一次点击」的验收 —— 报完名不该再有一个「还差你点一下」的中间态。 */
 SM.wantNext(room1, 'b');
-eq(SM.canStartNext(room1), false, '两人都报名但都没准备 → 还不能开');
-SM.setReady(room1, 'a', true);
-eq(SM.canStartNext(room1), false, '只有一个人准备 → 还不能开');
-SM.setReady(room1, 'b', true);
-eq(SM.canStartNext(room1), true, '★ 报名者全部准备 → 可以开');
+eq(SM.canStartNext(room1), true, '★ 两人都报名 → 立刻可开（报名即就位，不再需要单独点准备）');
+eq(SM.nextRoundPlayers(room1).length, 2, '参与名单就是这两人的名单');
 
 /* ========================================================================== */
 console.log('\n[4] 开局只带报名者，没点的人被移出并拿到通知');
 const room4 = settleByDissolve(makeRoom(['a', 'b', 'c']));
 SM.wantNext(room4, 'a');
 SM.wantNext(room4, 'b');
-SM.setReady(room4, 'a', true);
-SM.setReady(room4, 'b', true);
+/* C-2 之后这里没有「再点一次准备」——两个人都报名，就已经是全员就绪。 */
 const start4 = SM.autoStartIfReady(room4);
 ok(!!start4 && start4.kind === 'next', '全员就绪 → 自动开下一局');
 eq(room4.phase, SM.PHASE.ROUND1_SPLIT, '进入第一轮分牌');
@@ -158,15 +156,17 @@ const x = SM.findPlayer(settling, 'x');
 ok(!!x, '新人在房间里');
 eq(x.wantNext, true, '★ 自动算「报名下一局」：否则 startNextRound 会把他静默丢掉');
 eq(x.joinedLate, true, '★ 标记「没打上一局」（前端据此不弹上一局结算、分数不写上局）');
-eq(x.ready, false, '不替他点准备（准备是他自己的动作）');
+eq(x.ready, false, '★ 从房号进来的人仍要自己点一次准备（C-2 只覆盖结算页那条主路径）');
 eq(x.score, CONFIG.INITIAL_SCORE, '分数是初始分，不继承别人的');
 
 /* 他真的能被带进下一局，不是「进来了但开下一局时消失」。
  * 分母是「已报名的人」，所以新人必须自己算进这个分母 —— 只挂个座位不算数。 */
-SM.wantNext(settling, 'a'); SM.setReady(settling, 'a', true);
-eq(SM.canStartNext(settling), false, '只有 a 报名 + 准备 → 人数不够（MIN_PLAYERS=2）');
+eq(SM.nextRoundPlayers(settling).length, 1, '还没人报名时，参与名单里只有新人 x');
+eq(SM.canStartNext(settling), false, '只有新人 x 一个 → 人数不够（MIN_PLAYERS=2）');
+SM.wantNext(settling, 'a');
+eq(SM.canStartNext(settling), false, 'a 报名了，但从房号进来的 x 还没就位 → 仍不开');
 SM.setReady(settling, 'x', true);
-eq(SM.canStartNext(settling), true, '★ 新人报名且准备后人数够了（他确实被算进下一局，不是挂名）');
+eq(SM.canStartNext(settling), true, '★ x 也点了准备 → 可以开（他确实被算进下一局，不是挂名）');
 SM.startNextRound(settling);
 eq(settling.phase, SM.PHASE.ROUND1_SPLIT, '下一局开了');
 ok(!!SM.findPlayer(settling, 'x'), '★ 新人没有在开局瞬间被丢掉');

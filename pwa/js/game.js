@@ -617,12 +617,26 @@
 
     var me = getMe(room);
     var readyBtn = $('#btn-ready');
-    readyBtn.textContent = me && me.ready ? '取消准备' : '准备';
-    /* 自愈：每次房间广播都把它放开一次。pressBusy 已经在 finally 里还了 disabled，
-     * 这条是兜底 —— 万一哪条路径把 restore 整段跳过（页面被切走、promise 没续上），
-     * 下一次广播（别人准备、有人进房）就能把按钮救回来，不用刷新页面。
-     * 只在不处于 busy 时放开，避免请求在途时被重复点击。 */
-    if (!readyBtn.dataset.busy) readyBtn.disabled = false;
+    /* ★ C-2（v116）：就位态里「准备」这个动作已经不存在了 ——
+     *   点「开始下一局」那一刻就已经把人置为 ready（stateMachine.wantNext）。
+     *   所以这里不能沿用「取消准备」的文案：那颗按钮会变成一个**点了就害人**的
+     *   开关（取消准备好，自己留在一个既不打算走也不打算打的中间态，整桌卡住）。
+     *   改成一颗禁用的状态徽标，文案与座位的角标用同一个词：「已就位」。
+     *   布局不动（还是同一颗按钮、同一个位置），只是不可点、不再有歧义。 */
+    if (nextWait) {
+      readyBtn.textContent = '已就位 ✓';
+      readyBtn.disabled = true;
+      readyBtn.classList.add('is-done');
+    } else {
+      readyBtn.textContent = me && me.ready ? '取消准备' : '准备';
+      readyBtn.classList.remove('is-done');
+      /* 自愈：每次房间广播都把它放开一次。pressBusy 已经在 finally 里还了 disabled，
+       * 这条是兜底 —— 万一哪条路径把 restore 整段跳过（页面被切走、promise 没续上），
+       * 下一次广播（别人准备、有人进房）就能把按钮救回来，不用刷新页面。
+       * 只在不处于 busy 时放开，避免请求在途时被重复点击。
+       * ★ 必须放在 else 里：就位态的禁用是「常态」，不能被这条自愈顺手解开。 */
+      if (!readyBtn.dataset.busy) readyBtn.disabled = false;
+    }
 
     var isOwner = room.ownerId === state.myId;
     /* 分母跟着阶段走：就位态只算已进入下一局的人，否则「还差 N 人」
@@ -639,7 +653,9 @@
         ? '还差 ' + (CONFIG.MIN_PLAYERS - act.length) + ' 人才能开下一局，等其他人点「开始下一局」'
         : '还差 ' + (CONFIG.MIN_PLAYERS - act.length) + ' 人才能开局，可以点「补 AI 队友」一个人先玩';
     } else if (!allReady) {
-      hint.textContent = nextWait ? '等待其他人准备…' : '等待所有玩家准备…';
+      /* 就位态下「准备」这个词已经不存在了（点开始下一局即就位），
+       * 所以这里等的是「别人点开始下一局」，不是「别人点准备」。 */
+      hint.textContent = nextWait ? '等其他人点「开始下一局」…' : '等待所有玩家准备…';
     } else {
       hint.textContent = '全部准备好，马上开始';
       hint.classList.add('ready');
@@ -3166,29 +3182,37 @@
     }
   }
 
-  /* ★ v114（B-2）：开下一把之前，先让「最急的人」看一眼代价。
-   * 只要还有人停在结算页（没报名），一旦已报名的人全部准备好，
-   * 那一把就会立刻开始，还在结算页的人会被挤出去 —— 他自己不会知道。
-   * 所以「我要准备」这一步加一次确认，把人数和后果说清。
-   * 只在「还没准备 → 准备」这个方向上问，取消准备不问。 */
+  /* ★ v114（B-2）→ v116（C-2）搬过来的确认：开下一把之前，先让「最急的人」看一眼代价。
+   * 只要还有人停在结算页（没报名），这个动作一按下去就**直接发牌**，
+   * 那些人会被挤出去 —— 他自己不会知道。
+   *
+   * 为什么从「点准备」搬到这里：C-2 之后「准备」这个动作没了（报名即就位），
+   * 会开局的那一下变成了「点开始下一局」。警告不跟着搬，就等于挂在了一颗
+   * 永远不会被点的按钮上 —— 最危险的时刻反而没有提示。
+   * 只问「我要参加」这一个方向；撤回、看回放都不问。 */
   function onReady() {
-    var me = getMe(state.room);
-    if (!me) return;
-    if (blockedOffline()) return;
-    /* 只管「结算后的就位态」（phase 仍是 SETTLED + 我已报名）。
-     * 首次开局的准备不在此列：那时大家都在房间里等着，没有人会被挤出去。 */
-    if (!me.ready && state.room.phase === StateMachine.PHASE.SETTLED && me.wantNext) {
-      var waiting = (state.room.players || []).filter(function (p) {
-        return !p.left && !p.wantNext;
-      }).length;
-      if (waiting > 0) {
-        askConfirm('现在就开下一把？',
-          '还有 ' + waiting + ' 人停在结算页。全部准备好就会立刻开局，他们会被挤出去，这一把打完才能再进来。',
-          function () { return doReady(); });
-        return;
-      }
-    }
+    /* 首次开局的准备：那时大家都在房间里等着，没有人会被挤出去，直接放行。
+     * 就位态的按钮已经被 renderRoom 置成禁用的「已就位」，走不到这里。 */
     doReady();
+  }
+
+  /* 结算页「开始下一局」的真正执行体（确认框点「好」之后走到这）。 */
+  async function doNextRound() {
+    var restore = pressBusy($('#btn-next'), '进入中…');
+    if (!restore) return;
+    try {
+      var res = await RoomStore.wantNext(state.roomId, state.myId);
+      if (!res.ok) {
+        /* 「新的一局已经开始了」不是故障，是时序 —— 别人比我先点完。
+         * 用 toast 说清就行，不弹红色报错：玩家没做错任何事，
+         * 而且他还能继续看自己的结算数据与回放。 */
+        flash(res.error || '暂时进不去，稍后再试');
+      }
+    } catch (e) {
+      flash('网络不太稳，再试一次');
+    } finally {
+      restore();
+    }
   }
 
   async function doReady() {
@@ -3227,30 +3251,31 @@
     }
   }
 
-  /* 结算页 →「开始下一局」。
-   * 点完不是立刻发牌，而是把我登记进下一局、切到房间页（房间号不变），
-   * 到那边再各自点准备。没点的人完全不受影响，继续留在结算页。
+  /* 结算页 →「开始下一局」（C-2 / v116：一次点击，报名即就位）。
    *
-   * ★ C-2「报名即准备（一次点击）」**本轮没做**：它会直接干掉「就位态」这一步，
-   *   而 journey 有 3 条断言（回准备态 / 就位态在牌桌上 / 回结算页撤回）依赖那一步。
-   *   改流程必须连着改那几条验收，单独一轮做 —— 不然就是「功能改了、验收还在描述旧的」。 */
+   * 点完把我登记进下一局并直接置为已就位；人数够的话服务端在这一次广播里就发牌，
+   * 中间不再有「回房间页再点一次准备」那一屏。人数不够才有等待态。
+   * 没点的人完全不受影响，继续留在结算页。
+   *
+   * 有代价：还在结算页的人会被挤出去 —— 所以先问一句（原来的 B-2 确认框）。 */
   async function onNextRound() {
     if (blockedOffline()) return;
-    var restore = pressBusy($('#btn-next'), '进入中…');
-    if (!restore) return;
-    try {
-      var res = await RoomStore.wantNext(state.roomId, state.myId);
-      if (!res.ok) {
-        /* 「新的一局已经开始了」不是故障，是时序 —— 别人比我先点完。
-         * 用 toast 说清就行，不弹红色报错：玩家没做错任何事，
-         * 而且他还能继续看自己的结算数据与回放。 */
-        flash(res.error || '暂时进不去，稍后再试');
-      }
-    } catch (e) {
-      flash('网络不太稳，再试一次');
-    } finally {
-      restore();
+    /* 「还没表态的真人」—— 三个排除缺一不可：
+     *   · 自己：这一刻我自己的 wantNext 还是 false（请求还没发出去），
+     *           不排掉的话每点一次都会弹一次「还有 1 人停在结算页」，而那个人就是我；
+     *   · AI：markSettled 已经替它报了名，本来就不会落在这堆里，
+     *         但不显式排除的话，哪天 AI 的报名改懒了，这里就会开始无故报警；
+     *   · 已离开的人：他们不在这一局里，不该算进「会被挤出去」的人头。 */
+    var waiting = (state.room && state.room.players || []).filter(function (p) {
+      return !p.left && !p.wantNext && !p.isBot && p.id !== state.myId;
+    }).length;
+    if (waiting > 0) {
+      askConfirm('现在就开下一局？',
+        '还有 ' + waiting + ' 人停在结算页。你一点就开局，他们会被挤出去，这一把打完才能再进来。',
+        doNextRound);
+      return;
     }
+    await doNextRound();
   }
 
   /* 就位态「回结算页」：撤回报名。

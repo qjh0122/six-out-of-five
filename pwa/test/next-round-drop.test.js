@@ -108,13 +108,28 @@ console.log('\n[4] 结算期补 AI：给「剩 1 人」一条出路');
   ok(/PHASE\.SETTLED && !!nextWait/.test(game), '就位态里房主能看到「补 AI」');
 }
 
-console.log('\n[5] 人数确认（B-2）');
+console.log('\n[5] 人数确认（B-2 → v116 搬到「开始下一局」）');
 {
   const game = fs.readFileSync(path.join(ROOT, 'js', 'game.js'), 'utf8');
-  ok(/还有 ' \+ waiting \+ ' 人停在结算页/.test(game), '★ 准备前把「会挤掉几个人」说清');
-  ok(/function doReady\(\)/.test(game), '真正的准备动作抽成了 doReady（确认后才执行）');
-  ok(/if \(!me\.ready && state\.room\.phase === StateMachine\.PHASE\.SETTLED/.test(game),
-    '★ 只在「结算后的就位态 + 我还没准备」时问（首次开局的准备不拦）');
+  ok(/还有 ' \+ waiting \+ ' 人停在结算页/.test(game), '★ 开局前把「会挤掉几个人」说清');
+  ok(/function doNextRound\(\)/.test(game), '真正的报名动作抽成了 doNextRound（确认后才执行）');
+  /* C-2 之后会开局的那一下是「点开始下一局」，警告必须挂在它上面 ——
+   * 留在 onReady 里就等于挂在一颗永远不会被点的按钮上（就位态那颗已经禁用）。 */
+  const nextSrc = game.slice(game.indexOf('async function onNextRound()'),
+    game.indexOf('async function onNextRound()') + 700);
+  ok(/askConfirm\('现在就开下一局？'/.test(nextSrc), '★ 确认框挂在 onNextRound 上');
+  ok(/doNextRound/.test(nextSrc), '确认后调 doNextRound');
+  ok(!/askConfirm/.test(game.slice(game.indexOf('function onReady()'),
+    game.indexOf('function onReady()') + 400)), '★ onReady 不再问（它就是首次开局的准备）');
+
+  /* ★ 统计「会被挤出去的人数」时必须把自己排除掉。
+   *
+   * 这个坑真踩了：确认框从 onReady 搬到 onNextRound 时，判据原样搬了过来，
+   * 但那一刻**我自己的 wantNext 还是 false**（请求还没发出去），于是
+   * 「还有 1 人停在结算页」里的那个人就是我自己 —— 每点一次都弹一次确认框，
+   * 而 C-2 的全部意义就是少点一次。journey 的 [7b] 当场把这个抓了出来。 */
+  ok(/p\.id !== state\.myId/.test(nextSrc), '★ 人数里排除自己');
+  ok(/!p\.isBot/.test(nextSrc), '★ 也排除 AI（它已经由 markSettled 自动报名）');
 }
 
 console.log('\n----------------------------------------');

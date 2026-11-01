@@ -289,12 +289,11 @@ async function run() {
 
   console.log('\n[重开下一把]');
   if (room.endReason !== 'someoneLeft') {
-    /* 报名制：两个人都要点「开始下一局」，再各自准备，全员就绪自动开局。
-     * 只点一方的话另一方还留在结算页，人数不够，房间会停在结算态——这是设计如此。 */
+    /* 报名制：两个人都要点「开始下一局」。C-2（v116）之后报名即就位，
+     * 所以第二个人点完，人数就齐了，服务端在这一次广播里直接开局 ——
+     * 不需要再各点一次准备。只点一方的话另一方还留在结算页，房间停在结算态。 */
     await a.request('wantNext');
     await b.request('wantNext');
-    await a.request('ready', { ready: true });
-    await b.request('ready', { ready: true });
     await wait(120);
     room = a.lastRoom();
     eq(room.phase, SM.PHASE.ROUND1_SPLIT, '重开后回到第一轮（两人都报名 + 准备）');

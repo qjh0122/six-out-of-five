@@ -281,8 +281,9 @@
    * 结算期进来的人，语义是「我是来打下一局的」：
    *   · wantNext = true —— 不带这个标记，startNextRound 的 `room.players = joiners`
    *     会把他**静默丢掉**（他明明在房间里，新一局开始时却凭空消失）；
-   *   · ready 仍是 false —— 还是要自己点一次「准备」，和所有人一样，
-   *     不替他做「我准备好了」这个决定；
+   *   · ready 跟着 wantNext 一起为真（C-2 / v116）—— 「我来打下一局」和
+   *     「我准备好了」在他这里本来就是同一个决定，再让他点一次准备纯属把一次
+   *     点击拆成两次；
    *   · joinedLate = true —— 他没打上一局：前端据此不弹上一局结算、分数不写成「上局」。
    */
   function joinRoom(room, player) {
@@ -306,8 +307,12 @@
      * 中途离开过、又在结算期回来的老玩家**打过上一局**（分数已经被结算改过），
      * 不能把他当成新人：否则他会看不到上一局结算、座位上也看不到自己真正的分数。 */
     var isNewcomer = !existing;
-    p.ready = false;
+    /* 报名自动带上，但**准备不带**（C-2 只覆盖「结算页点开始下一局」那条主路径）。
+     * 从房号摸进来的人还没看到这间房长什么样，直接给他发牌等于跳过了
+     * 「确认我进的是这一间」；主路径上的人刚看完自己的成绩，两者不是同一件事。
+     * 代价是他要多点一次准备 —— 而这一步有「不等他」兜着，卡不住整桌。 */
     p.wantNext = settling;
+    p.ready = false;
     p.joinedLate = settling && isNewcomer;
     p.left = false;
     p.connected = true;
@@ -1100,16 +1105,28 @@
   }
 
   /* 下一局能不能开：已进入的人不少于最少人数，且这些人全部已准备。
-   * 注意分母是「已进入的人」而不是「房间里的人」—— 没点的人不参与下一局，
-   * 自然也不该挡住别人开局。 */
+   * 注意分母是「已进入的人」而不是房间里的人 —— 没点的人不参与下一局，
+   * 自然也不该挡住别人开局。
+   *
+   * ★ C-2（v116）之后这条判据一个字都没改，但它的含义变了：
+   *   `wantNext` 现在直接把人置为 ready，所以「报名」与「就位」是同一个动作，
+   *   这条式子实际等价于「报名的人 ≥ 最少人数」。改的是流程，不是阈值 ——
+   *   特意没有顺手加「所有真人都要表态」之类的条件：那会改掉既有规则
+   *   （5 人房里 2 人报名即开），而 C-2 要的只是少一次点击。
+   */
   function canStartNext(room) {
     var list = nextRoundPlayers(room);
     if (list.length < CONFIG.MIN_PLAYERS) return false;
     return list.every(function (p) { return p.ready; });
   }
 
-  /* 点「开始下一局」：登记 + 回到房间页。ready 归 false，因为用户要的是
-   * 「回房间后各自再点一次准备」，不是点一下就算就绪。 */
+  /* 点「开始下一局」：报名 + 就位，一次点击（C-2 / v116）。
+   *
+   * 以前这里会把 ready 归 false，让用户回房间页再点一次「准备」。
+   * 那两次点击问的是同一件事 ——「你要不要打下一局」—— 拆成两步只制造了
+   * 「报了名却不准备」这个能卡住整桌的中间态（v114 的「不等他」就是为它打的补丁）。
+   * 现在报名即就位，整桌凑够人数就直接开局，中间不再有一屏「还要再点一下」。
+   */
   function wantNext(room, playerId) {
     if (!room) return { ok: false, error: '房间不存在' };
     if (room.phase !== PHASE.SETTLED) {
@@ -1119,7 +1136,7 @@
     if (!p) return { ok: false, error: '你不在该房间' };
     if (p.left) return { ok: false, error: '你已经离开这一局了' };
     p.wantNext = true;
-    p.ready = false;
+    p.ready = true;
     room.updatedAt = Date.now();
     return { ok: true, room: room };
   }

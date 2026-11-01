@@ -130,9 +130,9 @@ ok(!SM.canStartNext(limitRoom), '只有 1 人时不满足最少人数（不会�
 
 SM.wantNext(limitRoom, limitRoom.players[1].id);
 ok(SM.nextRoundPlayers(limitRoom).length === 2, '两人都报名');
-ok(!SM.canStartNext(limitRoom), '还没准备 → 仍然不开（报名 ≠ 就绪）');
-limitRoom.players.forEach((p) => { p.ready = true; });
-ok(SM.canStartNext(limitRoom), '★ 全员报名 + 准备 → 条件成立');
+/* ★ C-2（v116）：报名即就位，所以「两人都报名」这一句本身就成立了 ——
+ *   以前这里还要断言「还没准备 → 仍然不开」，现在那个中间态已经不存在。 */
+ok(SM.canStartNext(limitRoom), '★ 两人都报名（= 都已就位）→ 条件成立');
 
 const started = SM.autoStartIfReady(limitRoom);
 ok(!!started && started.kind === 'next', '★ 真的开了下一局（不是只改了按钮状态）');
