@@ -263,6 +263,10 @@ async function main() {
     if (nick) { nick.value = '探针'; nick.dispatchEvent(new Event('input',{bubbles:true})); }
     click('btn-create');
     await new Promise(s=>setTimeout(s,600));
+    /* ★ v103 起「创建房间」先弹「本局打几把」，确认了才真的开房。
+     * 缺这一步 → 房间没建 → 补 AI 点不到、牌桌进不去（脚本过期，不是功能坏）。 */
+    click('btn-create-confirm');
+    await new Promise(s => setTimeout(s, 400));
     var r = { room: vis('screen-room'), bots: 0 };
     /* 2 个 AI：3 人局。补太满会让 WS 广播次数变多，探针没必要等。 */
     for (var i = 0; i < 2; i++) {
@@ -460,7 +464,12 @@ async function main() {
   /* 10.5 的成手信号（v93）：探针挑的是「不爆的最优对」，所以经常正好凑到 10.5。
    * 凑到了就必须有：满分绿徽标 + 那一下脉冲 —— 以前四个大牌型里只有它凑到顶了没反应。 */
   if (s1.tenhalf.point && /10\.5/.test(s1.tenhalf.point)) {
-    const th = (sampled || {}).tenhalf || {};
+    /* ★ 原来这里读的是 `sampled.tenhalf`，而 sampled 这个变量**在全文根本不存在** ——
+     * 采样结果一直存在 `placed.seen`（见第 420 行那句 placed.seen.piaosanye.slotFresh）。
+     * 这条分支以前从没执行过：它只在「十点半正好凑到 10.5」时才走，而探针以前连牌桌
+     * 都进不去（建房少点了一次确认）。修好建房之后第一次跑到这儿就 ReferenceError。
+     * 死分支里的拼写错误，只有真跑到了才会暴露。 */
+    const th = (placed && placed.seen && placed.seen.tenhalf) || {};
     ok(/best/.test(s1.tenhalf.pointCls || ''), '★ 10.5 命中：徽标是满分绿（.best）', s1.tenhalf.pointCls);
     ok(th.pointNew === true, '★ 10.5 命中：刚凑到那一刻徽标挂了 is-new', JSON.stringify(th.pointNew));
     ok(th.pointAnim === 'slotTypePop', '★ 10.5 命中：徽标脉冲动画在跑（与胶囊同一支）', JSON.stringify(th.pointAnim));

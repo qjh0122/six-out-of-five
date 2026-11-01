@@ -443,6 +443,11 @@ async function main() {
     await evaluate(cdp, `document.getElementById('btn-rank-back').click()`);
     await sleep(600);
     await evaluate(cdp, `document.getElementById('btn-create').click()`);
+    /* ★ v103 起「创建房间」先弹「本局打几把」，点了确认才真的开房。
+     * 缺这一步 → 房间没建 → 后面所有断言都拿不到牌桌（脚本过期，不是功能坏）。 */
+    await sleep(500);
+    await evaluate(cdp, `(function(){var b=document.getElementById('btn-create-confirm');if(b)b.click();})()`);
+    await sleep(500);
     await sleep(1200);
     await evaluate(cdp, `(function(){ var b=document.getElementById('btn-add-bot'); if(b) b.click(); })()`);
     await sleep(300);

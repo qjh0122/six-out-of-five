@@ -44,7 +44,7 @@
     /* seat-sheet 是「点谁弹谁」的浮层面板：不叠在任何弹窗上（座位被弹窗盖住时点不到它），
      * 排在 share-modal 旁边这一档就够。v89 起它取代了原来的 emoji-modal。 */
     'seat-sheet', 'share-modal', 'round-break-modal', 'result-modal', 'dissolve-modal',
-    /* 建房选局数：只在首页出现，理论上不与任何弹窗叠层。排在最后只是为了
+    /* 建房选把数：只在首页出现，理论上不与任何弹窗叠层。排在最后只是为了
      * 让它被 Tab 圈定/焦点归还认得 —— 不登记的话它开着时键盘能跑到背后。 */
     'create-modal'];
 

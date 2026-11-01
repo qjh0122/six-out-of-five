@@ -767,7 +767,17 @@ class Hub {
     // 看别人的档案是公开行为（座位卡点开那页），但也要先登录
     if (!this._pid(client)) return this._fail(client, reqId, '未登录');
     const pid = String(payload.playerId || '');
-    this._ok(client, reqId, { profile: pid ? this.profiles.get(pid) : null });
+    const prof = pid ? this.profiles.get(pid) : null;
+    /* 成就桶随档案卡一起下发。
+     *
+     * 为什么不再开一个 getAchievements 协议：信息档底部要显示「成就 12/26」，
+     * 点进去还是这个人的成就 —— 而一次点击只发生一次。开两条协议的结果是
+     * 「点了头像、再点成就」要发两次请求，中间那段空白还得自己补加载态。
+     *
+     * profiles.get() 走的是 _public，里面只有 achCount（排行榜要轻）；
+     * 明细必须单独取，所以这里显式补一份。 */
+    if (prof) prof.ach = this.profiles.achOf(pid) || null;
+    this._ok(client, reqId, { profile: prof });
   }
 
   reconnect(client, payload, reqId) {
@@ -932,6 +942,12 @@ class Hub {
       return out;
     });
 
+    /* 内部字段不下发。
+     * achRun 是成就采集的临时桶（见 SM.settleRound 的注释），前端一个字都用不到。
+     * 不删的后果有两个：每帧广播多带一份对象；以及别人的牌型增量跟着发出去 ——
+     * 结算页公开的只是「赢家牌型」，这里会把「每个人这轮是什么牌型」全带上。 */
+    delete view.achRun;
+
     /* 分牌倒计时：把「我这轮还剩多久」一并发给本人。
      *
      * 以前这个时刻只活在服务端的 setTimeout 里，玩家完全看不到 —— 60 秒一到
@@ -1075,8 +1091,18 @@ class Hub {
       hasBot: hasBot,
       endReason: (room.endReason === 'scoreZero' || room.endReason === 'someoneLeft'
         || room.endReason === 'dissolve' || room.endReason === 'handLimit')
-        ? room.endReason : 'dissolve'
+        ? room.endReason : 'dissolve',
+      /* 成就增量：状态机每轮结算时按**玩家**分桶累加在 room.achRun 上
+       * （见 SM.settleRound → Ach.accumulate）。它是整局累计，
+       * 所以只能在这里一次性合并 —— 每把合并会让同一份桶被重复计入。
+       * 取不到（这一局没人拿大牌型、或老客户端没加载成就模块）就是 null，
+       * record 会跳过成就部分，战绩照记。 */
+      ach: null,
+      /* 建房时选的把数：判「打满 30 把」这类成就用（R8 人间清醒）。
+       * 不传的话 record 里 Number(undefined) 得 0，那条成就永远拿不到。 */
+      handLimit: Number(room.handLimit) || 0
     };
+    const achRun = room.achRun;
     room.players.forEach((p) => {
       if (p.isBot) return;                       // AI 不进人类档案
       /* 账号已被删除的人不能再落任何记录：profiles.record 内部会 ensure()，
@@ -1084,8 +1110,16 @@ class Hub {
        * 它会带着这场战绩永久留在排行榜上。 */
       if (!this.profiles.accountOf(p.id)) return;
       const net = (Number(p.score) || 0) - CONFIG.INITIAL_SCORE;
-      this.profiles.record(p.id, p.nickname, net, endedAt, room.roomId, room.handSeq, meta);
+      /* 每人取自己那一桶。取不到就传 null —— **绝不能传整个 achRun**：
+       * 那会把别人的牌型记到这个人头上（第一版就是这么错的，
+       * 两人局的端到端测试直接量出来了）。 */
+      const one = (achRun && achRun.byPid) ? { ach: achRun.byPid[String(p.id)] || null } : {};
+      this.profiles.record(p.id, p.nickname, net, endedAt, room.roomId, room.handSeq,
+        Object.assign({}, meta, one));
     });
+    /* 桶已经并进每个人的档案，清掉。不清的后果是下一局把这些数再加一遍：
+     * 同一份 session 里连开两局，「牛魔王」直接翻倍。 */
+    room.achRun = null;
   }
 
   /* ============================ 断线与回收 ============================ */

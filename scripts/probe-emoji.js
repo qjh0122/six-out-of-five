@@ -155,6 +155,11 @@ async function main() {
   await sleep(1700);
   await evaluate(WAIT_FN);
   await evaluate('document.getElementById("btn-create").click()');
+  /* ★ v103 起「创建房间」不再直接建房：它先弹「本局打几把」，点了确认才真的开房。
+   * 探针原来少了这一步，于是所有后续断言都卡在「进不了牌桌」——
+   * 这是**脚本过期**，不是功能坏了（10 个红探针里有一批是同一个原因）。 */
+  await sleep(500);
+  await evaluate('(function(){var b=document.getElementById("btn-create-confirm");if(b)b.click();})()');
 
   /* 进牌桌：本地演示模式没有服务端，第二个玩家用 RoomStore 的公开接口加进去 ——
    * 和真实多标签页走的是同一条路（local store 的 joinRoom）。

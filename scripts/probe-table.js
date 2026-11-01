@@ -324,6 +324,10 @@ async function main() {
     if (nick) { nick.value = '探针'; nick.dispatchEvent(new Event('input',{bubbles:true})); }
     var r = { create: click('btn-create') };
     await new Promise(s=>setTimeout(s,500));
+    /* ★ v103 起「创建房间」先弹「本局打几把」，确认了才真的开房。
+     * 缺这一步 → 房间没建 → 补 AI 点不到、牌桌进不去（脚本过期，不是功能坏）。 */
+    click('btn-create-confirm');
+    await new Promise(s => setTimeout(s, 400));
     r.roomVisible = vis('screen-room');
     /* 补 AI 必须在「准备」之前：全员准备即开局（「开始游戏」按钮已删），
      * 反过来的话房主一准备、第一个 AI 进来自动就开局了，剩下 6 个补不进来。

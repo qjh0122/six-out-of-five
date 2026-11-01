@@ -187,6 +187,15 @@ async function main() {
     var n = document.getElementById('nickname-input');
     if (n) { n.value = '探针'; n.dispatchEvent(new Event('input',{bubbles:true})); }
     document.getElementById('btn-create').click();
+    /* ★ v103 起「创建房间」先弹「本局打几把」，点了确认才真的开房。
+     * 缺这一步 → 房间没建 → 后面所有断言都拿不到牌桌（脚本过期，不是功能坏）。
+     * ★ 这一段是**跑在页面里**的代码（整块作为字符串传给 evaluate），
+     *   只能用页面内的 Promise/setTimeout；写 Node 侧的 sleep()/evaluate(cdp)
+     *   会报 "… is not a function"（第一版就是这么改错的）。 */
+    await new Promise(function (s) { setTimeout(s, 500); });
+    var cfBtn = document.getElementById('btn-create-confirm');
+    if (cfBtn) cfBtn.click();
+    await new Promise(function (s) { setTimeout(s, 500); });
     await new Promise(s=>setTimeout(s,900));
     return {
       account: name,

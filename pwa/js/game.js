@@ -16,6 +16,10 @@
    *   漏一处就是运行时炸，而不是编译期报错 —— 那种改动没人敢做第二次。 */
   var U = window.LXW.utils;
   var $ = U.$, el = U.el, esc = U.esc;
+  /* 成就页渲染器（v109）。它是**对象**不是工厂（见 achievementsView.js 顶部：
+   * 它没有注入需求，所以直接执行并挂到 LXW）。调用点里仍然判空 ——
+   * 老客户端缓存的 index.html 没有这个脚本，这里拿到 undefined。 */
+  var AV = window.LXW.achievementsView;
   var AVATAR_COLORS = U.AVATAR_COLORS, colorFor = U.colorFor, short = U.short;
   var netText = U.netText, netCls = U.netCls, pad2 = U.pad2, fmtTime = U.fmtTime;
   var SUIT_CHAR = U.SUIT_CHAR, cardText = U.cardText;
@@ -139,7 +143,7 @@
     recordKey: null    // 本局是否已写过本机记录（内存双保险，配合 Records 幂等）
   };
 
-  /* 建房弹窗里当前选中的局数。只在「建房 → 关弹窗」这一小段时间有意义，
+  /* 建房弹窗里当前选中的把数。只在「建房 → 关弹窗」这一小段时间有意义，
    * 但必须放在模块层（不是弹窗 DOM 的 data 上）：请求发出后弹窗已经关了，
    * 异步回调里还要读它。 */
   var createLimit = CONFIG.DEFAULT_HAND_LIMIT;
@@ -239,11 +243,12 @@
     document.documentElement.classList.remove('no-session');
     // 注意：新增页面必须登记在这里，否则 showScreen 只会把它前面的页面隐藏掉，
     // 目标页自身仍带 hidden → 表现为整屏空白（排行榜曾经就是这样白屏的）。
-    var screens = ['screen-auth', 'screen-home', 'screen-room', 'screen-game', 'screen-settle', 'screen-records', 'screen-rank'];
+    var screens = ['screen-auth', 'screen-home', 'screen-room', 'screen-game', 'screen-settle', 'screen-records', 'screen-rank', 'screen-achievements'];
     // 三态与 state.screen 对齐：不在房间订阅重渲染里被顶回别的页面
     state.screen = id === 'screen-auth' ? 'auth'
       : (id === 'screen-records' ? 'records'
-      : (id === 'screen-rank' ? 'rank' : ''));
+      : (id === 'screen-rank' ? 'rank'
+      : (id === 'screen-achievements' ? 'achievements' : '')));
     for (var i = 0; i < screens.length; i++) {
       var screenEl = $('#' + screens[i]);
       var show = screens[i] === id;
@@ -696,7 +701,7 @@
     if (bottom) bottom.classList.remove('hidden');
   }
 
-  /* 中央那张房间信息卡：人数与局数上限 / 两轮怎么打 / 我的战绩。
+  /* 中央那张房间信息卡：人数与把数上限 / 两轮怎么打 / 我的战绩。
    * 只放「开打前需要知道的」，不放规则全文 —— 规则页还在，这里再抄一遍
    * 会把中间那块毡面填满，反而没有牌桌的感觉。
    *
@@ -741,10 +746,10 @@
       + line('第一轮', r1)
       + line('第二轮', r2)
       /* ★ v103：这一行原来写「见底：分数 ≤ 0 出局，最后一人胜出」。
-       * 那条规则已经删了（负分继续打、打到局数为止），继续挂着就是骗人。
-       * 换成「本局打几局」—— 这才是现在唯一决定这局什么时候结束的东西，
+       * 那条规则已经删了（负分继续打、打到把数为止），继续挂着就是骗人。
+       * 换成「本局打几把」—— 这才是现在唯一决定这局什么时候结束的东西，
        * 也是玩家进房后最该知道的一个数。 */
-      + line('本局', StateMachine.handLimitOf(room) + ' 局 · 打满为止')
+      + line('本局', StateMachine.handLimitOf(room) + ' 把 · 打满为止')
       + line('我的战绩', rankTxt)
       + '</div>';
   }
@@ -2922,17 +2927,45 @@
     state.screen = ''; // 离开房间时不能停留在战绩页（否则房间订阅重渲染会被拦住）
   }
 
-  /* ---------------------------- 建房：先选本局局数 ----------------------------
+  /* ---------------------------- 建房：先选本局把数 ----------------------------
    * 产品口径（2026-10-31）：档位 3/5/10/15/30，**不选就是 10**。
-   * 「局」在规则里是一把（两轮），写进 room.handLimit 之后房间内不可改，
-   * 结算后续局沿用同一档位 —— 所以这个值只在这里选一次。
+   * 一把 = 两轮，写进 room.handLimit 之后房间内不可改，
+   * 结算后续把沿用同一档位 —— 所以这个值只在这里选一次。
    *
-   * ★ 每次打开都重置成默认 10，不记上一次的选择：
-   *   记了之后，第二个来开房的人拿到的是上一局留下的档位，而他从没选过；
-   *   真要打长局的人，多按一次也很清楚自己在选什么。 */
+   * ★ 现在会记住上一次的选择（v110，P1-2）。
+   *
+   * 改之前这里的注释写的是「每次打开都重置成 10，不记上一次」，理由是：
+   * 「记了之后，第二个来开房的人拿到的是上一局留下的档位，而他从没选过」。
+   * 那个顾虑是真的，但它只在一个前提下成立：分不清「系统选的」和「我选的」。
+   * 现在弹窗一打开就有一个高亮选中的档位，玩家看到的是「这次打 15 把」（可以改），
+   * 不是「系统背着我设了 15」。
+   *
+   * 反过来，不记的代价是实打实的：常打长局的人每开一局都要多点一次，
+   * 而多数人常年只用同一个档位。所以改成记住，并守两条硬约束：
+   *   · 记忆值必须**在 CONFIG.HAND_LIMITS 里**才采用（改档位列表后老记忆自动失效；
+   *     拿一个已下架的档位去建房会被服务端拒，玩家只看到「创建失败」）
+   *   · 读写都包 try：隐私模式下 localStorage 会抛，抛了就当没记忆，不能因此开不了房
+   */
+  var HAND_LIMIT_KEY = 'lxw_hand_limit_v1';
+
+  function readSavedLimit() {
+    try {
+      var raw = localStorage.getItem(HAND_LIMIT_KEY);
+      if (!raw) return 0;
+      var n = Number(raw);
+      /* 必须是列表里的档位。这里不做「取最近的合法值」那种聪明事 ——
+       * 猜错了玩家会打到一个自己没选的把数上，比回落默认更糟。 */
+      return (CONFIG.HAND_LIMITS || []).indexOf(n) >= 0 ? n : 0;
+    } catch (e) { return 0; }
+  }
+
+  function saveLimit(n) {
+    try { localStorage.setItem(HAND_LIMIT_KEY, String(n)); } catch (e) { /* 隐私模式：当没记住 */ }
+  }
+
   function openCreateModal() {
     Sfx.unlock();
-    createLimit = CONFIG.DEFAULT_HAND_LIMIT;
+    createLimit = readSavedLimit() || CONFIG.DEFAULT_HAND_LIMIT;
     renderHandLimitChips();
     showModalEl('create-modal');
   }
@@ -2952,7 +2985,7 @@
       btn.setAttribute('role', 'radio');
       btn.setAttribute('data-limit', String(n));
       btn.setAttribute('aria-checked', n === createLimit ? 'true' : 'false');
-      btn.setAttribute('aria-label', n + ' 局');
+      btn.setAttribute('aria-label', n + ' 把');
       if (n === createLimit) btn.classList.add('is-on');
       var num = document.createElement('span');
       num.className = 'hl-num';
@@ -2960,7 +2993,7 @@
       var unit = document.createElement('span');
       unit.className = 'hl-unit';
       /* 默认档标一个「默认」，让人知道不改也能开 —— 否则会有人以为必须选一个 */
-      unit.textContent = (n === CONFIG.DEFAULT_HAND_LIMIT) ? '局 · 默认' : '局';
+      unit.textContent = (n === CONFIG.DEFAULT_HAND_LIMIT) ? '把 · 默认' : '把';
       btn.appendChild(num); btn.appendChild(unit);
       btn.addEventListener('click', function () {
         if (createLimit === n) return;
@@ -2987,6 +3020,9 @@
   async function onCreateConfirm() {
     if (blockedOffline()) return;
     var limit = createLimit;
+    /* 记住的是**这次真的提交出去的**档位，不是「点过的最后一个」——
+     * 点了 15 又取消、下次打开却默认 15，那不是「记住选择」，是「记住犹豫」。 */
+    saveLimit(limit);
     closeCreateModal();
     var restore = pressBusy($('#btn-create'), '创建中…');
     if (!restore) return;
@@ -3981,7 +4017,7 @@
 
     /* 对局主操作：建房 / 加入 / 准备 / 补 AI / 解散 / 离开 / 提交 / 分牌拖拽 / 结算弹窗按钮 */
     function bindTableControls() {
-      /* 建房不再直接发请求：先弹「本局打几局」，选完才开房（默认 10）。 */
+      /* 建房不再直接发请求：先弹「本局打几把」，选完才开房（默认 10）。 */
       $('#btn-create').addEventListener('click', openCreateModal);
       $('#btn-create-confirm').addEventListener('click', onCreateConfirm);
       $('#btn-create-cancel').addEventListener('click', closeCreateModal);
@@ -4307,12 +4343,93 @@
       });
     }
 
+    /* ---------------------------- 成就页（v109） ----------------------------
+     * 数据来源：RoomStore.getProfile(pid)。服务端档案里带 ach 桶
+     * （见 hub.getProfile 的注释），自己看自己也走同一条路，只是标题不同。
+     *
+     * 为什么不复用 /api/me/records：那条路只在 HTTP 登录态下可用，
+     * 而成就页从房间里的座位卡也能打开 —— 那时未必还连着 HTTP 会话，
+     * 但 WS 一定是连着的（否则看不到座位）。
+     */
+    var achBackScreen = 'screen-home';
+
+    /* 当前停在哪一屏。用来决定「从成就页返回时回到哪儿」：
+     * 从首页进来就回首页，从座位卡进来就回房间 —— 玩家点的是座位上的头像，
+     * 回到首页等于把他踢出了房间。 */
+    function currentScreenId() {
+      var ids = ['screen-home', 'screen-room', 'screen-game', 'screen-settle', 'screen-records', 'screen-rank'];
+      for (var i = 0; i < ids.length; i++) {
+        /* 别用 el 当变量名：el 是本文件的 DOM 构造函数，遮蔽它会让
+         * ui.test.js 的「代码卫生」守卫变红，也更容易在改动时误用。 */
+        var scr = $('#' + ids[i]);
+        if (scr && !scr.classList.contains('hidden')) return ids[i];
+      }
+      return 'screen-home';
+    }
+
+    function openAchievements(pid, from) {
+      var isMe = !pid || pid === state.myId;
+      achBackScreen = from || 'screen-home';
+      $('#ach-title').textContent = isMe ? '我的成就' : '成就';
+      $('#ach-body').innerHTML = '<p class="rank-tip">正在加载…</p>';
+      showScreen('screen-achievements');
+      if (typeof RoomStore === 'undefined' || !RoomStore.canQueryProfile || !RoomStore.canQueryProfile()) {
+        $('#ach-body').innerHTML = '<p class="rank-tip">本地演示模式看不了成就。</p>';
+        return;
+      }
+      RoomStore.getProfile(pid || state.myId).then(function (res) {
+        /* 加载期间可能已经返回了。这时整屏已切走，再往里写就是往隐藏页写 ——
+         * 不报错，但下次进来会先闪一下上一次的内容。 */
+        if (state.screen !== 'achievements') return;
+        if (!res || res.ok === false) {
+          $('#ach-body').innerHTML = '<p class="rank-tip">' + esc((res && res.error) || '加载失败') + '</p>';
+          return;
+        }
+        var pr = res.profile;
+        if (!pr) {
+          $('#ach-body').innerHTML = '<p class="rank-tip">还没有数据，打完一局就有了。</p>';
+          return;
+        }
+        if (!AV) {                       // 老客户端缓存里没有这个模块：明确告知，别白屏
+          $('#ach-body').innerHTML = '<p class="rank-tip">页面版本太旧，刷新一次再看。</p>';
+          return;
+        }
+        $('#ach-body').innerHTML = AV.pageHtml(pr, window.Ach, { isMe: isMe });
+        if ($('#ach-scroll')) $('#ach-scroll').scrollTop = 0;
+      }).catch(function () {
+        if (state.screen !== 'achievements') return;
+        $('#ach-body').innerHTML = '<p class="rank-tip">网络异常，稍后再试。</p>';
+      });
+    }
+
+    function closeAchievements() {
+      showScreen(achBackScreen || 'screen-home');
+    }
+
     /* 战绩页与排行榜入口（榜单行用委托：innerHTML 每次重写） */
     function bindRecordsNav() {
       /* 战绩页（L0 本机战绩） */
       $('#btn-records-home').addEventListener('click', function () { openRecords('home'); });
       $('#btn-rank-home').addEventListener('click', openRank);
       $('#btn-rank-back').addEventListener('click', closeRank);
+      /* 成就页：入口在战绩页标题栏右上角（v109 把首页那个第 5 格合并过来了）。
+       * 传 'screen-records' 作为返回目标 —— 玩家是从战绩页点进来的，返回要回那儿。 */
+      $('#btn-ach-from-records').addEventListener('click', function () {
+        openAchievements(state.myId, 'screen-records');
+      });
+      $('#btn-ach-back').addEventListener('click', closeAchievements);
+      /* 成就页：座位信息档底部那一行（内容由 profileBodyHtml 动态生成，所以用委托）。
+       * 挂在 document 上而不是面板上：档案卡有两个宿主（.profile-box / .ss-info），
+       * 分别绑一次会漏掉以后新加的第三个。 */
+      document.addEventListener('click', function (e) {
+        var hit = e.target && e.target.closest ? e.target.closest('[data-ach-open]') : null;
+        if (!hit) return;
+        var pid = hit.getAttribute('data-ach-open');
+        if (!pid) return;
+        /* 先把座位面板关掉：成就页是整屏，留一个浮层压在上面会挡住返回按钮。 */
+        try { closeSeatSheet(); } catch (err) { /* 面板本来就没开 */ }
+        openAchievements(pid, currentScreenId());
+      });
       /* 排行榜行 → 看这个人的云端档案。委托监听：榜单每次拉取都整块 innerHTML 重写，
        * 逐行绑事件会在第一次刷新后全部失效（房间座位卡当初就踩过这个坑）。
        * 榜尾那行「我在 50 名外」也带 data-pid，点自己就看我自己的档案。 */
@@ -4456,7 +4573,7 @@
         if (!$('#profile-modal').classList.contains('hidden')) { closeProfile(); return; }
         if (!$('#rename-modal').classList.contains('hidden')) { closeRename(); return; }
         if (!$('#records-clear-modal').classList.contains('hidden')) { closeClearModal(); return; }
-        /* 建房选局数：只在首页，是最外层的那一个（进来就没人叠它） */
+        /* 建房选把数：只在首页，是最外层的那一个（进来就没人叠它） */
         if (!$('#create-modal').classList.contains('hidden')) { closeCreateModal(); return; }
         if (!$('#confirm-modal').classList.contains('hidden')) { closeConfirm(); return; }
         /* 引导和完整规则会互相切换，所以先关引导：它更可能是当前那一层。

@@ -507,7 +507,7 @@
     stopResultSeq();
     hideModalEl('result-modal');
     /* 第一轮打完、而且**真的进了第二轮**才插交替卡。
-     * 三种「没有第二轮」的情况都靠下面几条挡掉：打满局数提前结束（phase 直接 SETTLED）、
+     * 三种「没有第二轮」的情况都靠下面几条挡掉：打满把数提前结束（phase 直接 SETTLED）、
      * 有人离开、以及解散。在结算页上弹一张「第二轮开始」是最荒唐的错位。 */
     if (r && r.round === 1 && maybeBreakCard(r)) return;
     render();
@@ -699,9 +699,70 @@
       /* 一个淡淡的箭头：不提示的话没人知道这一行能点（以前点了是看档案，
        * 现在点了是看这一把的回放 —— 两种情况都需要一个「可点」的信号）。 */
       row.appendChild(el('span', 'settle-go', '›'));
+      /* 复盘提示只挂在「我」这一行，且只在卡片内部多一行 ——
+       * 不单起一张卡，是因为它说的就是这一行的分，隔开就说不清归属了。 */
+      if (me) {
+        var recheck = recheckEl(room);
+        if (recheck) row.appendChild(recheck);
+      }
       list.appendChild(row);
     });
     return list;
+  }
+
+  /* ------------------------- 这一把分得怎么样 -------------------------
+   *
+   * 「理论上最高 +6 · 你拿了 +2」。
+   *
+   * 为什么要有：对手的牌永远是暗的，玩家此前**没有任何通道**知道自己分得好不好 ——
+   * 赢了不知道是分法好还是运气，输了也一样。同类游戏（斗地主、麻将）都有复盘，
+   * 这游戏 60 种分法比它们复杂得多，却只能靠「下次试试另一种」自学。
+   *
+   * 为什么只给自己算：这是复盘，不是排行榜。给别人挂一行最优分，
+   * 结算页会变成公开处刑，玩家会去比较「他运气真好」，反而偏离「看自己的决策」。
+   *
+   * 为什么读 room.history 而不是 p.groups：下一把 dealAll 会覆盖 groups，
+   * 而结算页渲染时已经是「这一把打完」。history 是唯一同时带手牌和每组 deltas 的地方。
+   */
+  function recheckEl(room) {
+    var BL = (typeof window !== 'undefined') ? window.BestLine : null;
+    /* 老客户端缓存里可能没有这个模块（sw 还没换）：整块不显示，不要白屏也不要报错。 */
+    if (!BL || typeof BL.ofHand !== 'function') return null;
+    var pid = state.myId;
+    if (!pid) return null;
+
+    /* ★ 取「刚打完的那一把」由 bestLine.lastHandRounds 负责，**不能用 room.handId**。
+     * 实测踩过：结算页读到 handId=2，而 history 里那两条的 hid 都是 1 →
+     * 过滤出 0 条，复盘行整块消失，而页面其余部分完全正常、没有任何报错。
+     * 原因与取舍写在 bestLine.lastHandRounds 的注释里（handId 是「当前这把」，
+     * 而结算页展示的是「上一把」）。 */
+    var rounds = BL.lastHandRounds(room.history);
+
+    var rec = null;
+    try { rec = BL.ofHand(rounds, pid); } catch (e) { rec = null; }
+    if (!rec) return null;
+
+    var box = el('div', 'settle-recheck');
+    if (rec.diff <= 0) {
+      /* 实际 = 最优（diff 理论上不可能 <0，真出现说明枚举漏了分法 —— 那就别报「最优」，
+       * 免得给玩家一个「你的实际分比理论最高还高」的荒唐结论）。 */
+      if (rec.diff === 0) {
+        box.appendChild(el('span', 'sr-note', '这一把分到了理论最高'));
+        box.appendChild(el('span', 'sr-val', netText(rec.best)));
+      }
+      return box;
+    }
+
+    box.appendChild(el('span', 'sr-key', '理论最高'));
+    box.appendChild(el('span', 'sr-val', netText(rec.best)));
+    box.appendChild(el('span', 'sr-sep', '·'));
+    box.appendChild(el('span', 'sr-key', '你拿了'));
+    box.appendChild(el('span', 'sr-val ' + (rec.actual > 0 ? 'up' : (rec.actual < 0 ? 'down' : 'flat')), netText(rec.actual)));
+    /* 差 3 分以上补一句 —— 1~2 分属于正常波动，每次都说会让提示变成噪音。
+     * 用「再想想」而不是「你亏了」：亏不亏取决于运气，这个数字衡量的是决策。 */
+    if (rec.diff >= 3) box.appendChild(el('span', 'sr-hint', '差 ' + rec.diff + ' 分，分牌可以再想想'));
+    box.setAttribute('title', '按这一把所有人摊开的牌，重新枚举你的分法算出来的最好结果');
+    return box;
   }
 
   /* 结算尾注拆成两段，因为两个地方要的量不一样：
@@ -715,11 +776,11 @@
      * 那句原因还得念得成人话。别顺手删。 */
     if (room.endReason === 'scoreZero') why = '有人分数输到底，本局结束。';
     else if (room.endReason === 'someoneLeft') why = '有玩家离开，本局提前结束。';
-    /* 打满局数：这是**正常收尾**，不是事故。文案别写成「提前结束」那种口气，
-     * 顺带把局数报出来 —— 玩家需要知道自己是打满了 10 局，而不是被谁掐断的。 */
+    /* 打满把数：这是**正常收尾**，不是事故。文案别写成「提前结束」那种口气，
+     * 顺带把把数报出来 —— 玩家需要知道自己是打满了 10 把，而不是被谁掐断的。 */
     else if (room.endReason === 'handLimit') {
       var lim = StateMachine.handLimitOf(room);
-      why = isFinite(lim) ? ('打满 ' + lim + ' 局，本局结束。') : '打满预定局数，本局结束。';
+      why = isFinite(lim) ? ('打满 ' + lim + ' 局，本局结束。') : '打满预定把数，本局结束。';
     }
     /* 中途结束本局：以前这里没有分支，玩家点完同意跳到结算页，
      * 只看到一堆分数和自己没变的净胜，没人解释这一局为什么就完了。 */

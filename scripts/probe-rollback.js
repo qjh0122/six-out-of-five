@@ -160,6 +160,14 @@ async function boot(query) {
 /** 建房，返回 roomId（停在房间页 / 准备态） */
 async function createRoom() {
   await evaluate('(function(){ var b = document.getElementById("btn-create"); if (b) b.click(); return 1; })()');
+  /* ★ v103 起「创建房间」先弹「本局打几把」，点了确认才真的开房。
+   * 缺这一步 → 房间没建 → 后面所有断言都拿不到牌桌（脚本过期，不是功能坏）。 */
+  await sleep(500);
+  /* ★ 这个文件的 evaluate 是**单参数**的（evaluate(expr)），不要照抄别的探针写成
+   * evaluate(cdp, expr) —— 那会把 cdp 对象当成 expression 传给 CDP，
+   * 报 "Failed to deserialize params.expression"。 */
+  await evaluate(`(function(){var b=document.getElementById('btn-create-confirm');if(b)b.click();})()`);
+  await sleep(500);
   await sleep(1000);
   return evaluate(`(function(){
     var rooms = JSON.parse(localStorage.getItem('weile_rooms') || '{}');

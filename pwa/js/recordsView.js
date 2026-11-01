@@ -47,7 +47,7 @@
     var isShown = deps.isShown, pushModalState = deps.pushModalState;
 
   /* 结束原因的玩家侧措辞。三条必须在同一层级上，别一条一个说法：
-   *   · 打满局数 / 有人离开 —— 打出来的结果
+   *   · 打满把数 / 有人离开 —— 打出来的结果
    *   · 提前结束         —— 有人主动收手
    * `scoreZero` 是 v103 前「有人见底即结束」留下的**老战绩措辞**，
    * 新局不会再产生这个值 —— 但两个月前的记录点开还得念得成人话，别删。
@@ -59,8 +59,8 @@
   var END_REASON_TEXT = {
     scoreZero: '分数见底结束',
     someoneLeft: '有人离开结束',
-    /* 打满建房时选的局数。这一行和净胜分同排，字数要跟相邻两条对齐（6 字）。 */
-    handLimit: '打满局数结束',
+    /* 打满建房时选的把数。这一行和净胜分同排，字数要跟相邻两条对齐（6 字）。 */
+    handLimit: '打满把数结束',
     dissolve: '提前结束'
   };
   function endReasonText(r) { return END_REASON_TEXT[r] || '已结束'; } // 兜底绝不空白
@@ -70,7 +70,7 @@
     var arr = recent || [];
     bar.innerHTML = '';
     var pad = Math.max(0, 10 - arr.length);
-    bar.classList.toggle('fewer', pad > 0); // 不足 10 局：空槽补左侧、整条右对齐
+    bar.classList.toggle('fewer', pad > 0); // 不足 10 场：空槽补左侧、整条右对齐
     var i;
     for (i = 0; i < pad; i++) {
       var slot = el('i', 'rp-t empty');
@@ -88,7 +88,7 @@
       labels.push(WORD[kind] || '');
     }
     bar.setAttribute('aria-label', labels.length
-      ? ('最近 ' + labels.length + ' 局（左旧右新）：' + labels.join(' '))
+      ? ('最近 ' + labels.length + ' 场（左旧右新）：' + labels.join(' '))
       : '暂无对局');
   }
 
@@ -236,7 +236,7 @@
          * 这里只搬了 replay，于是「整场档案攒得好好的、回放却只有一把」——
          * 因为 openSavedReplay 拿不到 sessionKey 就退回单把 replay，
          * 标题写成「那局」、副标题写成「这一把的过程」。
-         * 云端只存流水（分数/局数），**回放从来不在服务端**，
+         * 云端只存流水（分数/把数），**回放从来不在服务端**，
          * 所以回放的入口字段必须从本机这条记录里对过来，漏一个就等于没有。 */
         sessionKey: (hit && hit.sessionKey) || '',
         handId: (hit && hit.handId) || 0
@@ -307,6 +307,19 @@
     $('#records-empty').classList.toggle('hidden', hasData);
     $('#records-foot').classList.toggle('hidden', !hasData); // 空态不显示「清除记录」与说明
 
+    /* 标题栏右上角的成就数字（v109）。
+     *
+     * 只有云端档案到了才有准确值；本机模式 / 未登录 / 还没拉回来时显示 0/N ——
+     * **不显示「—」也不隐藏按钮**：成就入口在空态（一场没打）时恰恰最该看见，
+     * 藏起来等于告诉新玩家「这里没东西」。
+     * 总数取自 achievements.js 的目录长度，不在这个文件里写 26。 */
+    var achNum = $('#ach-entry-num');
+    if (achNum) {
+      var total = (typeof window !== 'undefined' && window.Ach && window.Ach.TOTAL) || 26;
+      var unlocked = (useCloud && cloudRecords && Number(cloudRecords.achCount)) || 0;
+      achNum.textContent = unlocked + '/' + total;
+    }
+
     // 页脚数据来源：只在「不是账号数据」的时候说清这一屏是什么，正常态不解释实现细节
     var src = $('#records-source');
     if (src) {
@@ -345,14 +358,14 @@
      * 只写「共 N 局」会让人数不清列表里的行，把口径一起写上。 */
     var humanRows = 0;
     for (var hr = 0; hr < rows.length; hr++) if (!rows[hr].ai) humanRows++;
-    $('#rp-list-count').textContent = '共 ' + st.games + ' 局'
-      + (humanRows < st.games ? ' · 列表近 ' + humanRows + ' 局' : '');
+    $('#rp-list-count').textContent = '共 ' + st.games + ' 场'
+      + (humanRows < st.games ? ' · 列表近 ' + humanRows + ' 场' : '');
     /* 人机局说明：数字来自服务端档案（aiGames），本地兜底模式退回数行数。
      *
      * 芯片上已经写着「含人机」，所以正文不再重复那三个字 —— 早先是
      * 「[含人机] 人机对局 2 局」，读起来是「含人机人机对局」。
      * aiRecent 同样只留 20 条，所以「N 局」可能多于列表里的行数；
-     * 那种情况下把「列表近 M 局」也写上（和上面人类局那句同一个说法）。 */
+     * 那种情况下把「列表近 M 场」也写上（和上面人类场那句同一个说法）。 */
     var aiCount = Number(st.aiGames) || (rows.length - humanRows);
     var aiRows = rows.length - humanRows;
     var aiNote = $('#rp-ai-note');
@@ -360,8 +373,10 @@
       var showAi = aiCount > 0;
       aiNote.classList.toggle('hidden', !showAi);
       if (showAi) {
-        $('#rp-ai-note-text').textContent = aiCount + ' 局'
-          + (aiRows < aiCount ? ' · 列表近 ' + aiRows + ' 局' : '')
+        /* 三处都写「场」：aiCount 是场数、aiRows 也是场数。
+         * 以前前半写「局」后半写「场」，同一行两个单位，读者会以为它们不是一回事。 */
+        $('#rp-ai-note-text').textContent = aiCount + ' 场'
+          + (aiRows < aiCount ? ' · 列表近 ' + aiRows + ' 场' : '')
           + ' · 不计入战绩与排行榜';
       }
     }
@@ -379,7 +394,7 @@
   }
 
   /* 横屏战绩页左栏（.rp-sumcol）是独立滚动容器，底部 26 设计像素的渐隐表示「下面还有」。
-   * 但它是常驻样式：内容一屏装得下时，渐隐照样把最底下的「最近 10 局」方块洗掉半截 ——
+   * 但它是常驻样式：内容一屏装得下时，渐隐照样把最底下的「最近 10 场」方块洗掉半截 ——
    * 那是内容，不是提示。所以只在这个容器真的滚得动时才挂 .is-scroll。
    * 三处会改变高度：数据渲染完、窗口/朝向变化（resize）、字体加载完。 */
   function syncSumcolFade() {
@@ -506,7 +521,15 @@
      * 早先一句「战绩跟着账号走，换设备也在」对**别人的卡**是错的——玩家换不换设备
      * 跟别人没关系，读起来像在劝他自己换机。 */
     var isMe = !!(profile.playerId && profile.playerId === state.myId);
-    html += '</div><p class="pf-note">'
+    html += '</div>';
+    /* 成就入口（v109）。放在「最近 5 局」之后、那句 note 之前 ——
+     * 放最底下会被「战绩跟着账号走」压住，玩家以为已经翻到底了。
+     *
+     * 模块取不到就整行不渲染（而不是渲染一个点了没反应的按钮）：
+     * 老客户端缓存里没有 achievementsView.js，这条路径必须能安全退化。 */
+    var AV = (typeof window !== 'undefined' && window.LXW) ? window.LXW.achievementsView : null;
+    if (AV && typeof AV.entryRowHtml === 'function') html += AV.entryRowHtml(profile);
+    html += '<p class="pf-note">'
       + (isMe ? '战绩跟着你的账号走，换设备也在。' : '只读查看，战绩保存在对方账号里。')
       + '</p>';
     return html;

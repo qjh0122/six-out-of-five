@@ -146,6 +146,11 @@ async function run(cdp, query, label) {
   await sleep(1600);
   await evaluate(cdp, `localStorage.setItem('lxw_guide_seen_v1','1')`);
   await evaluate(cdp, `document.getElementById('btn-create').click()`);
+  /* ★ v103 起「创建房间」先弹「本局打几把」，点了确认才真的开房。
+   * 缺这一步 → 房间没建 → 后面所有断言都拿不到牌桌（脚本过期，不是功能坏）。 */
+  await sleep(500);
+  await evaluate(cdp, `(function(){var b=document.getElementById('btn-create-confirm');if(b)b.click();})()`);
+  await sleep(500);
   await sleep(1400);
   return evaluate(cdp, SNAP);
 }
@@ -195,11 +200,18 @@ async function main() {
   ok(/tr-head/.test(String(on.headParent)), '★ 房间号那一整条搬到了牌桌的 head 里', String(on.headParent));
   ok(/ready-acts/.test(String(on.readyActsParent)), '★ 准备按钮搬到了动作条里', String(on.readyActsParent));
   ok(on.readyDisabled === false, '★ 准备按钮可点（不是灰的）', 'disabled=' + on.readyDisabled);
-  ok(/起始\s*20\s*分/.test(on.cardText), '★ 中央卡写了起始分', on.cardText);
+  /* ★ v106：基准分从 20 改成 0，中央卡显示的是「第 1 / 1 · 0 分」。
+   * 原断言写的是「起始 20 分」—— 那是 v106 之前的规则，探针过期。
+   * 现在只断言「有一个分数读数」+「有把次进度」，规则细节交给 rules 页的测试。 */
+  ok(/\d+\s*分/.test(on.cardText), '★ 中央卡写了当前分数', on.cardText);
+  ok(/第\s*1\s*\/\s*1/.test(on.cardText), '★ 中央卡写了把次进度（第 1 / 1）');
   ok(/第一轮/.test(on.cardText) && /第二轮/.test(on.cardText), '★ 中央卡写了两个轮次');
   ok(/比大小/.test(on.cardText) && /十点半/.test(on.cardText) && /飘三叶/.test(on.cardText) && /斗牛/.test(on.cardText),
     '★ 四种玩法的名字都来自 StateMachine（不是另抄一份字符串）', on.cardText.slice(0, 140));
-  ok(/见底/.test(on.cardText), '★ 中央卡写了见底规则');
+  /* ★ v103 删掉了「分数见底就结束」。改成**反向断言**：
+   * 卡片上不该再出现「见底」—— 哪天有人把删掉的规则写回去，这条会红。
+   * （原来正着断言「有见底」，等于把一条已删的规则钉在测试里，红了一年。） */
+  ok(!/见底/.test(on.cardText), '★ 中央卡不再提「见底出局」（v103 已删）', on.cardText);
   ok(on.bodyScrollOver <= 1, '★ 牌桌没有内容溢出', 'over=' + on.bodyScrollOver);
   if (process.env.ZOOM) await shot(cdp, 'ready-table-portrait');
 

@@ -78,6 +78,8 @@
 | [`review/design-maturity-v109.md`](./review/design-maturity-v109.md) | v108 基线 | 本轮新增。设计域 5 维评分 + 8 处规则不一致 |
 | [`review/code-analysis-v109.md`](./review/code-analysis-v109.md) | v108 基线 | 本轮新增。工程域全量分析 + 技术债 21 条 |
 | [`review/qa-maturity-v109.md`](./review/qa-maturity-v109.md) | v108 基线 | 本轮新增。质量域 14 域盘点 + 9 条盲区 |
+| [`review/probe-triage-2026-11-01.md`](./review/probe-triage-2026-11-01.md) | v109 → v110 | **8 个红探针全部查清：都是脚本过期，不是功能坏**（根因 = v103 建房改两步）。§六 是 v110 补的两条结论（`reset-stats` 是断言早于请求、两个「3」是合法并列） |
+| [`best-line-spec.md`](./best-line-spec.md) | v110 已实施 | 「理论最高 vs 实际」的需求分析与口径。**顶部有实施结果表**：三处与方案不同，其中一处是实施时才发现的真 bug |
 
 **读旧 review 的四个坑**（详见 [`REVIEW.md`](./REVIEW.md) §5.1）：
 ① 快照不等于现状 ② BACKLOG 条数不能 grep（有五种关闭写法）③ 标题可能比内容旧 ④ 「测试全绿」不等于「能用」

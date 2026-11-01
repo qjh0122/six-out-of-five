@@ -125,6 +125,12 @@ async function enterSplit(cdp) {
   await evaluate(cdp, `localStorage.setItem('lxw_guide_seen_v1','1')`);
   await evaluate(cdp, `window.CONFIG && (window.CONFIG.MIN_PLAYERS = 1)`);
   await evaluate(cdp, `document.getElementById('btn-create').click()`);
+  /* ★ v103 起「创建房间」只弹「本局打几把」，点了确认才真的开房。
+   * 少这一步 → 房间根本没建 → 后面点 btn-ready 什么都不会发生 →
+   * enterSplit 返回 null → 探针把「建房失败」误报成「牌不好」。 */
+  await sleep(500);
+  await evaluate(cdp, `(function(){var b=document.getElementById('btn-create-confirm');if(b)b.click();})()`);
+  await sleep(500);
   await sleep(900);
   await evaluate(cdp, `document.getElementById('btn-ready').click()`);
   await sleep(1800);

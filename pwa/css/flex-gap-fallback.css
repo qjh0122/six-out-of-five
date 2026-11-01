@@ -4,7 +4,7 @@
  * 生效条件：<html> 上有 .no-flex-gap（由 index.html 里的检测脚本挂上）。
  * 现代浏览器永远不会有这个 class，所以本文件对它们是**完全惰性**的。
  *
- * 100 条规则，另有 19 处刻意不处理，原因见 docs/compat.md。
+ * 108 条规则，另有 22 处刻意不处理，原因见 docs/compat.md。
  * ------------------------------------------------------------------------- */
 
 html.no-flex-gap .dev-panel-btns > * + * {
@@ -130,6 +130,9 @@ html.no-flex-gap .modal-actions > * + * {
 html.no-flex-gap .pf-head > * + * {
   margin-left: 18px;
 }
+html.no-flex-gap .pf-ach > * + * {
+  margin-left: 10px;
+}
 html.no-flex-gap .result-head > * + * {
   margin-left: 8px;
 }
@@ -159,6 +162,9 @@ html.no-flex-gap .pat-core > * + * {
 }
 html.no-flex-gap .pat-cards > * + * {
   margin-left: 12px;
+}
+html.no-flex-gap .settle-recheck > * + * {
+  margin-left: 10px;
 }
 html.no-flex-gap .compact-v:not(.wide-stage) .game-bottom > * + * {
   margin-top: 8px;
@@ -241,6 +247,9 @@ html.no-flex-gap .hand-limit-row > * + * {
 html.no-flex-gap .hand-limit-chip > * + * {
   margin-top: 4px;
 }
+html.no-flex-gap .rp-act > * + * {
+  margin-left: 8px;
+}
 html.no-flex-gap .rp-sum-label > * + * {
   margin-left: 10px;
 }
@@ -306,4 +315,19 @@ html.no-flex-gap .rank-row > * + * {
 }
 html.no-flex-gap .compact-v .rank-row > * + * {
   margin-left: 14px;
+}
+html.no-flex-gap .ach-count > * + * {
+  margin-left: 8px;
+}
+html.no-flex-gap .ach-types h2 > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .ach-series h2 > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .ach-type-list li > * + * {
+  margin-left: 14px;
+}
+html.no-flex-gap .ach-card > * + * {
+  margin-top: 8px;
 }

@@ -143,6 +143,11 @@ async function main() {
   console.log('\n[1] 建房（本地模式：补 AI 不可用，直接一个人准备）');
   await evaluate(cdp, `localStorage.setItem('lxw_guide_seen_v1','1')`);
   await evaluate(cdp, `document.getElementById('btn-create').click()`);
+  /* ★ v103 起「创建房间」先弹「本局打几把」，点了确认才真的开房。
+   * 缺这一步 → 房间没建 → 后面所有断言都拿不到牌桌（脚本过期，不是功能坏）。 */
+  await sleep(500);
+  await evaluate(cdp, `(function(){var b=document.getElementById('btn-create-confirm');if(b)b.click();})()`);
+  await sleep(500);
   await sleep(1200);
   const before = await evaluate(cdp, BTN);
   console.log('  准备前 ' + JSON.stringify(before));

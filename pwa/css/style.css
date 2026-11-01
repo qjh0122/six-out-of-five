@@ -541,6 +541,10 @@ input:focus {
   width: 100%;
   max-width: 620px;
   display: grid;
+  /* 4 列：规则 / 战绩 / 排行榜 / 账号。
+   * v109 一度加过第 5 个「我的成就」，结果 620 / 5 格塞不下四个汉字、
+   * 而且第 5 个会掉到第二行孤零零挂在左边。现在成就入口合并进了战绩页
+   * 标题栏右上角（见 #btn-ach-from-records），这里保持 4 列。 */
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-top: 14px;
@@ -2064,6 +2068,54 @@ body.is-dragging { cursor: grabbing; }
   font-size: 24px; color: var(--text-muted); padding: 26px 0;
 }
 
+/* 座位面板（.ss-info）里的紧凑版。
+ * 信息档的高度是按「一屏放得下」算的：probe-seat-info 会量 scrollHeight 是否超过 clientHeight。
+ * 加一个 75px 的卡片会把底部顶出去 31px，所以这里做两件事把它省回来：
+ *   · 成就行压紧（padding / margin / 字号各降一档）
+ *   · **隐藏那句 note** —— 「只读查看，战绩保存在对方账号里」在座位面板里没有信息量
+ *     （面板本来就是看别人的），而它占 74px。整张档案卡（.profile-box）里保留。 */
+.ss-info .pf-ach {
+  margin-top: 10px;
+  padding: 10px 12px;
+  font-size: 20px;
+  border-radius: 14px;
+}
+.ss-info .pf-ach-num { font-size: 22px; }
+.ss-info .pf-ach-star { font-size: 22px; }
+.ss-info .pf-note { display: none; }
+
+/* 成就入口：战绩卡底部一行。
+   ★ 它是**整个档案卡里唯一的可点区域**，所以做成一整条金色按钮，
+     而不是右上角一个小链接 —— 玩家看完数字就往下滑，滑到这儿手指自然会落上去。
+   浅底（暖白纸感）上用 --gold-ink，不用 --gold（对比度只有 1.5:1，等于没写）。 */
+.pf-ach {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(232, 163, 61, 0.45);
+  background: rgba(245, 193, 92, 0.14);
+  color: var(--gold-ink);
+  font: inherit;
+  font-size: 22px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pf-ach:active { background: rgba(245, 193, 92, 0.24); }
+.pf-ach-star { font-size: 24px; line-height: 1; color: var(--gold-deep); }
+.pf-ach-label { font-weight: 700; }
+.pf-ach-num {
+  margin-left: auto;
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.pf-ach-go { font-size: 28px; line-height: 1; opacity: 0.55; }
+
 .pf-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .pf-stat {
   min-width: 0;
@@ -3043,6 +3095,34 @@ body.is-dragging { cursor: grabbing; }
 .settle-net.down { color: var(--down-green); }
 .settle-net.flat { color: var(--gray-aux); }
 .settle-row.champion .settle-net { font-size: 48px; }
+/* 复盘行：「理论最高 +6 · 你拿了 +2」。
+ * 挂在「我」那张卡内部，所以用 grid-column 跨满整行，并在上方画一条虚线分隔 ——
+ * 它是这一行分数的注脚，不是第五列。 */
+.settle-recheck {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.16);
+  font-size: 24px;
+  line-height: 1.35;
+  color: var(--gray-aux);
+  font-variant-numeric: tabular-nums;
+}
+.settle-recheck .sr-key { color: var(--gray-aux); }
+.settle-recheck .sr-val { font-weight: 800; color: var(--warm-white); }
+.settle-recheck .sr-val.up { color: var(--up-red); }
+.settle-recheck .sr-val.down { color: var(--down-green); }
+.settle-recheck .sr-val.flat { color: var(--gray-aux); }
+.settle-recheck .sr-sep { opacity: 0.5; }
+/* 差 3 分以上才出现的提示：金色但压一档，避免和「你拿了」抢注意力 */
+.settle-recheck .sr-hint { color: var(--gold); font-size: 22px; }
+/* 分到最优时没有对比数字，只有一句结论 + 那个数 */
+.settle-recheck .sr-note { color: var(--gold); }
+
 .settle-tip { font-size: 20px; color: var(--gray-aux); text-align: center; margin: 10px 0; line-height: 1.5; }
 /* 含 AI 的局：这一句是「结论」不是「公式」，所以用金色提到前面一档。
  * 玩家看完结算就要判断「我这把算不算战绩」，漏掉它只会以为数据丢了。 */

@@ -36,8 +36,14 @@ const ROOT = path.join(__dirname, '..', 'pwa');
 const SHOTS = process.argv.includes('--shots');
 const ONLY = process.env.ONLY || '';
 const SHOT_DIR = path.join(__dirname, '..', 'tmp-shots', 'flow');
-const SRV_PORT = 3042;
-const SRV_STATIC = 3043;
+/* 端口可配（v110）。写死 3042/3043 有一个必然踩到的问题：
+ * 连跑两次会撞 —— 上一个实例刚退出时端口还在 TIME_WAIT，新实例 bind 直接
+ * EADDRINUSE，而那个报错看起来像「巡检卡住了」。本地偶发、CI 里必发
+ * （两个 step 顺序跑，间隔就几秒）。
+ * 用法：PROBE_PORT=3052 node scripts/probe-ui-flow.js
+ * 必须成对：应用服务和静态服务是 SRV_PORT / SRV_PORT+1，单独换一个会连错服务。 */
+const SRV_PORT = Number(process.env.PROBE_PORT) || 3042;
+const SRV_STATIC = SRV_PORT + 1;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',

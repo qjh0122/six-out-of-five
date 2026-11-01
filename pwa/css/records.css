@@ -18,6 +18,40 @@
     radial-gradient(120% 58% at 50% 0%, var(--green-bright) 0%, var(--green-mid) 44%, var(--green-deep) 100%);
 }
 
+/* ---------- 标题栏右侧的成就入口 ----------
+ * 与 .rp-back 同位置逻辑（绝对定位 + 热区兜底），一左一右。
+ * 数字用等宽，刷新时不会左右抖。 */
+.rp-act {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max(88px, var(--tap-min, 88px));
+  height: max(88px, var(--tap-min, 88px));
+  padding: 0 14px;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--gold);
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.rp-act:active { background: rgba(245, 193, 92, 0.14); }
+.rp-act svg { width: 40px; height: 40px; flex: 0 0 auto; }
+.rp-act b {
+  /* ★ 30 而不是 24：横屏 stageScale ≈ 0.41，24 设计px 只剩 9.9 CSS px，
+   * 低于 11px 可读下限（probe-safearea 量的是物理可读性，会直接判红）。
+   * 30 × 0.41 ≈ 12.3px，竖屏 390 宽时是 15.6px，两头都够。 */
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- 标题栏（112） ---------- */
 .rp-nav {
   position: relative;
@@ -813,3 +847,268 @@
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
+
+/* ============================================================================
+   成就页
+   ----------------------------------------------------------------------------
+   复用战绩页的外壳（.rp-nav / .rp-scroll / .rp-foot），只加 ach- 前缀的内容样式。
+   坐标系同为 750 设计宽度，所以左右 padding 直接吃 --screen-pad-x。
+
+   稀有度只有颜色差，没有额外插图：零图片是这个项目的硬约束
+   （见 records.css 顶部说明），而四种稀有度用「星色 + 边框」已经够分辨。
+   ============================================================================ */
+
+#screen-achievements {
+  padding: var(--sa-top, 0px) var(--sa-right, 0px) var(--sa-bottom, 0px) var(--sa-left, 0px);
+  color: var(--warm-white);
+  background:
+    radial-gradient(620px 320px at 92% -80px, rgba(245, 193, 92, 0.15), transparent 72%),
+    radial-gradient(760px 420px at 6% -120px, rgba(245, 193, 92, 0.09), transparent 74%),
+    radial-gradient(120% 58% at 50% 0%, var(--green-bright) 0%, var(--green-mid) 44%, var(--green-deep) 100%);
+}
+
+/* ---------- 顶部：已解锁总数 ---------- */
+.ach-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 6px 4px 30px;
+}
+.ach-count {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1;
+}
+/* 数字用金色：这是整页唯一的「大数」，其余都是列表 */
+.ach-count b {
+  font-size: 84px;
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: -2px;
+  text-shadow: 0 4px 18px rgba(245, 193, 92, 0.28);
+}
+.ach-count span {
+  font-size: 30px;
+  color: var(--gray-aux);
+}
+.ach-head-side { text-align: right; padding-bottom: 6px; }
+.ach-head-label {
+  margin: 0;
+  font-size: 26px;
+  color: var(--warm-white);
+  opacity: 0.86;
+}
+.ach-since {
+  margin: 8px 0 0;
+  font-size: 22px;
+  color: var(--gray-aux);
+}
+
+/* ---------- 牌型统计 ---------- */
+.ach-types {
+  margin-bottom: 40px;
+  padding: 26px 26px 20px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+/* ★ 这两条**必须分开写**，不能合成 `.ach-types h2, .ach-series h2 { … }`。
+ *   兼容层生成器（scripts/gen-flex-gap-fallback.js）会把逗号选择器拆成
+ *   「相邻选择器」形式输出，而这里两个 h2 并不相邻，于是生成出一条匹配不到元素的死规则 ——
+ *   flex-gap-fallback.test.js 会直接判红。这是那套生成器的已知限制，不是这里的疏漏。 */
+.ach-types h2 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.ach-series h2 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.ach-types h2 em,
+.ach-series h2 em {
+  font-style: normal;
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--gray-aux);
+}
+.ach-type-list {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+}
+.ach-type-list li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.ach-type-list li:last-child { border-bottom: 0; }
+.ach-type-name {
+  flex: 1 1 auto;
+  font-size: 28px;
+  font-weight: 600;
+}
+/* 未拿到过的牌型整行压暗：一眼能看出「还差哪几种」，
+   而不是每行长得一样、要逐个读数字 */
+.ach-type-list li.is-zero .ach-type-name { color: var(--gray-aux); opacity: 0.7; }
+.ach-type-list li.is-zero .ach-type-num b { color: var(--gray-aux); }
+.ach-type-num {
+  flex: 0 0 auto;
+  font-size: 24px;
+  color: var(--gray-aux);
+}
+.ach-type-num b {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-right: 4px;
+}
+.ach-type-rate {
+  flex: 0 0 120px;
+  text-align: right;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gray-aux);
+}
+.ach-vs {
+  margin: 16px 0 0;
+  font-size: 24px;
+  color: var(--gray-aux);
+}
+.ach-vs b { color: var(--warm-white); font-weight: 700; }
+.ach-vs b.up { color: var(--up-red); }
+.ach-vs b.down { color: var(--down-green); }
+.ach-note {
+  margin: 16px 0 0;
+  font-size: 24px;
+  line-height: 1.6;
+  color: var(--gray-aux);
+}
+
+/* ---------- 系列 ---------- */
+.ach-series { margin-bottom: 46px; }
+.ach-hint {
+  margin: 10px 0 20px;
+  font-size: 22px;
+  line-height: 1.5;
+  color: var(--gray-aux);
+  opacity: 0.85;
+}
+.ach-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+/* ---------- 成就卡 ----------
+   未解锁与已解锁的差别只有三处：底色、星、边框。
+   刻意**不做灰度化**——灰度会让「差一点就拿到」的那张看着像坏图。 */
+.ach-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 16px 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  min-height: 200px;
+}
+.ach-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ach-badge {
+  font-size: 26px;
+  line-height: 1;
+  color: var(--disable-fg);
+}
+.ach-rarity {
+  font-size: 19px;
+  letter-spacing: 1px;
+  color: var(--gray-aux);
+  opacity: 0.75;
+}
+.ach-name {
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--gray-aux);
+}
+.ach-desc {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.45;
+  color: var(--gray-aux);
+  opacity: 0.72;
+}
+
+/* 已解锁：金星 + 描边亮起 */
+.ach-card.is-ok {
+  background: linear-gradient(180deg, rgba(245, 193, 92, 0.12), rgba(245, 193, 92, 0.03));
+  border-color: rgba(245, 193, 92, 0.42);
+}
+.ach-card.is-ok .ach-badge { color: var(--gold); text-shadow: 0 0 12px rgba(245, 193, 92, 0.6); }
+.ach-card.is-ok .ach-name { color: var(--gold-light); }
+.ach-card.is-ok .ach-desc { color: var(--warm-white); opacity: 0.8; }
+.ach-card.is-ok .ach-rarity { color: var(--gold-deep); opacity: 0.95; }
+
+/* 稀有度：只影响已解锁卡的描边强度。未解锁一律灰，不做等级暗示——
+   否则玩家会以为「传说卡拿不到是因为难」，其实是还没打够。 */
+.ach-card.is-ok[data-rarity="legend"] {
+  border-color: rgba(255, 224, 138, 0.7);
+  box-shadow: 0 0 24px -8px rgba(245, 193, 92, 0.55);
+}
+.ach-card.is-ok[data-rarity="epic"] { border-color: rgba(245, 193, 92, 0.5); }
+.ach-card.is-ok[data-rarity="rare"] { border-color: rgba(155, 225, 196, 0.45); }
+
+/* 进度条：只在 need > 1 时出现 */
+.ach-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  margin-top: auto;
+}
+.ach-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+}
+.ach-progress {
+  font-size: 20px;
+  color: var(--gray-aux);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 窄屏（≤ 375 物理 px 的设计宽度档）：3 列会挤成一列字，
+   降到 2 列。断点用设计宽度而不是设备宽度 —— 这一层是按 750 设计稿缩放的。 */
+@media (max-width: 420px) {
+  .ach-grid { grid-template-columns: repeat(2, 1fr); }
+  .ach-count b { font-size: 68px; }
+}
+
+/* 横屏：宽了但矮，卡片改成 4 列压高度 */
+@media (orientation: landscape) {
+  .ach-grid { grid-template-columns: repeat(4, 1fr); }
+  .ach-count b { font-size: 62px; }
+  .ach-head { padding-bottom: 20px; }
+}
+
