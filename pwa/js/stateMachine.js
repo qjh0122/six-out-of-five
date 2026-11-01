@@ -1424,6 +1424,12 @@
       // 已判弃（宽限超时）后仍允许回桌，前提是本局还在打、且没翻到下一轮：
       //   - 手牌在 finalizeLeave 里已保留，所以回来能直接接上
       //   - 翻轮后手牌内容已失效（是上一轮的牌），让他参与新一轮会算错分，必须挡住
+      //
+      // ★ v113（A-1）：这里**保持拒绝**，但修的是另一头 ——
+      //   结算期掉线不再写 left（见 finalizeLeave），所以「切出去一会儿」的人
+      //   根本走不到这个分支，回座自然就通了。
+      //   反过来，已经在对局中被判弃的人，结算期仍然不给回座：他是真的弃了，
+      //   而结算名单按「当时还在的人」算，把他放回名单会把结果改成另一个样子。
       if (room.phase === PHASE.SETTLED) return { ok: false, error: '本局已结束，请等下一把' };
       if (p.leftAtRound !== room.round) return { ok: false, error: '本局已进入下一轮，请等下一把' };
       p.left = false;
@@ -1454,6 +1460,23 @@
       if (room.players.length === 0) return { ok: true, room: null, deleted: true };
       ensureLiveOwner(room);
       return { ok: true, room: room, removed: true };
+    }
+
+    /* ★ v113（A-1）：结算期掉线**不判弃局**，只标离线。
+     *
+     * 为什么：这一把已经打完了，他只是没盯着屏幕（切出去回消息、锁屏、接电话）。
+     * 判成 left 的后果是把他的行从名次里剔掉、沉到末尾、角标写「—」、
+     * **冠军顺位让给下一个人** —— 玩家什么都没做，一场已结束比赛的结果被改写。
+     * 而且旧版 reconnect 对 SETTLED 一律拒绝，他回来还被弹回首页。
+     *
+     * 只标离线的副作用是「座位上挂着一个人」：他不在时不会拖慢任何人 ——
+     * 开下一把看的是「报名的人」，不看在线人数（见 nextRoundPlayers）。
+     * 真要清掉他，等房间回收或他自己退房。 */
+    if (room.phase === PHASE.SETTLED) {
+      p.connected = false;
+      p.disconnectedAt = Date.now();
+      room.updatedAt = Date.now();
+      return { ok: true, room: room, offline: true };
     }
 
     p.left = true;
