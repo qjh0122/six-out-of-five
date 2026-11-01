@@ -58,14 +58,14 @@ function buildProfile() {
   ];
   return {
     playerId: 'p1',
-    nickname: '爱吃肉的棒国',
+    nickname: '玩家A',
     games: 25, wins: 18, losses: 6, draws: 1, winRate: 72,
     totalNet: 143, currentStreak: -2,
     longestStreak: 7, longestLoseStreak: 3,
     bestNet: 39, updatedAt: NOW,
     /* 刻意让它**大于** aiRecent 的行数（+2）：aiRecent 也是 20 条上限，
      * 只跟 AI 练球的人真会碰上「说明写 5 局、列表只列 3 行」。
-     * 这里就是要跑到那个分支，验证说明行会补「列表近 3 局」。 */
+     * 这里就是要跑到那个分支，验证说明行会补「列表近 3 场」。 */
     aiGames: aiRecent.length + 2,
     recent: recent,
     aiRecent: aiRecent
@@ -87,7 +87,7 @@ function sendJson(res, code, obj) {
 const server = http.createServer((req, res) => {
   const url = decodeURIComponent((req.url || '/').split('?')[0]);
   if (url === '/api/auth/me') {
-    return sendJson(res, 200, { ok: true, me: { playerId: 'p1', nickname: '爱吃肉的棒国', account: { name: 'test_acc', createdAt: NOW } } });
+    return sendJson(res, 200, { ok: true, me: { playerId: 'p1', nickname: '玩家A', account: { name: 'test_acc', createdAt: NOW } } });
   }
   if (url === '/api/me/records') {
     if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只接受 GET' });
@@ -229,6 +229,21 @@ async function main() {
     return false;
   }
 
+  /* 等 Node 侧计数器变大。
+   * ★ 为什么不能只等页面变空态：空态出现 ≠ 请求已到达服务端。
+   *   上一轮这条断言报过 resetCalls=0，而页面确实空了 —— 断言在请求还在飞的时候
+   *   就执行了，读到的是 0。它既可能是「真的没发请求」，也可能只是「读早了」，
+   *   两种含义完全不同的故障混成一个数字，等于没有诊断力。
+   *   改成显式等计数达标：真没发就是超时失败，发慢了就是多等 100ms 后通过。 */
+  async function waitForFlag(get, ms) {
+    const deadline = Date.now() + (ms || 6000);
+    while (Date.now() < deadline) {
+      if (get() > 0) return true;
+      await sleep(80);
+    }
+    return false;
+  }
+
   /* 打开战绩页并**确认真的打开了**。
    * 首屏还在跑 boot 序列（refresh → 回座）时，一次过早的点击会被随后的
    * showScreen('screen-home') 顶掉——这是启动期的真实竞态，不是探针写错。
@@ -279,7 +294,7 @@ async function main() {
   await cdp.send('Page.navigate', { url: 'http://127.0.0.1:' + STATIC_PORT + '/' });
   await sleep(1400);
   await evaluate(`localStorage.setItem('lxw_session_v1', ${JSON.stringify(JSON.stringify({
-    token: 'fake-token-for-probe', playerId: 'p1', nickname: '爱吃肉的棒国', name: 'test_acc', joinedAt: NOW
+    token: 'fake-token-for-probe', playerId: 'p1', nickname: '玩家A', name: 'test_acc', joinedAt: NOW
   }))});
   localStorage.setItem('lxw_guide_seen_v1','1');
   localStorage.removeItem('lxw_records_v1');
@@ -382,7 +397,7 @@ async function main() {
   eq(info.bestWin, '7', '最长连胜 7');
   eq(info.bestLose, '3', '★ 最长连败 3（这字段是新加的，以前服务端没有）');
   eq(info.rows, 23, '★ 列表 23 行 = 20 条人类流水（服务端上限）+ 3 条人机流水');
-  eq(info.count, '共 25 局 · 列表近 20 局', '★ 场次多于流水时把口径写明，不是含糊的「共 25 局」');
+  eq(info.count, '共 25 场 · 列表近 20 场', '★ 场次多于流水时把口径写明，不是含糊的「共 25 场」');
   eq(info.firstNet, '+39', '最新一局 +39');
   eq(info.firstPeople, '3 人', '★ 人数来自服务端流水（以前只有本机记录才有）');
   eq(info.firstReason, '分数见底结束', '★ 结束原因是人话，不是 scoreZero');
@@ -477,10 +492,10 @@ async function main() {
    * 所以这里两件事都要成立：数字里没有它们，列表里必须有它们，并且标出来。 */
   eq(info.aiNoteHidden, false, '★ 说明行显示了（有 5 场人机局）');
   /* 假档案的 aiGames = 5，而 aiRecent 只有 3 条 —— 就是要走「说明比行数多」这条分支。
-   * 用户 2026-10-28 的第 3 条反馈（「要」）要的就是这个：「列表近 N 局」必须出现，
+   * 用户 2026-10-28 的第 3 条反馈（「要」）要的就是这个：「列表近 N 场」必须出现，
    * 否则玩家数不满列表只会以为数据丢了。 */
-  eq(info.aiNoteText || '', '5 局 · 列表近 3 局 · 不计入战绩与排行榜',
-    '★ 说明行：局数 + 列表近 N 局 + 不计入');
+  eq(info.aiNoteText || '', '5 场 · 列表近 3 场 · 不计入战绩与排行榜',
+    '★ 说明行：场数 + 列表近 N 场 + 不计入');
   ok(/不计入战绩与排行榜/.test(info.aiNoteText || ''), '★ 说明行写清影响：不计入战绩与排行榜');
   ok(info.aiNoteH > 0, '★ 说明行真的占了高度（不是被 hidden 之类的 0 高元素骗过去）', 'h=' + info.aiNoteH);
   eq(info.aiNoteOverflow, false, '★ 变长之后说明行没有被裁（横竖都没溢出）');
@@ -546,6 +561,9 @@ async function main() {
   console.log('\n[4] 确定 → 真的打 reset-stats');
   await evaluate(`document.getElementById('btn-records-clear-ok').click()`);
   await waitFor(`!document.getElementById('records-empty').classList.contains('hidden')`);
+  /* 再等 Node 侧的计数真的涨上来（见 waitForFlag 的注释：空态出现不代表请求已到） */
+  const hit = await waitForFlag(() => resetCalls, 6000);
+  if (!hit) console.log('    !! 6 秒内服务端没收到 reset-stats，resetCalls=' + resetCalls);
   const after = await evaluate(`(function(){
     var g = function(id){ var e = document.getElementById(id); return e ? e.textContent : null; };
     return {

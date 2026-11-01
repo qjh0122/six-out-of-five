@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v108';
+const CACHE_NAME = 'weile-liuxuanwu-v110';
 
 /* network-first 的超时上限。
  *
@@ -100,6 +100,11 @@ const PRECACHE = [
 /* 表情/短语清单：**前端与服务端共用同一份**。不预缓存的话离线打开面板
  * 会显示「表情没加载出来」，而这个清单本身只有几 KB。 */
   '/js/emoji.js',
+/* 成就：stateMachine 结算时调 Ach.accumulate() 采集，**必须排在它前面**。
+ * 不预缓存的话离线打一局，成就静默不记（Ach 是 undefined，代码里有判空兜底，
+ * 所以不会报错、也不会崩 —— 只是白打）。这类「不崩但丢数据」的缺失最难发现。 */
+  '/js/achievements.js',
+  '/js/bestLine.js',
   '/js/stateMachine.js',
   '/js/authStore.js',
   '/js/roomStore.js',
@@ -129,6 +134,7 @@ const PRECACHE = [
   '/js/settleView.js',
   '/js/seatSheetView.js',
   '/js/recordsView.js',
+  '/js/achievementsView.js',
   '/js/game.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',

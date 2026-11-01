@@ -10,9 +10,9 @@
  *       → **打到建房时选定的把数上限才进 SETTLED**（endReason='handLimit'），
  *         上限存在 room.handLimit 上，续局沿用、房间内不可改。
  *       → ★ v103 起「有人分数 ≤0」**不再结束游戏**。分数可以跌成负数，人继续打，
- *         终局只认局数。理由：当时的 20 分本金扛不住几把（每把最坏 −17），
- *         不删这条，5/10/15/30 档全都会被爆分抢先截断，玩家选的局数等于没选。
- *         v106 把基准分改成 0 之后，这条规则更是**只剩下局数一个终局条件** ——
+ *         终局只认把数。理由：当时的 20 分本金扛不住几把（每把最坏 −17），
+ *         不删这条，5/10/15/30 档全都会被爆分抢先截断，玩家选的把数等于没选。
+ *         v106 把基准分改成 0 之后，这条规则更是**只剩下把数一个终局条件** ——
  *         没有「见底」可言了（详见 config.js 的 INITIAL_SCORE 注释）。
  *         异常终局只剩两种：在场人数 < MIN_PLAYERS（someoneLeft）、房主解散（dissolve）。
  *       → SETTLED 后**不再有房主一键开局**：每人各自点「开始下一局」报名，
@@ -32,13 +32,17 @@
   var CONFIG = (typeof require === 'function')
     ? require('./config.js')
     : (typeof global !== 'undefined' && global.CONFIG ? global.CONFIG : Engine.CONFIG);
-  var mod = factory(Card, Engine, CONFIG);
+  /* 成就采集依赖（双端同源）。**允许为 null**：老客户端缓存了不带
+   * achievements.js 的 index.html 时，这里拿到 undefined —— 那就不统计，
+   * 但绝不能因为「成就模块没加载」让整局结算抛异常。 */
+  var Ach = (typeof require === 'function') ? require('./achievements.js') : global.Ach;
+  var mod = factory(Card, Engine, CONFIG, Ach);
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = mod;
   } else {
     global.StateMachine = mod;
   }
-})(typeof self !== 'undefined' ? self : this, function (Card, Engine, CONFIG) {
+})(typeof self !== 'undefined' ? self : this, function (Card, Engine, CONFIG, Ach) {
   'use strict';
 
   var PHASE = {
@@ -86,7 +90,7 @@
     return (room && room.cap) || CONFIG.MAX_PLAYERS;
   }
 
-  /* 本局把数（"局数"）的白名单档位。前后端同源，别在两处各写一份。 */
+  /* 本局把数（"把数"）的白名单档位。前后端同源，别在两处各写一份。 */
   function handLimitOptions() {
     return (CONFIG.HAND_LIMITS && CONFIG.HAND_LIMITS.length)
       ? CONFIG.HAND_LIMITS
@@ -188,7 +192,7 @@
     });
   }
 
-  /* opts.handLimit：建房时选的本局局数（把数上限）。只在这一刻可定，
+  /* opts.handLimit：建房时选的本局把数（把数上限）。只在这一刻可定，
    * 进房之后任何人都改不了 —— 结束契约一旦可变，等于没有契约。 */
   function newRoom(roomId, owner, opts) {
     var now = Date.now();
@@ -216,7 +220,7 @@
       cap: CONFIG.MAX_PLAYERS,
       /* 本局最多打几把（一把 = 2 轮）。到顶即结账，**这是唯一的正常终局**
        * （v103 起；爆分不再能提前收手，只剩人数不足 / 中途解散两条异常收尾）。
-       * 写在房间上而不是读 CONFIG：局数是**这一间房**的规则，
+       * 写在房间上而不是读 CONFIG：把数是**这一间房**的规则，
        * 也是「结算后继续游戏沿用同一档位」的唯一依据（续局只重置分数，
        * 不碰这个字段）。 */
       handLimit: normalizeHandLimit(opts && opts.handLimit),
@@ -239,7 +243,7 @@
        * 只存 id / nickname / hand 三样，不存 entries 里的中间判定过程 ——
        * 这些数据每次广播都会随 _view 下发，留全量会把推送撑大一倍。 */
       history: [],
-      /* 结账原因：'handLimit'(打满局数) / 'someoneLeft'(人数不足) / 'dissolve'(中途解散)。
+      /* 结账原因：'handLimit'(打满把数) / 'someoneLeft'(人数不足) / 'dissolve'(中途解散)。
        * 老记录里还可能出现 'scoreZero'（v103 前的「有人见底」）——
        * 只用于历史战绩与回放展示，新局永远不会再产生这个值。 */
       endReason: null,
@@ -923,7 +927,7 @@
        * 现在**不判也不 break 了**：分数跌破 0 只表示这个人这一把输得比本金多，
        * 不再终止游戏 —— 终局只认「打满建房时选的把数」（或人数不足 / 中途解散）。
        * 为什么要去掉：20 分本金扛不住几把，实测每把波动 ±5~8 分、最坏 −17 分，
-       * 于是 5 / 10 / 15 / 30 档基本都被爆分抢先截断，玩家选的局数形同虚设。
+       * 于是 5 / 10 / 15 / 30 档基本都被爆分抢先截断，玩家选的把数形同虚设。
        *
        * 副作用全是好的：
        *   · 本轮所有组一定全部算完 → results.length 恒等于组总数；
@@ -932,6 +936,19 @@
        *   · 顺带修掉一个老的不公平：以前第 1 组见底的人，后面两组的输赢
        *     直接蒸发，同一个人换个座位顺序最终分就不一样了。 */
     }
+    /* 成就采集：把这一轮的牌型与胜负累加进房间的临时桶。
+     *
+     * 为什么不放到结算落库时（hub._persistSettlement）再从 room.history 反推：
+     * history 只保留最近 4 轮（= 2 把，见下面 `history.slice(-4)`），
+     * 打满 10 把的局中间那些全被截断了，反推出来的成就会少得离谱。
+     *
+     * 桶挂在 room 上、整局结束时由 hub 一次性合并进档案。
+     * **它不参与广播**：hub._view 是显式挑选字段构造的，不会顺手把 room 整个序列化出去。
+     */
+    if (Ach && typeof Ach.accumulate === 'function') {
+      room.achRun = Ach.accumulate(room.achRun || null, round, results);
+    }
+
     room.results['round' + round] = results;
     room.lastResult = { round: round, groups: results };
     room.resultSeq = (room.resultSeq || 0) + 1;
@@ -1337,7 +1354,7 @@
       room.settledAt = Date.now();
       room.handSeq = (room.handSeq || 0) + 1;
       /* ★ 作废与否在这里判，因为这里是三条结束路径**唯一的收口**：
-       *   打满局数（settleRound）／ 人数不足（maybeEndGame）／ 结束本局（finishDissolve）
+       *   打满把数（settleRound）／ 人数不足（maybeEndGame）／ 结束本局（finishDissolve）
        * 全都调它。写在别处一定会漏 —— 以前只有 finishDissolve 写，
        * 于是「一分没打、对手掉线」这条路上 voided 永远是 false，
        * 两个人各被记一场「净胜 0」的平局：场次 +1、胜率被稀释、连胜被清成 0。

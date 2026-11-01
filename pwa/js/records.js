@@ -3,7 +3,7 @@
  *
  * 设计原则（见 docs/product-spec-l0-records.md §3）：
  *   1. 只存原始记录，聚合随时算 —— 以后加指标不改数据结构
- *   2. 单 key 存储，最多保留最近 200 局，超出淘汰最旧
+ *   2. 单 key 存储，最多保留最近 200 场，超出淘汰最旧
  *   3. 任何读写异常（隐私模式 / 配额满 / 脏数据）一律静默降级，绝不影响对局
  *
  * 对外接口：
@@ -21,7 +21,7 @@
  *       **老版本写下的记录没有 playerId**，它们不归属任何账号，只在「未登录」视图里出现。
  *   Records.dedupe(force) -> {ran, removed}  存量重复迁移（默认只跑一次，force=true 强制重跑）
  *   Records.stats(playerId?) -> Object  聚合指标（场次 / 胜负平 / 胜率 / 净胜 / 单场最高 /
- *                                       当前连胜 / 最长连胜 / 最长连败 / 最近 10 局）
+ *                                       当前连胜 / 最长连胜 / 最长连败 / 最近 10 场）
  *   Records.clear(playerId?) -> boolean 清空。传 playerId = 只清该账号；不传 = 全清。
  *   Records.available() -> boolean      localStorage 可用性（隐私模式返回 false）
  *   Records.KEY / Records.LIMIT / Records.DUP_WINDOW_MS   便于测试与排查
@@ -146,7 +146,7 @@
    *   2) 不碰档案体积 —— profiles.json 是单文件存储，每份档案多 3KB 会直接拉低天花板；
    *   3) 零隐私面 —— 数据本来就已经在结算那一刻公开过，只写到自己的浏览器里。
    *
-   * 体积控制是硬要求：LIMIT 是 200 局，一局回放约 3KB，全留就是 600KB。
+   * 体积控制是硬要求：LIMIT 是 200 场，一局回放约 3KB，全留就是 600KB。
    * 所以只给最近 REPLAY_KEEP 条留回放，更早的在写入时剥掉（记录本身还在）。 */
   var REPLAY_KEEP = 8;
   var REPLAY_MAX_ROUNDS = 4;
@@ -425,7 +425,7 @@
       }
     }
 
-    // 最近 10 局：取倒序前 10 条，再反转成正序（左旧右新，可直接渲染趋势条）
+    // 最近 10 场：取倒序前 10 条，再反转成正序（左旧右新，可直接渲染趋势条）
     var recent = [];
     var take = Math.min(10, n);
     for (var m = take - 1; m >= 0; m--) {

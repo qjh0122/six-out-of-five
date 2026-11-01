@@ -7,7 +7,7 @@
      iOS Safari 从 iOS 10 起**故意忽略**它（无障碍考虑），所以真正的锁在 game.js 的 lockPageZoom()。 -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#16382F">
-<meta name="app-version" content="20261101a">
+<meta name="app-version" content="20261101c">
 <title>六选五</title>
 <!-- PWA
      manifest / 图标的 <link> **不写在这里**，由下面那段脚本注入 —— 它们必须带
@@ -171,9 +171,9 @@ window.addEventListener('beforeinstallprompt', function (e) {
   } catch (e) { /* 存储不可用就当作已登录，让 boot 自己判 */ }
 })();
 </script>
-<link rel="stylesheet" href="./css/style.css?v=20261101a">
-<link rel="stylesheet" href="./css/records.css?v=20261101a">
-<link rel="stylesheet" href="./css/emoji.css?v=20261101a">
+<link rel="stylesheet" href="./css/style.css?v=20261101c">
+<link rel="stylesheet" href="./css/records.css?v=20261101c">
+<link rel="stylesheet" href="./css/emoji.css?v=20261101c">
 <script>
 /* flex gap 检测 + 兼容层按需加载。
  *
@@ -227,8 +227,8 @@ window.addEventListener('beforeinstallprompt', function (e) {
      defer 脚本要等 HTML 解析到那一行才开始下载，而它们在 <body> 末尾 ——
      这里提前声明，让下载和解析并行。URL 必须和下面的 src/href **完全一致**
      （带同样的 ?v=），否则等于下两份。 -->
-<link rel="preload" href="./css/style.css?v=20261101a" as="style">
-<link rel="preload" href="./js/game.js?v=20261101a" as="script">
+<link rel="preload" href="./css/style.css?v=20261101c" as="style">
+<link rel="preload" href="./js/game.js?v=20261101c" as="script">
 </head>
 <body>
 <!-- 断网提示：以前断网后界面上没有任何变化，玩家只能靠"点了没反应"猜 -->
@@ -585,6 +585,20 @@ window.addEventListener('beforeinstallprompt', function (e) {
           </svg>
         </button>
         <h1 class="rp-title">我的战绩</h1>
+        <!-- 成就入口（v109）。
+             为什么不放在首页：首页的入口条是 4 列网格，塞第 5 个会掉到第二行，
+             孤零零挂在左边像排版坏了。合并到「我的」这一页右上角之后：
+             首页仍是 4 格，成就与战绩同源（都是「我这个人」的数据），
+             而且空态（一场没打）时也看得见 —— 那时候正该去看看成就表。 -->
+        <button id="btn-ach-from-records" class="rp-act" type="button" aria-label="我的成就">
+          <svg viewBox="0 0 26 26" fill="none" aria-hidden="true">
+            <path d="M8.4 4.6h9.2v5.1a4.6 4.6 0 0 1-9.2 0V4.6Z" stroke="#F5C15C" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M8.4 6.3H5.5v1.5a3.4 3.4 0 0 0 3.2 3.4M17.6 6.3h2.9v1.5a3.4 3.4 0 0 1-3.2 3.4"
+                  stroke="#F5C15C" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M13 14.3v3.4M9.7 21.3h6.6" stroke="#F5C15C" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <b id="ach-entry-num">0/26</b>
+        </button>
       </header>
 
       <main id="records-scroll" class="rp-scroll hidden">
@@ -643,14 +657,14 @@ window.addEventListener('beforeinstallprompt', function (e) {
 
           <section class="rp-trend">
             <div class="rp-trend-head">
-              <span class="rp-trend-title">最近 10 局</span>
+              <span class="rp-trend-title">最近 10 场</span>
               <span class="rp-legend">
                 <span><i class="rp-lg rp-lg-win"></i>赢</span>
                 <span><i class="rp-lg rp-lg-lose"></i>输</span>
                 <span><i class="rp-lg rp-lg-flat"></i>平</span>
               </span>
             </div>
-            <div id="rp-trend-bar" class="rp-trend-bar" role="img" aria-label="最近 10 局"></div>
+            <div id="rp-trend-bar" class="rp-trend-bar" role="img" aria-label="最近 10 场"></div>
             <div class="rp-trend-axis"><span>更早</span><span>最新</span></div>
           </section>
           </div><!-- /rp-sumcol -->
@@ -734,6 +748,33 @@ window.addEventListener('beforeinstallprompt', function (e) {
             <path d="M11 6.6v.2M11 10v5" stroke="#B8C0CC" stroke-width="1.8" stroke-linecap="round" opacity=".8"/>
           </svg>
           按累计净胜排序 · 不含人机对局
+        </p>
+      </footer>
+    </section>
+
+    <!-- 成就。结构很简单：一个标题栏 + 一个滚动区，内容全部由
+         achievementsView.js 拼（首页入口和「点头像看别人」共用同一份渲染）。 -->
+    <section id="screen-achievements" class="screen hidden">
+      <header class="rp-nav">
+        <button id="btn-ach-back" class="rp-back" type="button" aria-label="返回">
+          <svg viewBox="0 0 34 34" fill="none" aria-hidden="true">
+            <path d="M21.5 6.5 11 17l10.5 10.5" stroke="#FFF7E8" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <h1 id="ach-title" class="rp-title">我的成就</h1>
+      </header>
+
+      <main id="ach-scroll" class="rp-scroll">
+        <div id="ach-body"><p class="rank-tip">正在加载…</p></div>
+      </main>
+
+      <footer class="rp-foot">
+        <p class="rp-note">
+          <svg viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="8.6" stroke="#B8C0CC" stroke-width="1.6" opacity=".8"/>
+            <path d="M11 6.6v.2M11 10v5" stroke="#B8C0CC" stroke-width="1.8" stroke-linecap="round" opacity=".8"/>
+          </svg>
+          牌型成就从上线当天开始记 · 不含人机对局
         </p>
       </footer>
     </section>
@@ -887,7 +928,7 @@ window.addEventListener('beforeinstallprompt', function (e) {
               <li><b>十点半</b>万能，能当 10，比真 10 大</li>
               <li><b>斗牛</b>能凑十，也能凑牛牛</li>
             </ul>
-            <p class="guide-tip">打满建房时选的局数才收手；分数可以输成负数，人继续打。</p>
+            <p class="guide-tip">打满建房时选的把数才收手；分数可以输成负数，人继续打。</p>
           </div>
         </div>
 
@@ -902,13 +943,13 @@ window.addEventListener('beforeinstallprompt', function (e) {
          ★ v106 修：这里原本写着「分数输到 0，本局就结束」和「有人分数 ≤0 立即结束本局」，
          那是 v103 就已经删掉的「见底出局」。起始分改成 0 之后这两句自相矛盾（开局即结束），
          规则页在教一条不存在的规则 —— 这类文案漏改比代码 bug 更难被发现，
-         因为没有任何测试会去读它。现在写的是真正的终局条件：打满选定局数 / 人数不足 / 全员解散。 -->
+         因为没有任何测试会去读它。现在写的是真正的终局条件：打满选定把数 / 人数不足 / 全员解散。 -->
     <div id="rules-modal" class="modal hidden"
          role="dialog" aria-modal="true" aria-labelledby="rules-title">
       <div class="modal-card rules-card">
         <h2 id="rules-title">玩法规则</h2>
         <div class="rules-body">
-          <p class="rules-lead">每人 6 张牌，分两轮拆开跟别人比，赢了收分，<b>打满建房时选的局数才收手</b>。</p>
+          <p class="rules-lead">每人 6 张牌，分两轮拆开跟别人比，赢了收分，<b>打满建房时选的把数才收手</b>。</p>
           <div class="rules-step"><b>第一轮</b>拆成 1 / 2 / 3 张 → 比大小 · 十点半 · 飘三叶</div>
           <div class="rules-step"><b>第二轮</b>同一手再拆 1 / 5 张 → 比大小 · 斗牛</div>
           <dl class="rules-list">
@@ -922,7 +963,7 @@ window.addEventListener('beforeinstallprompt', function (e) {
             <dd>三张凑 10 的倍数，剩两张个位 = 牛几；五花牛最大，没牛最小<br><b>同牛型比五张里最大的那张</b>（K&gt;Q&gt;J&gt;10&gt;…&gt;2&gt;A，A 只算 1；一样再比花色 ♠&gt;♥&gt;♣&gt;♦）<br><b>大王两处都能补</b>：既能去凑那三张，也能留在剩下的两张里 —— 三张真牌自己就是 10 的倍数时，王补进那两张必成<b>牛牛</b>；有大王的手牌比大小时<b>王不参与</b>，取除王以外最大的那张；有大王不算五花牛（王 + 四张花牌算牛牛）<br>五花牛 4 分 / 牛牛 3 分 / 牛8·牛9 2 分 / 牛1~牛7 1 分<br><b>没牛的代价</b>：赢家有牛而你没牛时，你在该档之外再多付 5 分（两人局牛牛打没牛 = 输家 -8）；双方都没牛不额外扣分</dd>
           </dl>
           <p class="rules-joker"><b>大王</b>在三种玩法里各不同：单张比大小 → 本身就是最大的一张牌；飘三叶 → 万能牌，自动凑出最优牌型；十点半 → 完全万能，<b>能当 10 且比真 10 大</b>（王 + K 也是十点半）；斗牛 → 三张真牌自己成十时，王补进剩下两张必成牛牛；否则王去凑「三张成 10」，同牛型比大小时王不参与（取除王以外最大的那张）。</p>
-          <p class="rules-end">打满选定局数本局结束；或有人提请结束本局、全员同意也结束（打过的分照记，一分没打则不计入战绩）。<b>分数可以输成负数，人不下场</b> —— v103 起「见底出局」这条规则已经删掉了。</p>
+          <p class="rules-end">打满选定把数本局结束；或有人提请结束本局、全员同意也结束（打过的分照记，一分没打则不计入战绩）。<b>分数可以输成负数，人不下场</b> —— v103 起「见底出局」这条规则已经删掉了。</p>
         </div>
         <button id="btn-rules-close" class="btn btn-primary btn-lg">知道了</button>
       </div>
@@ -959,8 +1000,8 @@ window.addEventListener('beforeinstallprompt', function (e) {
     <!-- 建房弹窗：先选「本局打几把」再开房。
          产品口径（2026-10-31，v103 修订）：
            · 档位固定 3 / 5 / 10 / 15 / 30，**不选就是 10**；
-           · 一把 = 两轮，所以 10 局 = 20 轮；
-           · 结束条件 = **打满选定局数**。分数可以跌破 0（输得比本金多），
+           · 一把 = 两轮，所以 10 把 = 20 轮；
+           · 结束条件 = **打满选定把数**。分数可以跌破 0（输得比本金多），
              但不会因此提前结束 —— 这条规则 v103 已删。
          档位按钮由 game.js 按 CONFIG.HAND_LIMITS 现场生成，HTML 里不写死一份 ——
          写死就会出现「配置改了、界面没改」这种最难发现的错位。
@@ -969,9 +1010,9 @@ window.addEventListener('beforeinstallprompt', function (e) {
     <div id="create-modal" class="modal hidden"
          role="dialog" aria-modal="true" aria-labelledby="create-title">
       <div class="modal-box create-box">
-        <h3 id="create-title">本局打几局？</h3>
-        <p class="create-desc">一局两轮，打满选定局数收手，中途不提前结束。</p>
-        <div class="hand-limit-row" id="hand-limit-row" role="radiogroup" aria-label="本局局数"></div>
+        <h3 id="create-title">本局打几把？</h3>
+        <p class="create-desc">一把两轮，打满选定把数收手，中途不提前结束。</p>
+        <div class="hand-limit-row" id="hand-limit-row" role="radiogroup" aria-label="本局把数"></div>
         <div class="modal-actions">
           <button id="btn-create-confirm" class="btn btn-primary" data-autofocus>开始建房</button>
           <button id="btn-create-cancel" class="btn btn-ghost on-light">取消</button>
@@ -1170,29 +1211,33 @@ window.addEventListener('beforeinstallprompt', function (e) {
 
 <!-- 错误上报必须最先加载：game.js 里的启动异常也要能报到服务端。
      它不依赖任何其他模块，自己装 window.onerror / unhandledrejection。 -->
-<script src="./js/errorReport.js?v=20261101a" defer></script>
-<script src="./js/engine.js?v=20261101a" defer></script>
-<script src="./js/card.js?v=20261101a" defer></script>
-<script src="./js/config.js?v=20261101a" defer></script>
+<script src="./js/errorReport.js?v=20261101c" defer></script>
+<script src="./js/engine.js?v=20261101c" defer></script>
+<script src="./js/card.js?v=20261101c" defer></script>
+<script src="./js/config.js?v=20261101c" defer></script>
 <!-- 表情/短语清单：前端与服务端共用同一个文件（服务端 require 它做白名单）。
      必须早于 roomStore.js —— 传输层的 sendEmoji 会用它校验 id。 -->
-<script src="./js/emoji.js?v=20261101a" defer></script>
-<script src="./js/stateMachine.js?v=20261101a" defer></script>
-<script src="./js/authStore.js?v=20261101a" defer></script>
-<script src="./js/roomStore.js?v=20261101a" defer></script>
-<script src="./js/records.js?v=20261101a" defer></script>
-<script src="./js/sessionLog.js?v=20261101a" defer></script>
-<script src="./js/sfx.js?v=20261101a" defer></script>
-<script src="./js/slotLayout.js?v=20261101a" defer></script>
+<script src="./js/emoji.js?v=20261101c" defer></script>
+<!-- 成就：必须排在 stateMachine 之前 —— 状态机在结算时调 Ach.accumulate() 采集，
+     顺序反了它拿到的是 undefined，表现为「成就永远 0」，不报错。 -->
+<script src="./js/achievements.js?v=20261101c" defer></script>
+<script src="./js/bestLine.js?v=20261101c" defer></script>
+<script src="./js/stateMachine.js?v=20261101c" defer></script>
+<script src="./js/authStore.js?v=20261101c" defer></script>
+<script src="./js/roomStore.js?v=20261101c" defer></script>
+<script src="./js/records.js?v=20261101c" defer></script>
+<script src="./js/sessionLog.js?v=20261101c" defer></script>
+<script src="./js/sfx.js?v=20261101c" defer></script>
+<script src="./js/slotLayout.js?v=20261101c" defer></script>
 <!-- 头像预设（纯函数 + 48 款 SVG data URI）。必须早于 game.js：
      game.js 渲染座位时同步调 Avatar.img，晚一步就是 ReferenceError。 -->
-<script src="./js/avatar.js?v=20261101a" defer></script>
+<script src="./js/avatar.js?v=20261101c" defer></script>
 <!-- 圆桌闸门（纯函数）：这台机器上不上桌、按哪一档几何。
      必须在 game.js 之前：seatRingFlag() 渲染顶栏时同步调用全局 RingGate。 -->
-<script src="./js/ringGate.js?v=20261101a" defer></script>
+<script src="./js/ringGate.js?v=20261101c" defer></script>
 <!-- 座位环几何（纯函数）。同样必须在 game.js 之前：game.js 是同步 IIFE，
      渲染顶栏时直接读全局 SeatRing，晚一步就是 ReferenceError。 -->
-<script src="./js/seatRing.js?v=20261101a" defer></script>
+<script src="./js/seatRing.js?v=20261101c" defer></script>
 <!-- ★ 拆分出来的模块（v108）。顺序有意义，别重排：
      前三个是**立即执行**的（挂 window.LXW.utils / .cardView / .modalKit），
      后五个是**工厂**（挂 window.LXW.xxx = create），由 game.js 在自己合适的
@@ -1200,15 +1245,16 @@ window.addEventListener('beforeinstallprompt', function (e) {
      var 不提升值，创建太早会拿到 undefined。
 
      gameUtils 必须第一个：其余七个都从 window.LXW.utils 取 $ / el / esc。 -->
-<script src="./js/gameUtils.js?v=20261101a" defer></script>
-<script src="./js/cardView.js?v=20261101a" defer></script>
-<script src="./js/modalKit.js?v=20261101a" defer></script>
-<script src="./js/historyKit.js?v=20261101a" defer></script>
-<script src="./js/accountView.js?v=20261101a" defer></script>
-<script src="./js/settleView.js?v=20261101a" defer></script>
-<script src="./js/seatSheetView.js?v=20261101a" defer></script>
-<script src="./js/recordsView.js?v=20261101a" defer></script>
-<script src="./js/game.js?v=20261101a" defer></script>
+<script src="./js/gameUtils.js?v=20261101c" defer></script>
+<script src="./js/cardView.js?v=20261101c" defer></script>
+<script src="./js/modalKit.js?v=20261101c" defer></script>
+<script src="./js/historyKit.js?v=20261101c" defer></script>
+<script src="./js/accountView.js?v=20261101c" defer></script>
+<script src="./js/settleView.js?v=20261101c" defer></script>
+<script src="./js/seatSheetView.js?v=20261101c" defer></script>
+<script src="./js/recordsView.js?v=20261101c" defer></script>
+<script src="./js/achievementsView.js?v=20261101c" defer></script>
+<script src="./js/game.js?v=20261101c" defer></script>
 <!-- PWA Service Worker 注册（失败静默忽略，不影响正常游戏；PWA 需经 http(s) 服务，file:// 下不生效） -->
 <script>
   (function () {

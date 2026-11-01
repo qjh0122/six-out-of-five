@@ -872,7 +872,7 @@
   return {
     getMode: function () { return MODE; },
 
-    /* opts.handLimit：本局局数（把数上限）。只在这一刻能定，之后房间内不可改。 */
+    /* opts.handLimit：本局把数（把数上限）。只在这一刻能定，之后房间内不可改。 */
     createRoom: function (player, opts) {
       return MODE === 'local' ? Promise.resolve(local.createRoom(player, opts)) : ws.createRoom(player, opts);
     },

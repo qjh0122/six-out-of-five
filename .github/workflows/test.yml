@@ -59,3 +59,58 @@ jobs:
           else
             echo "没有残留"
           fi
+
+  # ────────────────────────────────────────────────────────────────────
+  # 浏览器巡检（v110 加的）
+  #
+  # 为什么单独一个 job：45 个探针**一个都没在 CI 里**，全靠人记着跑。
+  # 后果不是理论上的 —— v108 那次 4463 条断言全绿、CI 也全绿，
+  # 但真浏览器里所有弹窗都是哑的（脚本没接上），没有一条单测能发现。
+  #
+  # 为什么以前挂不上去：41 个脚本硬编码了 Windows 的 Edge 路径，
+  # 放到 Linux runner 上必然全红。现在由 scripts/probe-ci.js 在进程级
+  # 把 spawn 重定向到探测到的浏览器，脚本一行没改。
+  #
+  # 只跑「一条主路径 + 一个横屏」，不是全部 45 个探针：
+  #   · 全量要 14 分钟以上，而且大半探针查的是具体视觉细节，
+  #     更适合发版前人工跑一次（见 docs/PLAN.md 的发布检查单）；
+  #   · 这里要守的是「**接没接上**」这一层，那是单测永远看不到的。
+  # ────────────────────────────────────────────────────────────────────
+  ui-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 准备浏览器
+        run: |
+          # ubuntu runner 通常自带 /usr/bin/google-chrome；没有才装。
+          # chromium-browser 在 22.04 之后是 snap 包装，装不上就退到 chromium。
+          if ! node -e "require('./scripts/lib/browser.js').findBrowser()" 2>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq chromium-browser || sudo apt-get install -y -qq chromium || true
+          fi
+          node -e "console.log('浏览器：' + require('./scripts/lib/browser.js').findBrowser())" \
+            || { echo "::error::找不到可用浏览器，巡检无法进行"; exit 1; }
+
+      - name: 全流程巡检 · 竖屏主路径（13 屏 + 全部弹窗）
+        env:
+          ONLY: '390×844'
+        run: node scripts/probe-ci.js scripts/probe-ui-flow.js
+
+      - name: 全流程巡检 · 横屏（历史上问题最多的一档）
+        env:
+          ONLY: '844×390'
+          # 换一组端口：上一步刚退出时 3042 还在 TIME_WAIT，直接复用会 EADDRINUSE，
+          # 而那个报错看起来像「巡检卡住了」（本地实测踩过）。
+          PROBE_PORT: '3052'
+        run: node scripts/probe-ci.js scripts/probe-ui-flow.js
+
+      - name: 端到端旅途（注册 → 建房 → 打完一局 → 结算）
+        run: node scripts/probe-ci.js scripts/journey.js

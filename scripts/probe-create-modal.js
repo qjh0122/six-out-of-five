@@ -212,8 +212,12 @@ async function main() {
   ok(d.widths[0] >= 44, '档位宽度足够手指点（' + d.widths[0] + ' 屏幕px）');
   ok(d.clipped.every(function (c) { return c === false; }), '★ 每个档位的数字/单位都没被裁切');
   ok(d.numFs >= 18 && d.unitFs >= 9, '字号可读：数字 ' + d.numFs + 'px / 单位 ' + d.unitFs + 'px');
-  ok(/打满/.test(d.desc || '') && /分数见底/.test(d.desc || ''),
-    '★ 说明文案把两个结束条件都写了（只说局数会让人以为爆分还要继续）', d.desc);
+  /* ★ v103 删掉了「分数见底就结束」这条规则，文案里也不该再有。
+   * 原断言要求「打满 + 分数见底」两个条件都写 —— 那是在把一个已删除的规则
+   * 钉在测试里，于是它从 v103 起就一直红。改成反向断言：
+   * 写清「打满」这个唯一条件，且**不再出现见底**。 */
+  ok(/打满/.test(d.desc || ''), '★ 说明文案写了「打满把数」这个终局条件', d.desc);
+  ok(!/见底/.test(d.desc || ''), '★ 文案不再提「分数见底」（v103 已删掉那条规则）', d.desc);
 
   console.log('\n[2] 点 30 → 选中态真的转移');
   await evaluate(`(function(){

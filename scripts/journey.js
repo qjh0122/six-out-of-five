@@ -1301,7 +1301,8 @@ async function main() {
   ok(aiInfo.noteHidden === false, '★ 列表上方出现人机说明行', JSON.stringify(aiInfo));
   /* 正文前面还有一枚「含人机」芯片，所以文案本身从「N 局」起头，
    * 不再重复「人机对局」三个字（否则读成「含人机人机对局」）。 */
-  ok(/^\d+ 局/.test(aiInfo.noteText || '') && /不计入战绩与排行榜/.test(aiInfo.noteText),
+  /* v110：单位统一成「场」（aiCount 是场数）。原来是「局」，产品改了这里就得跟。 */
+  ok(/^\d+ 场/.test(aiInfo.noteText || '') && /不计入战绩与排行榜/.test(aiInfo.noteText),
     '★ 说明行写清「不计入战绩与排行榜」', aiInfo.noteText);
   ok(aiInfo.total === '0', '★ 累计净胜仍是 0（那一局 +/− 没有混进汇总）', aiInfo.total);
   if (SHOTS) console.log('    截图：' + (await shot('records')));

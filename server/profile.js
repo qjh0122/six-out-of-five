@@ -25,6 +25,10 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const auth = require('./auth');
+/* 成就目录与判定：与前端**同一份**（pwa/js/achievements.js）。
+ * 分开写的后果一定是「页面上写着 7 次、服务器记了 5 次」，
+ * 而这项目已经在 MAX_PLAYERS 上踩过一次同类问题。 */
+const Ach = require(path.join(__dirname, '..', 'pwa', 'js', 'achievements.js'));
 
 /* 这里原本有一份 `const INITIAL_SCORE = 20`，并且从本模块导出。
  * 但全仓没有任何地方 require 它 —— hub.js 算净胜用的是 `CONFIG.INITIAL_SCORE`
@@ -204,6 +208,24 @@ class ProfileStore {
     if (typeof console !== 'undefined' && console.error) console.error('[profile] ' + msg);
   }
 
+  /**
+   * 落盘失败留痕。
+   *
+   * 为什么必须有这一行：磁盘满 / 只读挂载 / 数据目录被删时，旧实现的 catch
+   * 只把 `dirty = true` 置回去，**外面一点信号都没有**。玩家打了一整场，
+   * 战绩在内存里、磁盘上没有，进程一重启就没了 —— 而日志里查不到任何东西。
+   * 同文件的 `_quarantine` 早就证明了「失败留一行」的成本几乎为零，这里之前是漏用。
+   *
+   * 刻意**不抛也不重试**：落盘失败不该让进程崩（内存里的数据还在），
+   * 重试由 dirty 标记 + 500ms 定时器负责。这里只负责「说清楚发生了什么事」，
+   * 把路径、阶段、错误码一起打出来，运维照着这一行就能判断是配额还是权限。
+   */
+  _saveFailed(stage, err) {
+    const code = (err && err.code) ? err.code + ' ' : '';
+    const msg = (err && err.message) ? err.message : String(err);
+    this.error('落盘失败（' + stage + '）→ ' + this.file + '｜' + code + msg);
+  }
+
   _load() {
     const fromMain = this._readFile(this.file);
     if (fromMain.status === 'ok') {
@@ -302,6 +324,8 @@ class ProfileStore {
       replaceFileSync(tmp, this.file); // 原子替换，避免写一半断电留坏文件
     } catch (e) {
       this.dirty = true; // 留着下次再试
+      /* 这一行是 v109 补的：以前只置 dirty，磁盘满时线上完全静默（见 _saveFailed 注释）。 */
+      this._saveFailed('sync', e);
     }
   }
 
@@ -320,6 +344,9 @@ class ProfileStore {
       json = this._serialize();
     } catch (e) {
       this.dirty = true;
+      /* 序列化失败（循环引用、内存爆）同样不能静默：症状是「一直在重试、一直没落盘」，
+       * 没有日志就只能看着 CPU 转圈猜。 */
+      this._saveFailed('serialize', e);
       return;
     }
     /* 快照这一刻的代数。写的时候如果代数已经变了，说明中间有人调过同步 flush()
@@ -327,7 +354,10 @@ class ProfileStore {
     const gen = this._writeGen || 0;
     this._writeQueue = this._writeQueue
       .then(() => this._writeOnce(json, gen))
-      .catch(() => { this.dirty = true; });   // 失败留到下一轮再试
+      .catch((e) => {
+        this.dirty = true;              // 失败留到下一轮再试
+        this._saveFailed('async', e);   // 但要留一行 —— 否则重试一百次也没人知道
+      });
     return this._writeQueue;
   }
 
@@ -371,6 +401,10 @@ class ProfileStore {
       aiGames: 0,
       aiRecent: [],
       recent: [],
+      /* 成就计数（见 pwa/js/achievements.js 顶部的口径）。
+       * 结构是 Ach.blank()，**不要在这里手写字面量** —— 加一个成就字段时
+       * 两处都要改，而漏改这里的表现是「新成就永远 0 次」，不会报错。 */
+      ach: Ach.blank(),
       updatedAt: 0
     };
   }
@@ -394,6 +428,10 @@ class ProfileStore {
      * 拿到 undefined 就是一次 TypeError，而它发生在结算路径上 —— 一场牌白打。 */
     if (!Array.isArray(p.aiRecent)) { p.aiRecent = []; changed = true; }
     if (!(Number(p.aiGames) >= 0)) { p.aiGames = 0; changed = true; }
+    /* 老档案没有成就桶。缺了它 record / mergeInto 会自己兜底，
+     * 但兜底只发生在「这个人又打了一把」的时候 —— 一个已经不打牌的人，
+     * 成就页会读到 undefined。所以在这里补一次，读路径上不再反复判。 */
+    if (!p.ach || typeof p.ach !== 'object') { p.ach = Ach.blank(); changed = true; }
     return changed;
   }
 
@@ -477,6 +515,34 @@ class ProfileStore {
       this.dirty = true;
       this._scheduleFlush();
       return { recorded: true, ai: true };
+    }
+
+    /* ---- 成就累加（口径见 pwa/js/achievements.js 顶部） ----
+     *
+     * 放在 p.games / currentStreak / bestNet 更新**之前**：R7「翻身农奴」
+     * 判的是「这一把之前已连败 ≥3 把，而这一把刷新了个人单场最高」，
+     * 两个条件都依赖更新前的值。挪到后面，连败计数已经被清零，永远判不到 ——
+     * 这类「顺序错了就静默失效」的判定，测试里有一条专门盯着它。
+     *
+     * AI 局在上面就 return 了，所以这里天然不记人机局，
+     * 与「人机局不影响任何统计」的口径一致。
+     */
+    const run = meta && meta.ach;
+    if (run) {
+      const loseBefore = Math.abs(Math.min(0, Number(p.currentStreak) || 0));
+      const prevBest = Number(p.bestNet) || 0;
+      /* 浅拷贝一份再改：run 是 room.achRun 的引用，
+       * 直接往上写 r7/r8 会污染房间对象（虽然整局结束就废了，但别留这种依赖）。 */
+      const delta = Object.assign({}, run);
+      /* n > 0 这个条件是必须的：只看「刷新个人最高」的话，一个全负的人
+       * 从 -5 打到 -4 也算刷新（-4 确实是他最好的那一场）——
+       * 可玩家看到的是「输了 4 分」，给他发「翻身农奴」等于嘲讽。
+       * 这条成就的语义是「终于赢了一把」，所以必须真的赢。 */
+      if (loseBefore >= 3 && p.games > 0 && n > 0 && n > prevBest) delta.r7 = 1;
+      /* R8：打满 30 把的整局。handLimit 是建房时选的局数，由 hub 传进来；
+       * endReason='handLimit' 表示「确实打满了预定局数」，不是中途解散。 */
+      if (Number(meta.handLimit) >= 30 && meta.endReason === 'handLimit') delta.r8 = 1;
+      p.ach = Ach.mergeInto(p.ach || Ach.blank(), delta);
     }
 
     p.games += 1;
@@ -943,8 +1009,14 @@ class ProfileStore {
       /* 含 AI 的场次数。**不参与任何统计**，只用来在战绩页写一句
        * 「人机对局 N 局 · 不计入战绩」，以及判断空态要不要说「你只打过人机局」。 */
       aiGames: Number(p.aiGames) || 0,
+      /* 成就解锁数。**只给数量，不给明细**：明细是 26 条名字+描述，
+       * 几十 KB，而排行榜一次要带全部人。自己看自己走 getSelf 的 ach 字段。
+       * 26 条判定的成本可以忽略，但别在这里改 p.ach —— evaluate 是只读的。 */
+      achCount: 0,
+      achTotal: Ach.TOTAL,
       updatedAt: p.updatedAt
     };
+    o.achCount = Ach.evaluate(p.ach, p).unlocked;
     if (withRecent !== false) {
       const n = recentLimit > 0 ? recentLimit : 5;
       o.recent = p.recent.slice(0, n);
@@ -963,7 +1035,11 @@ class ProfileStore {
     const p = this.data.get(String(playerId));
     if (!p) return null;
     this._ensureDerived(p);
-    return this._public(p, true, RECENT_MAX, true);
+    const o = this._public(p, true, RECENT_MAX, true);
+    /* 自己看自己才带完整成就桶：前端拿它当场 evaluate（同一个 achievements.js），
+     * 服务端不用再算一遍、也不用把算好的列表塞进响应。 */
+    o.ach = p.ach || Ach.blank();
+    return o;
   }
 
   /**
@@ -998,6 +1074,19 @@ class ProfileStore {
     return { ok: true };
   }
 
+  /** 某人的成就桶（只读用途）。
+   *
+   * 给 hub.getProfile 用：`get()` 走 _public，只带 achCount（排行榜要轻），
+   * 明细得单独取一份。返回的是**引用**，调用方只读不改 ——
+   * 要改档案请走 record()，别拿这个洞到处写字段。
+   */
+  achOf(playerId) {
+    const p = this.data.get(String(playerId));
+    if (!p) return null;
+    this._ensureDerived(p);
+    return p.ach;
+  }
+
   /** 对外档案（单条） */
   get(playerId) {
     const p = this.data.get(String(playerId));
@@ -1017,6 +1106,9 @@ class ProfileStore {
     this.data.forEach((p) => {
       const o = this._public(p, true, undefined, true);
       o.recent = (p.recent || []).slice(0, RECENT_MAX);
+      /* 成就桶必须跟着备份走：漏了它，发布前跑一次 backup-leaderboard.js
+       * 就所有人的成就清零，而且 restoreFrom 也救不回来（快照里本来就没有）。 */
+      o.ach = p.ach || Ach.blank();
       if (p.account) o.account = p.account;
       out.push(o);
     });

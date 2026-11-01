@@ -293,6 +293,10 @@ async function main() {
     if (ni) { ni.value = '探针'; ni.dispatchEvent(new Event('input', { bubbles: true })); }
     click('btn-create');
     await new Promise(s => setTimeout(s, 500));
+    /* ★ v103 起「创建房间」先弹「本局打几把」，确认了才真的开房。
+     * 缺这一步 → 房间没建 → 补 AI 点不到、牌桌进不去（脚本过期，不是功能坏）。 */
+    click('btn-create-confirm');
+    await new Promise(s => setTimeout(s, 400));
     r.bots = 0;
     for (var i = 0; i < ${BOTS}; i++) {
       var b = document.getElementById('btn-add-bot');
@@ -732,6 +736,21 @@ async function main() {
       crown: rows.filter(function (r) { return !!r.querySelector('.crown'); }).length,
       go: rows.filter(function (r) { return !!r.querySelector('.settle-go'); }).length,
       pos: rows.map(function (r) { var e = r.querySelector('.settle-pos'); return e ? e.textContent.trim() : ''; }),
+      /* 名次要独立复算：探针自己读分数、自己算期望名次，
+       * 不引用 settleRank() —— 拿被测函数算期望值，等于用它自己的答案考它自己。 */
+      scores: rows.map(function (r) {
+        var e = r.querySelector('.settle-score');
+        /* 必须用 [0-9] 而不是反斜杠 d：这段代码写在模板字符串里传给 evaluate，
+         * 模板字符串会把「反斜杠 + d」当成转义吃掉反斜杠，运行时变成 /(-?d+)/，
+         * 永远匹配不到分数 -> scores 全 NaN -> 名次复算拿到空期望值，红绿都不可信。
+         * 同理这段注释里也不能出现反引号：它会当场把模板字符串截断（第一版就这样报的语法错）。 */
+        var m = e ? /(-?[0-9]+)/.exec(e.textContent) : null;
+        return m ? Number(m[1]) : NaN;
+      }),
+      ties: rows.map(function (r) {
+        var e = r.querySelector('.settle-pos');
+        return !!(e && e.classList.contains('is-tie'));
+      }),
       posFirst: (function () {
         var e = rows.length ? rows[0].querySelector('.settle-pos') : null;
         return e ? e.textContent.trim() : '';
@@ -756,7 +775,16 @@ async function main() {
         return hit ? (cls(hit).split(' ')[0] || hit.tagName) : '';
       })(),
       hasMe: !!me,
-      meRank: !!(me && me.querySelector('.settle-rank'))
+      meRank: !!(me && me.querySelector('.settle-rank')),
+      /* 复盘行（v110 P1-1）：只该挂在「我」那张卡里，别人一张都不许有。 */
+      recheckInMe: !!(me && me.querySelector('.settle-recheck')),
+      recheckInOthers: rows.filter(function (r) {
+        return r !== me && r.querySelector('.settle-recheck');
+      }).length,
+      recheckText: (function () {
+        var e = me ? me.querySelector('.settle-recheck') : null;
+        return e ? e.textContent.replace(/\s+/g, ' ').trim() : '';
+      })()
     };
   })()`);
   /* 「一屏看全」要量的是**每一行和尾注都在视口里**，不是 #settle-body 的 scrollHeight：
@@ -793,9 +821,56 @@ async function main() {
     '★ AI 在结算页也是 🤖（和牌桌座位、交替卡同一套面孔）', st && st.botFaces);
   ok(st && st.crown === 1, '冠军那一行有皇冠，且只有一行', st && st.crown);
   ok(st && st.pos[0] === '', '第 1 名不挂数字角标（皇冠已经说了）', st && st.pos);
-  ok(st && st.pos.slice(1).join(',') === [2, 3, 4, 5].slice(0, BOTS).join(','),
-    '★ 第 2 名起的角标 = 名次', st && st.pos);
+  /* ★ 名次是**竞赛式排名**（1,2,3,3），不是 1..N。
+   * 原断言写死 [2,3,4]，等于假设「这局没有同分」—— 可同分在真人局里很常见，
+   * 一撞上就红，而且红得让人以为是名次算错了。实测这一局 4 人：冠军 + 2 + 3 + 3
+   * （第 3 和第 4 同分，两人并列第 3，第 4 名被跳过）。
+   *
+   * 改成**独立复算**：探针自己按分数从高到低算期望角标再比页面读数。
+   * 既能放过合法并列，也能抓住真正的算错。 */
+  var want = (function (scores) {
+    var order = scores.map(function (sc, i) { return { sc: sc, i: i }; })
+      .filter(function (o) { return !isNaN(o.sc); })
+      .sort(function (a, b) { return b.sc - a.sc; });
+    var out = {}, prevSc = null, prevRank = 0;
+    order.forEach(function (o, k) {
+      var rank = (prevSc !== null && o.sc === prevSc) ? prevRank : k + 1;
+      prevSc = o.sc; prevRank = rank; out[o.i] = rank;
+    });
+    return out;
+  })((st && st.scores) || []);
+  var posBad = (st ? st.pos : []).map(function (txt, i) {
+    var r = want[i];
+    var exp = (r === undefined) ? "?" : (r === 1 ? "" : String(r));
+    return { i: i, got: txt, want: exp };
+  }).filter(function (c) { return c.got !== c.want; });
+  ok(posBad.length === 0,
+    "★ 每个角标 = 按分数从高到低独立复算出的名次（同分并列、跳号）",
+    posBad.length ? posBad : "all ok");
+
+  /* 并列的行必须带 is-tie（否则两个「3」看着像算错了），不并列的不能带。 */
+  var tieCnt = {};
+  Object.keys(want).forEach(function (k) {
+    var r = want[k]; if (r > 1) tieCnt[r] = (tieCnt[r] || 0) + 1;
+  });
+  var tieBad = (st ? st.ties : []).map(function (got, i) {
+    var r = want[i];
+    return { i: i, got: got, want: !!(r && r > 1 && tieCnt[r] > 1) };
+  }).filter(function (c) { return c.got !== c.want; });
+  ok(tieBad.length === 0,
+    "★ 并列的行才带 is-tie（并列要有标记，不能只是两个一样的数字）",
+    tieBad.length ? tieBad : "all ok");
   ok(st && st.go === st.rows, '每一行都有尾部箭头', st && st.go);
+
+  /* ── 复盘行：理论最高 vs 实际（v110 P1-1）─────────────────────
+   * 这条守的不是「数字对不对」（那在 best-line.test.js 里用引擎交叉验证过），
+   * 而是「它有没有真的渲染出来、且只渲染给自己」。*/
+  ok(st && st.recheckInMe, '★ 结算页「我」那张卡里有复盘行', st && st.recheckText);
+  ok(st && st.recheckInOthers === 0,
+    '★ 别人的卡里没有复盘行（给别人算最优 = 公开处刑）', st && st.recheckInOthers);
+  ok(st && /理论最高/.test(st.recheckText),
+    '★ 复盘行写的是「理论最高」（不是「你亏了」这种评判）', st && st.recheckText);
+  ok(st && /[+-]?\d/.test(st.recheckText), '复盘行里有具体数字', st && st.recheckText);
   /* 量的是 CSS px（getBoundingClientRect 已经过缩放），4 px 约等于 8 设计 px。 */
   ok(st && st.gap >= 4, '★ 箭头没有压到净胜那列（空隙 ' + (st && st.gap) + ' CSS px）', st && st.gap);
   ok(st && st.goHit !== 'settle-go',

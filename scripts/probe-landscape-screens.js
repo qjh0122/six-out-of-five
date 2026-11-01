@@ -310,7 +310,12 @@ async function main() {
       var b = document.getElementById('btn-create');
       if (b) b.click();
     })()`);
-    await sleep(1600);
+    /* ★ v103 起「创建房间」先弹「本局打几把」，确认了才真的开房。
+     * 缺这一步 → 房间没建 → 下面量 #room-players 全是 0，断言会「通过但什么都没证明」。
+     * 原来的 1600ms 拆成 500（等弹窗）+ 1100（等房间渲染），总时长不变。 */
+    await sleep(500);
+    await evaluate(cdp, `(function(){var b=document.getElementById('btn-create-confirm');if(b)b.click();})()`);
+    await sleep(1100);
     const roomGeom = await evaluate(cdp, `(function(){
       var grid = document.getElementById('room-players');
       var hint = document.getElementById('room-hint');
