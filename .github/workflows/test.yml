@@ -88,21 +88,38 @@ jobs:
         with:
           node-version: '22'
 
-      - name: 准备浏览器
+      - name: 准备浏览器与字体
         run: |
+          # ★ 中文字体是必须的，不是锦上添花：
+          # 巡检量的全是「文字撑开的留白 / 换行 / 热区尺寸」。Linux runner 默认
+          # 没有中文字体，中文会渲染成方块或零宽 —— 那样所有尺寸断言都会偏移，
+          # 结果是一堆「看起来是布局坏了」的假红。表情同理（fonts-noto-color-emoji）。
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-color-emoji || true
+
           # ubuntu runner 通常自带 /usr/bin/google-chrome；没有才装。
           # chromium-browser 在 22.04 之后是 snap 包装，装不上就退到 chromium。
           if ! node -e "require('./scripts/lib/browser.js').findBrowser()" 2>/dev/null; then
-            sudo apt-get update -qq
             sudo apt-get install -y -qq chromium-browser || sudo apt-get install -y -qq chromium || true
           fi
           node -e "console.log('浏览器：' + require('./scripts/lib/browser.js').findBrowser())" \
             || { echo "::error::找不到可用浏览器，巡检无法进行"; exit 1; }
+          fc-list :lang=zh | head -3 || echo "::warning::没有装到中文字体" 
 
       - name: 全流程巡检 · 竖屏主路径（13 屏 + 全部弹窗）
         env:
           ONLY: '390×844'
-        run: node scripts/probe-ci.js scripts/probe-ui-flow.js
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui.log 2>&1
+          code=$?
+          cat /tmp/ui.log
+          # 把硬问题提成 annotation：不开日志（或者没有仓库 admin 读日志）时，
+          # 也能从 check-run 的 annotations 里直接看到是哪几条红了。
+          grep -E '问题 [1-9]|✗|FAIL|Error' /tmp/ui.log | head -5 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit $code
 
       - name: 全流程巡检 · 横屏（历史上问题最多的一档）
         env:
@@ -110,7 +127,23 @@ jobs:
           # 换一组端口：上一步刚退出时 3042 还在 TIME_WAIT，直接复用会 EADDRINUSE，
           # 而那个报错看起来像「巡检卡住了」（本地实测踩过）。
           PROBE_PORT: '3052'
-        run: node scripts/probe-ci.js scripts/probe-ui-flow.js
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui2.log 2>&1
+          code=$?
+          cat /tmp/ui2.log
+          grep -E '问题 [1-9]|✗|FAIL|Error' /tmp/ui2.log | head -5 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit $code
 
       - name: 端到端旅途（注册 → 建房 → 打完一局 → 结算）
-        run: node scripts/probe-ci.js scripts/journey.js
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/journey.js > /tmp/j.log 2>&1
+          code=$?
+          cat /tmp/j.log
+          grep -E '✗|FAIL|Error' /tmp/j.log | head -5 | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit $code
