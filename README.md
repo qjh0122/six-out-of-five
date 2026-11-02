@@ -145,7 +145,7 @@
 
 ```bash
 npm start                              # 本地起服务，默认 3000 端口
-npm test                               # 全量回归：131 个文件 / 5124 条断言，约 90 秒
+npm test                               # 全量回归：131 个文件 / 5163 条断言，约 90 秒
 node scripts/journey.js                # 真实浏览器走一遍完整用户路径
 node scripts/probe-devices.js --assert # 机型支持：三族 23 档，不达标退出码非 0
 node scripts/probe-ui-flow.js          # 全流程 UI 巡检：12 视口 × 13 屏，约 22 分钟

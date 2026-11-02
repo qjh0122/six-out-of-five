@@ -117,7 +117,37 @@ var evil = AV.pageHtml({ playerId: 'p', nickname: '<img onerror=1>', games: 0, a
 eq(evil.indexOf('<img'), -1, '★ 昵称里的标签被转义（成就页会把昵称拼进标题）');
 
 /* ================================================================
- * 汇总
+ * 七、点「成就」进整屏页时，浮层必须一起关掉（v119 修的那条报障）
+ *
+ * 这件事只有浏览器能证明（journey [9a] 就是干这个的），源码层再钉一道：
+ * 那个点击委托里漏掉任何一个宿主，都会变成「成就页打开了、卡片还盖在上面」。
+ * 被报过的版本正是漏了 profile-modal —— 只关了座位信息档（.ss-info）。
  * ================================================================ */
-console.log('\n' + (fail === 0 ? '全部通过' : '有失败') + '：' + pass + ' 项通过，' + fail + ' 项失败');
+{
+  var fs2 = require('fs'), path2 = require('path');
+  var gameSrc = fs2.readFileSync(path2.join(__dirname, '..', 'js', 'game.js'), 'utf8');
+  var at = gameSrc.indexOf("closest('[data-ach-open]')");
+  ok(at > 0, '★ 有 data-ach-open 的点击委托（档案卡与座位档共用一条）');
+  var seg = at > 0 ? gameSrc.slice(at, at + 1200) : '';
+  ok(/closeSeatSheet\(\)/.test(seg), '★ 委托里关掉了座位信息档（.ss-info 宿主）');
+  ok(/closeProfile\(\)/.test(seg),
+    '★ 委托里也关掉了档案卡（.profile-box 宿主）—— 漏一个就是「成就页被一张卡挡住」');
+  /* 顺序：先关浮层再切屏。反过来的话，关档案卡那一下的焦点归还会落到
+   * 一个已经不可见的元素上，而且中间会闪出一帧「成就页 + 卡片」。 */
+  var iClose = seg.indexOf('closeProfile()');
+  var iOpen = seg.indexOf('openAchievements(pid');
+  ok(iClose > 0 && iOpen > iClose, '关完浮层才打开成就页（顺序不能反）');
+}
+
+/* ================================================================
+ * 汇总
+ *
+ * ★ 格式必须与其它测试一致（「通过 N 项，失败 M 项」）：scripts/run-tests.js
+ * 用这条正则取数，取不到就退回数 PASS 行 —— 而这个文件的 ok() 不打 PASS 行，
+ * 于是它长期在汇总里显示「0 项」，算总数时整个文件都被漏掉。
+ * 数字小看不出来，但它意味着「131 文件 / N 断言」这句话里有一个文件的
+ * 几十条断言从来没被数进去过。
+ * ================================================================ */
+console.log('\n' + (fail === 0 ? '全部通过' : '有失败'));
+console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
 if (fail) process.exit(1);

@@ -4715,8 +4715,17 @@
       if (!hit) return;
       var pid = hit.getAttribute('data-ach-open');
       if (!pid) return;
-      /* 先把座位面板关掉：成就页是整屏，留一个浮层压在上面会挡住返回按钮。 */
+      /* 先把浮层关掉：成就页是整屏，留一个浮层压在上面会挡住返回按钮。
+       * ★ 两个宿主都要关 —— 这条被报过：从档案卡底部点「成就 3/35 ›」，
+       * 成就页确实打开了，但那张档案卡还盖在上面，看到的是「一张挡住成就页的
+       * 个人信息卡」。当时这里只关了座位信息档（.ss-info），漏了 profile-modal。
+       * 判一下再关而不是无脑调 closeProfile()：它会让在途请求失效并弹一层
+       * modal 栈，本来没开的时候调它会白白消耗一层。 */
       try { closeSeatSheet(); } catch (err) { /* 面板本来就没开 */ }
+      var pfOpen = document.getElementById('profile-modal');
+      if (pfOpen && !pfOpen.classList.contains('hidden')) {
+        try { closeProfile(); } catch (err2) { /* 档案卡本来就没开 */ }
+      }
       openAchievements(pid, currentScreenId());
     });
     /* 排行榜行 → 看这个人的云端档案。委托监听：榜单每次拉取都整块 innerHTML 重写，
