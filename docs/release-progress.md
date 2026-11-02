@@ -2621,3 +2621,21 @@ navigator.serviceWorker.addEventListener('controllerchange', function () {
 - **横屏旁听态仍未截图**（v118 起就在这条留白里）。
 - 「这把不打」点完之后**没有二次确认**。它是可逆的（再点「开始下一局」就回来），
   所以没加 —— 但真机上误触的代价是「这一把只能看着」。
+
+### 发布结果（v121）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `https://your-app.app.workbuddy.host/?sharecode=REDACTED`（同一个应用，链接不变） |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（含 Service Worker 已接管；`sw.js` 直抓 `CACHE_NAME = weile-liuxuanwu-v121`） |
+| 公库 | `50d1e2c chore: 同步自私有仓库（b5bce3c）` |
+| 私库 | `b5bce3c`（`git ls-remote` 比对一致） |
+
+### 发布结果（v121）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `https://your-app.app.workbuddy.host/?sharecode=REDACTED`（同一个应用，链接不变） |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（含 Service Worker 已接管；`sw.js` 直抓 `CACHE_NAME = weile-liuxuanwu-v121`） |
+| 公库 | `50d1e2c chore: 同步自私有仓库（b5bce3c）` |
+| 私库 | `b5bce3c`（`git ls-remote` 比对一致） |
