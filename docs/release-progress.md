@@ -2701,7 +2701,7 @@ payload 里写别人的 `playerId` 完全无效，攻击者进来拿的是自己
 | 项 | 结果 |
 |---|---|
 | 部署 | `https://liuxuanwu.app.workbuddy.host/?sharecode=Q2JYFWXOP3`（同一个应用，链接不变） |
-| 线上冒烟 `probe-online-smoke` | 待填 |
-| 公库 | 待填 |
-| 私库 | 待填 |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（含 Service Worker 已接管；版本核对 = 本地 `20261102k`） |
+| 公库 | `fca7b67 chore: 同步自私有仓库（7a10556）` |
+| 私库 | `7a10556`（`git ls-remote` 比对一致） |
 
