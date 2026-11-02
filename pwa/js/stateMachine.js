@@ -331,16 +331,22 @@
      * 中途离开过、又在结算期回来的老玩家**打过上一局**（分数已经被结算改过），
      * 不能把他当成新人：否则他会看不到上一局结算、座位上也看不到自己真正的分数。 */
     var isNewcomer = !existing;
-    /* 报名自动带上，但**准备不带**（C-2 只覆盖「结算页点开始下一局」那条主路径）。
-     * 从房号摸进来的人还没看到这间房长什么样，直接给他发牌等于跳过了
-     * 「确认我进的是这一间」；主路径上的人刚看完自己的成绩，两者不是同一件事。
-     * 代价是他要多点一次准备 —— 而这一步有「不等他」兜着，卡不住整桌。 */
+    /* ★ v121：`ready` 必须跟着 `wantNext` 一起为真。
+     *
+     * C-2 把「报名」和「就位」合成了一个动作，但这里漏了一处：结算期进来的人
+     * 曾经是 wantNext=true、ready=false。后果不是「少一次点击」，而是**整桌永远开不了**
+     * —— 就位态那颗按钮在 nextWait 下被无条件画成「已就位 ✓」（禁用），
+     * 而服务端的 canStartNext 看到 ready=false。界面说一套、服务端认另一套。
+     * 真机上就是这么被报回来的：退出房间再用房号进来，卡在「已准备 3/3」不动。
+     *
+     * 语义上也该如此：结算期从房号进来 = 朋友喊你来打牌 = 我要打下一局。
+     */
     p.wantNext = settling;
     /* ★ C-3b：从房号摸进结算期的新面孔，这一局他没打 → 旁听。
      * 中途离开过、又在结算期回来的老玩家不在此列：他打过上一局，
      * 结算页上的名次与分数都得照常算他一份。 */
     p.benched = settling && isNewcomer;
-    p.ready = false;
+    p.ready = settling;
     p.joinedLate = settling && isNewcomer;
     p.left = false;
     p.connected = true;
@@ -1146,20 +1152,45 @@
     return room.players.filter(function (p) { return p.wantNext && !p.left; });
   }
 
-  /* 下一局能不能开：已进入的人不少于最少人数，且这些人全部已准备。
-   * 注意分母是「已进入的人」而不是房间里的人 —— 没点的人不参与下一局，
-   * 自然也不该挡住别人开局。
+  /* 还在结算页、没对「下一局」表态的真人。
    *
-   * ★ C-2（v116）之后这条判据一个字都没改，但它的含义变了：
-   *   `wantNext` 现在直接把人置为 ready，所以「报名」与「就位」是同一个动作，
-   *   这条式子实际等价于「报名的人 ≥ 最少人数」。改的是流程，不是阈值 ——
-   *   特意没有顺手加「所有真人都要表态」之类的条件：那会改掉既有规则
-   *   （5 人房里 2 人报名即开），而 C-2 要的只是少一次点击。
+   * 这是「谁会被静默落下」的**唯一**名单：房间里还在、没走、没说自己不打、
+   * 也还没点「开始下一局」的真人。AI 不算（markSettled 会替它们报名），
+   * 已经被明确「不等他」排除的人（outNext）也不算。
+   */
+  function pendingNextPlayers(room) {
+    if (!room || room.phase !== PHASE.SETTLED) return [];
+    return room.players.filter(function (p) {
+      return !p.isBot && !p.left && !p.wantNext && !p.outNext;
+    });
+  }
+
+  /* 下一局能不能开（v121 重写）。
+   *
+   * 三条同时成立：
+   *   ① 已报名的人 ≥ MIN_PLAYERS；
+   *   ② 已报名的人全部就位（C-2 之后报名即就位，这条是兜底）；
+   *   ③ **房间里没有「还没表态」的真人**。
+   *
+   * ③ 是 v121 的全部内容，来自一次真实的三人局：
+   *   A、B 点了「开始下一局」，C 还在看结算页，于是这一局按 2 人开了，
+   *   C 直接被判成旁听 —— 他什么都没做，只是慢了几秒。
+   *
+   * 旧实现的错在于**分母**：它只数「已经报名的人」，所以门槛会随着报名人数
+   * 一起下降（2 人报名就按 2 人算够），房间里剩下的人自动变成「不参与」。
+   * 那不是一个中性的默认值 —— 那是在替别人做决定。
+   *
+   * 现在默认**等**：谁还没表态就等谁。想先开只有一条路 —— 显式「不等他」
+   * （dropFromNext），或者对方自己说「这一把先不打」（也是 dropFromNext，
+   * target 指向自己）。被跳过是可见的、有确认的、有提示的，不再是静默淘汰。
+   *
+   * 代价是「有人挂机就全桌等」——所以「不等他」不是可选项，是这个规则的另一半。
    */
   function canStartNext(room) {
     var list = nextRoundPlayers(room);
     if (list.length < CONFIG.MIN_PLAYERS) return false;
-    return list.every(function (p) { return p.ready; });
+    if (!list.every(function (p) { return p.ready; })) return false;
+    return pendingNextPlayers(room).length === 0;
   }
 
   /* 点「开始下一局」：报名 + 就位，一次点击（C-2 / v116）。
@@ -1182,6 +1213,10 @@
     /* ★ C-3b：报名下一局就是把「旁听」这个身份摘掉。
      * 不摘的话，他下一局仍会被当成旁听（canStartNext 认他，发牌却不发给他）。 */
     p.benched = false;
+    /* ★ v121：同时摘掉「这一把先不打」留下的排除标记。
+     * 不摘的话他就成了「报了名、却仍然不算数」的人 —— 名单里有他，
+     * 门槛里没他，两处口径分岔，下一次「不等他」还会找到他头上。 */
+    p.outNext = false;
     room.updatedAt = Date.now();
     return { ok: true, room: room };
   }
@@ -1260,20 +1295,49 @@
    *
    * 只允许「已准备的人」发起：正停在结算页看战绩的人，不该被别人替他做决定。
    */
+  /* 把一个人排除出「下一局」（v121 重写）。
+   *
+   * 两种用法，同一个入口：
+   *   · target 是别人 → 「不等他」。要求操作者已经就位（你得先表了态，
+   *     才有资格决定别人等不等）。这一下不会踢人：名次、分数、座位都留着，
+   *     他只是这一局不上场。
+   *   · target 是自己 → 「这一把先不打」。这是 v121 新增的出口，也是
+   *     canStartNext 收紧之后的必需品 —— 否则「我这一把想歇一下」只能靠
+   *     别人点「不等他」，等于让整桌替我按按钮。它不要求自己已就位
+   *     （人还在结算页、压根没报名，就是这个动作的常态）。
+   *
+   * 两者都只写 outNext，不踢人：被排除的人下一局变成旁听（benched），
+   * 结算后可以再报名。
+   */
   function dropFromNext(room, actorId, targetId) {
     if (!room) return { ok: false, error: '房间不存在' };
     if (room.phase !== PHASE.SETTLED) return { ok: false, error: '新的一把已经开始了', code: 'NEXT_STARTED' };
     var actor = findPlayer(room, actorId);
+    if (!actor || actor.left) return { ok: false, error: '你不在该房间' };
+
+    /* 自己说自己不打。允许在「没报名」的状态下做 —— 那正是最常见的用法。 */
+    if (!targetId || targetId === actor.id) {
+      if (actor.isBot) return { ok: false, error: 'AI 不需要请假' };
+      if (actor.outNext && !actor.wantNext) return { ok: true, room: room };  // 幂等
+      actor.wantNext = false;
+      actor.ready = false;
+      actor.outNext = true;
+      room.updatedAt = Date.now();
+      return { ok: true, room: room, targetId: actor.id };
+    }
+
     var target = findPlayer(room, targetId);
-    if (!actor || actor.left || !actor.wantNext || !actor.ready) {
-      return { ok: false, error: '准备好之后才能催别人' };
+    if (!actor.wantNext || !actor.ready) {
+      return { ok: false, error: '先点「开始下一局」，再决定要不要等他' };
     }
     if (!target || target.left) return { ok: false, error: '找不到要跳过的人' };
-    if (target.id === actor.id) return { ok: false, error: '不能跳过自己' };
-    if (!target.wantNext) return { ok: true, room: room };   // 幂等：他已经回结算页了
-    if (target.ready) return { ok: false, error: '他已经准备好了' };
+    if (target.isBot) return { ok: false, error: 'AI 不用催，它已经在等你了' };
+    if (target.wantNext && target.ready) return { ok: false, error: '他已经准备好了' };
+    if (target.outNext && !target.wantNext) return { ok: true, room: room };   // 幂等
+
     target.wantNext = false;
     target.ready = false;
+    target.outNext = true;
     room.updatedAt = Date.now();
     return { ok: true, room: room, targetId: target.id };
   }
@@ -1688,6 +1752,7 @@
     findPlayer: findPlayer,
     activePlayers: activePlayers,
     playingPlayers: playingPlayers,
+    pendingNextPlayers: pendingNextPlayers,
     capOf: capOf,
     handLimitOf: handLimitOf,
     setHandLimit: setHandLimit,

@@ -648,11 +648,25 @@
      * 会把还在结算页看回放的人算进去，永远等不到。 */
     var act = nextWait ? StateMachine.nextRoundPlayers(room) : StateMachine.activePlayers(room);
     var allReady = act.length > 0 && act.every(function (q) { return q.ready; });
+    /* ★ v121：还没表态的真人。allReady 只回答「报名的人是不是都就位了」，
+     * 它答不了「还有没有人没表态」—— 而后者才是开局真正在等的东西。
+     * 三缺一的时候 allReady 是 true，界面就写了「全部准备好，马上开始」，
+     * 然后一直不动。这一幕是真机上被报回来的（「已准备 3/3」卡死）。 */
+    var pending = (nextWait && StateMachine.pendingNextPlayers)
+      ? StateMachine.pendingNextPlayers(room)
+      : [];
+    function whoText(list) {
+      var names = list.map(function (q) { return short(q.nickname || '他'); });
+      if (names.length <= 2) return names.join('、');
+      return names.slice(0, 2).join('、') + ' 等 ' + names.length + ' 人';
+    }
 
     var hint = $('#room-hint');
     hint.classList.toggle('ready', false);
     if (room.dissolve && room.dissolve.active) {
       hint.textContent = '正在等大家表态要不要结束本局…';
+    } else if (pending.length) {
+      hint.textContent = '等 ' + whoText(pending) + ' 点「开始下一局」…';
     } else if (act.length < CONFIG.MIN_PLAYERS) {
       hint.textContent = nextWait
         ? '还差 ' + (CONFIG.MIN_PLAYERS - act.length) + ' 人才能开下一局，等其他人点「开始下一局」'
@@ -765,9 +779,22 @@
 
   /* 进入准备态。调用方只管「现在该准备」，隐藏/显示由这里统一做 ——
    * 分散在 render 的各个分支里，迟早会漏一处，表现为「牌桌和准备卡叠在一起」。 */
+  /* 旁听卡的显隐收在这一处。
+   *
+   * 它是 renderGame 画的元素，但「就位态」也占用同一个 #screen-game
+   * （v113 起就位态就在牌桌上），却**不走 renderGame** ——
+   * 于是旁听卡会留在屏幕上，和就位态的房间信息卡、按钮条叠成一片。
+   * 真机上那张截图就是这么来的：上面写「准备中 已准备 3/3」，
+   * 中间压着「这一局你在旁观」，下面还并排两颗「离开房间」。 */
+  function hideSpectator() {
+    var sp = $('#spectator');
+    if (sp) { sp.classList.add('hidden'); sp.innerHTML = ''; }
+  }
+
   function showReadyTable(room, opts) {
     var nextWait = !!(opts && opts.nextWait);
     showScreen('screen-game');
+    hideSpectator();
     $('#table-ready').classList.remove('hidden');
     $('#ready-acts').classList.remove('hidden');
     $('#screen-game').classList.add('is-ready');
@@ -836,7 +863,10 @@
        * 长得一样，含义却一个是「在场 / 上限」、一个是「已准备 / 在场」。
        * 现在第一个改成「4 人 · 上限 5」，不再用斜杠形式，两个数字一眼能分开。
        * 末尾那句「· 起始 20 分」v105 去掉了，理由见函数头注释。 */
-      + '<span class="tr-card-sub">' + act.length + ' 人 · 上限 ' + cap + '</span>'
+      /* 人数写「在场人数」，不是「参与下一局的人数」：这一行比的是房间上限。
+       * v121 之前 nextWait 用的是 nextRoundPlayers，于是「3 个人的房间」在
+       * 还差一人表态时显示成「2 人 · 上限 5」—— 看着像有人掉了，其实是还没点。 */
+      + '<span class="tr-card-sub">' + StateMachine.activePlayers(room).length + ' 人 · 上限 ' + cap + '</span>'
       + '</div>'
       + '<div class="tr-lines">'
       + line('第一轮', r1)
@@ -848,24 +878,34 @@
       + line('本局', StateMachine.handLimitOf(room) + ' 把 · 打满为止')
       + line('我的战绩', rankTxt)
       + '</div>'
-      /* ★ v114（B-1）「不等他」：只有**我已准备**、且确实有人报了名却没准备时才出现。
+      /* ★ v114（B-1）「不等他」：只有**我已就位**、且确实有人在结算页没表态时才出现。
        * 放在信息卡里而不是底部按钮条 —— 那条在横屏只有约 0.52 缩放，
        * 再加一颗按钮会把它挤成两行（实测过：9.9px 那一档就是这么来的）。 */
       + skipWaitHtml(room, me, nextWait);
   }
 
-  /* 「不等他」按钮的标记。命名成函数是为了让 renderReadyCard 只读一行。 */
+  /* 「不等他」的候选名单（v121 改了口径）。
+   *
+   * 以前列的是「报了名却没就位的人」。C-2 之后那种人几乎不存在（报名即就位），
+   * 于是这颗按钮长期不出现；而真正会把整桌卡住的人 —— 还停在结算页、
+   * 压根没点「开始下一局」的真人 —— 谁都看不见、也赶不走。
+   * 现在列的是后者：pendingNextPlayers，就是 canStartNext 真正在等的那批人。 */
   function staleNextPlayers(room, me, nextWait) {
     if (!nextWait || !me || !me.ready || !me.wantNext) return [];
-    return StateMachine.nextRoundPlayers(room).filter(function (p) {
-      return !p.ready && p.id !== me.id;
+    if (!StateMachine.pendingNextPlayers) return [];
+    return StateMachine.pendingNextPlayers(room).filter(function (p) {
+      return p.id !== me.id;
     });
   }
   function skipWaitHtml(room, me, nextWait) {
     var stale = staleNextPlayers(room, me, nextWait);
     if (!stale.length) return '';
+    var names = stale.map(function (p) { return short(p.nickname || '他'); });
+    var who = names.length === 1
+      ? names[0]
+      : names.slice(0, 2).join('、') + (names.length > 2 ? ' 等 ' + names.length + ' 人' : '');
     return '<button type="button" class="tr-skip" data-skip-next="' + esc(stale[0].id) + '">'
-      + '不等 ' + esc(short(stale[0].nickname || '他')) + '，就我们开'
+      + '不等 ' + esc(who) + '，就我们开'
       + (stale.length > 1 ? '（还有 ' + (stale.length - 1) + ' 人）' : '')
       + '</button>';
   }
@@ -890,8 +930,7 @@
     }
   }
 
-  /* 发起「不等他」。要确认一次：这一下会把对方退回结算页，
-   * 虽然人还在房间、名次还在，但他会错过这一把。 */
+  /* 发起「不等他」。要确认一次：这一下会让对方错过这一把。 */
   function onSkipStale(targetId) {
     if (!state.room || blockedOffline()) return;
     var target = null;
@@ -899,7 +938,8 @@
     for (var i = 0; i < list.length; i++) if (list[i].id === targetId) { target = list[i]; break; }
     var who = (target && target.nickname) || '他';
     askConfirm('不等 ' + who + ' 了？',
-      '他会退回结算页，这一把不参加；人还在房间里，名次和分数都保留，这一把打完还能再报名。',
+      '他还在结算页没表态。不等他，这一把就先开 —— 他会坐在旁边看，'
+      + '名次和分数都留着，这把打完还能一起打。',
       async function () {
         var res = await RoomStore.dropNext(state.roomId, state.myId, targetId);
         if (!res || !res.ok) { flash((res && res.error) || '操作失败'); Sfx.play('error'); return; }
@@ -942,9 +982,14 @@
         sp.classList.remove('hidden');
         sp.innerHTML = '';
         sp.appendChild(el('div', 'sp-badge', '旁听中'));
-        sp.appendChild(el('h2', 'sp-title', '这一局你在旁观'));
+        sp.appendChild(el('h2', 'sp-title', '你不在这一局'));
+        /* 文案只陈述「现在」和「下一步怎么回到牌桌」，不猜原因。
+         * v118 那句「结算后点开始下一局就能上场」是对的，但没说清三件事：
+         * 这一局还要打多久、期间我能干什么、什么时候能回牌桌 ——
+         * 玩家看到的是一张没有终点的卡，第一反应是「我为什么被困在这里」。 */
         sp.appendChild(el('p', 'sp-tip',
-          '结算后点「开始下一局」就能上场。座位和分数都还留着，不用重新进房。'));
+          '这一局你在旁边看。打完会回到结算页，点「开始下一局」就能上场 —— '
+          + '座位、分数、房号都还在。'));
         sp.appendChild(el('p', 'sp-sub', '第 ' + round + ' 轮 · 本局第 ' + (room.handCount || 1)
           + ' 把' + (room.handLimit ? ' / 共 ' + room.handLimit + ' 把' : '')));
         /* ★ 出口。底部那条动作条整块藏起来了（手牌 / 提交 / 结束本局 / 离开都在里面），
@@ -969,8 +1014,7 @@
     if (slotsEl) slotsEl.classList.remove('hidden');
     var gb2 = document.querySelector('#screen-game .game-bottom');
     if (gb2) gb2.classList.remove('hidden');
-    var sp2 = $('#spectator');
-    if (sp2) { sp2.classList.add('hidden'); sp2.innerHTML = ''; }
+    hideSpectator();
 
     // 下游渲染只认「锁定态」：正在改一次时按可编辑处理，槽位/手牌要重新可点
     var locked = !canEdit(room, me, round);
@@ -1410,13 +1454,25 @@
     var total = 0;
     var done = 0;
     var isReadyPhase = nextWait || room.phase === StateMachine.PHASE.WAITING;
-    /* ★ C-3b：分母只算参与本局的人。旁听者没有手牌、永远不会提交，
-     * 算进来的话顶栏会一直卡在「3/5 已提交」，而这一轮其实早就该结算了。 */
+    /* ★ v121：就位态的分母是「报名的人 + 还没表态的人」。
+     *
+     * 以前走下面那条通用逻辑（数 !left && !benched），于是三缺一时顶栏写
+     * 「已准备 3/3」—— 满格、却不发牌。玩家看到的是一台卡住的机器。
+     * 现在没表态的人也进分母：3 个人、2 个点了，就是「2/3」，
+     * 差的那一个看得见，也和 canStartNext 真正在等的名单完全一致。
+     *
+     * 不用 p.benched 过滤：结算期里 benched 的意思是「上一把没打」，
+     * 而这一把还没开始，他现在报名了就算数（startNextRound 会重算 benched）。 */
+    if (nextWait) {
+      var joined = StateMachine.nextRoundPlayers(room);
+      var pending = StateMachine.pendingNextPlayers ? StateMachine.pendingNextPlayers(room) : [];
+      return { total: joined.length + pending.length, done: joined.length, readyPhase: true };
+    }
     room.players.forEach(function (p) {
       if (p.left || p.benched) return;
       total++;
       if (isReadyPhase) {
-        if (p.ready || (nextWait && p.wantNext)) done++;
+        if (p.ready) done++;
       } else if (StateMachine.isRoundLocked(p, round)) {
         /* ★ 口径必须与「能不能结算」完全一致，所以直接用状态机那一个函数。
          * 以前这里写的是 `p.submitted[...]`，于是「点了改一下、正在重新摆牌」的人
@@ -3281,17 +3337,13 @@
     }
   }
 
-  /* ★ v114（B-2）→ v116（C-2）搬过来的确认：开下一把之前，先让「最急的人」看一眼代价。
-   * 只要还有人停在结算页（没报名），这个动作一按下去就**直接发牌**，
-   * 那些人会被挤出去 —— 他自己不会知道。
+  /* 首次开局的「准备」/「取消准备」。
    *
-   * 为什么从「点准备」搬到这里：C-2 之后「准备」这个动作没了（报名即就位），
-   * 会开局的那一下变成了「点开始下一局」。警告不跟着搬，就等于挂在了一颗
-   * 永远不会被点的按钮上 —— 最危险的时刻反而没有提示。
-   * 只问「我要参加」这一个方向；撤回、看回放都不问。 */
+   * 这里曾经挂过一个确认框（v114 的 B-2）：警告「还有人在结算页，一按就开局，
+   * 他们会被挤出去」。v121 之后那句话彻底作废了 —— 开局要等所有真人都表态，
+   * 按下去不会再挤掉任何人，所以警告连同它的判据一起搬走了。
+   * 现在这个入口只做一件事：把「准备 / 取消准备」发出去。 */
   function onReady() {
-    /* 首次开局的准备：那时大家都在房间里等着，没有人会被挤出去，直接放行。
-     * 就位态的按钮已经被 renderRoom 置成禁用的「已就位」，走不到这里。 */
     doReady();
   }
 
@@ -3352,29 +3404,38 @@
 
   /* 结算页 →「开始下一局」（C-2 / v116：一次点击，报名即就位）。
    *
-   * 点完把我登记进下一局并直接置为已就位；人数够的话服务端在这一次广播里就发牌，
-   * 中间不再有「回房间页再点一次准备」那一屏。人数不够才有等待态。
-   * 没点的人完全不受影响，继续留在结算页。
+   * 点完把我登记进下一局并直接置为已就位；**所有人都点了**才发牌，
+   * 中间不再有「回房间页再点一次准备」那一屏。
    *
-   * 有代价：还在结算页的人会被挤出去 —— 所以先问一句（原来的 B-2 确认框）。 */
+   * ★ v121：这里原来挂着一个确认框（B-2，「还有 N 人停在结算页，他们会被挤出去」）。
+   *   那句警告现在不可能发生了 —— canStartNext 会一直等到那些人也表态。
+   *   点这一下只是「我进来了」。警告挂在一件不会再发生的事上，只会让人多点一次。 */
   async function onNextRound() {
     if (blockedOffline()) return;
-    /* 「还没表态的真人」—— 三个排除缺一不可：
-     *   · 自己：这一刻我自己的 wantNext 还是 false（请求还没发出去），
-     *           不排掉的话每点一次都会弹一次「还有 1 人停在结算页」，而那个人就是我；
-     *   · AI：markSettled 已经替它报了名，本来就不会落在这堆里，
-     *         但不显式排除的话，哪天 AI 的报名改懒了，这里就会开始无故报警；
-     *   · 已离开的人：他们不在这一局里，不该算进「会被挤出去」的人头。 */
-    var waiting = (state.room && state.room.players || []).filter(function (p) {
-      return !p.left && !p.wantNext && !p.isBot && p.id !== state.myId;
-    }).length;
-    if (waiting > 0) {
-      askConfirm('现在就开下一局？',
-        '还有 ' + waiting + ' 人停在结算页。你一点就开局，他们会被挤出去，这一把打完才能再进来。',
-        doNextRound);
-      return;
-    }
     await doNextRound();
+  }
+
+  /* 结算页 →「这一把先不打」（v121）。
+   *
+   * 为什么需要它：canStartNext 收紧之后，「想歇一把」的人如果什么都不点，
+   * 整桌会一直等 —— 于是「不等他」成了唯一出路，而那是**别人**替他做的决定。
+   * 让他自己说，比让两个人替他按按钮更诚实，也少一次误会。
+   *
+   * 和「不等他」走同一条协议（dropNext，target 指向自己）：只标 outNext，不踢人。
+   * 下一局他变旁听；想回来点「开始下一局」就行（wantNext 会清掉 outNext）。 */
+  async function onSitOut() {
+    if (blockedOffline()) return;
+    var restore = pressBusy($('#btn-sit-out'), '…');
+    if (!restore) return;
+    try {
+      var res = await RoomStore.dropNext(state.roomId, state.myId, state.myId);
+      if (!res || !res.ok) { flash((res && res.error) || '操作失败'); return; }
+      flash('这一把你不打。他们开了你在旁边看，随时点「开始下一局」回来');
+    } catch (e) {
+      flash('网络不太稳，再试一次');
+    } finally {
+      restore();
+    }
   }
 
   /* 就位态「回结算页」：撤回报名。
@@ -4346,6 +4407,7 @@
       if (row && row.dataset.pid) openProfile(row.dataset.pid);
     });
     $('#btn-next').addEventListener('click', onNextRound);
+    $('#btn-sit-out').addEventListener('click', onSitOut);
     $('#btn-revise').addEventListener('click', onRevise);
     // 分牌：标签选组 + 点手牌直落（主路径），拖拽进组（可选路径）
     $('#group-chips').addEventListener('click', function (e) {

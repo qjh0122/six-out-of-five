@@ -157,6 +157,10 @@ ok(room.phase === SM.PHASE.SETTLED, '解散后处于结算阶段');
  * b 没点 —— 他应该留在结算页，并且不在新一局里。 */
 const restarted = SM.restart(room, 'a');
 ok(restarted.ok === true, 'a 点了「开始下一局」');
+/* ★ v121：b 没点，整桌就等着他 —— 必须先明确「不等他」。
+ * 以前不写这一句也能开，代价是 b 被静默判成旁听。 */
+ok(!SM.canStartNext(room), '★ b 还没表态 → 先不开（不替 b 做决定）');
+SM.dropFromNext(room, 'a', 'b');
 const nextStarted = SM.autoStartIfReady(room);
 ok(!!nextStarted && nextStarted.kind === 'next', '本人 + AI 都就绪 → 自动开下一局');
 ok(room.phase === SM.PHASE.ROUND1_SPLIT, '回到第一轮分牌');

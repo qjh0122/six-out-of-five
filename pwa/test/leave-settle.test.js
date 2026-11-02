@@ -192,9 +192,11 @@ console.log('\n[7] 结算期重新进房：分数不许被重置（全量 review
 
   /* 收尾：新一局开始时全员归零这条老行为不能被改掉 */
   ['A', 'C'].forEach(function (id) {
-    SM.wantNext(room, id);
-    SM.setReady(room, id, true);
+    SM.wantNext(room, id);   // C-2 起报名即就位，不用再单独 setReady
   });
+  /* ★ v121：B 还停在结算页 → 整桌等 B。要么他点，要么明确「不等他」。 */
+  ok(!SM.canStartNext(room), '★ B 没表态 → 先不开');
+  SM.dropFromNext(room, 'A', 'B');
   const nx = SM.startNextRound(room);
   ok(nx.ok === true, '条件齐了能开下一局', nx.error);
   ok(SM.findPlayer(room, 'A').score === INITIAL, '★ 新一局开始才把分数归零（归零责任已经搬到 startNextRound）');

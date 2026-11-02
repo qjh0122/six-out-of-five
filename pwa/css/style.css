@@ -965,6 +965,21 @@ input:focus {
   flex: 0 0 auto;
 }
 /* 结束页底排：查看战绩（品牌绿次按钮）＋ 离开房间（幽灵）1:1 并排 */
+/* v121 结算页「这把不打」：和「查看战绩 / 离开房间」并排。
+ *
+ * 为什么不做成独立一行：结算页在 390×844 上已经到顶（牌型统计本身就在滚动），
+ * 再加一行 88 设计 px 的按钮会把 #btn-next 顶到统计区上 —— ui-flow 当场报
+ * 「cover 重叠 1324px²（占小者 63%）」。塞进这一排不涨高度。
+ *
+ * 三颗等分 + nowrap：`flex: 1 1 0` 让它们均分，`min-width: 0` 允许窄屏收缩，
+ * `white-space: nowrap` 防止中文逐字断行（「离开房」/「间」那种惨案 v82 见过）。 */
+.settle-actions-row--three .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 .settle-actions-row { width: 100%; max-width: 560px; display: flex; gap: 16px; margin-top: 6px; }
 .settle-actions-row .btn { flex: 1 1 0; min-width: 0; margin: 0; }
 

@@ -93,15 +93,22 @@ console.log('\n[2] AI 房不许变成死局（1 真人 + N AI）');
 }
 
 /* ================================================================ */
-console.log('\n[3] 阈值没被顺手改掉：全真人房仍是「凑够 2 人即开」');
+console.log('\n[3] 全真人房：凑够 MIN_PLAYERS 也不再「先开」—— 要等所有人表态');
 {
-  /* 5 个真人：2 人报名即开，剩下 3 个这一把不参与（C-2 之前就是这个行为，
-   * 只是以前要这 2 个人各点两次）。谁要是把门槛改成「所有真人必须表态」，
-   * 这一条会红 —— 那是另一条规则，不该搭 C-2 的车。 */
+  /* ★ v121 把这里的答案改掉了。
+   * v116 时这一条写的是「5 人房 2 人报名即开」，并且特意注明
+   * 「谁要是把门槛改成『所有真人必须表态』，这一条会红」—— 现在正是那一条规则：
+   * 真机上三人局里，前两个人点了就把第三个人判成了旁听。门槛本身（MIN_PLAYERS=2）
+   * 没变，变的是**分母**：先要房间里所有真人都表态（或被明确不等）。
+   *
+   * 所以这里的「剩下 3 个不参与」不再是自动发生的，而是要先说不等他们。 */
   const five = settledRoom([P('a'), P('b'), P('c'), P('d'), P('e')]);
   SM.wantNext(five, 'a');
   SM.wantNext(five, 'b');
-  eq(SM.canStartNext(five), true, '★ 5 人房里 2 人报名 → 可开');
+  eq(SM.canStartNext(five), false, '★ 5 人房里 2 人报名 → 不开（还有 3 个人没表态）');
+  eq(SM.pendingNextPlayers(five).length, 3, '卡住的人数正好是没表态的那 3 个');
+  ['c', 'd', 'e'].forEach(function (id) { SM.dropFromNext(five, 'a', id); });
+  eq(SM.canStartNext(five), true, '★ 逐个「不等」之后才开 —— 每一步都是有名字的动作');
   const r = SM.startNextRound(five);
   ok(r.ok, '开得起来', r.error);
   eq(five.players.length, 5, '★ 新一局五个人都还在房间里（C-3b：座位不删）');
@@ -113,18 +120,22 @@ console.log('\n[3] 阈值没被顺手改掉：全真人房仍是「凑够 2 人�
 }
 
 /* ================================================================ */
-console.log('\n[4] 侧门保持原样：从房号摸进来的人仍要自己点准备');
+console.log('\n[4] 从房号进来：报名与就位一起给（v121 修的死锁）');
 {
+  /* ★ 这里以前断言 ready === false，理由是「他还没看到这间房长什么样」。
+   * 那条理由的代价是真机上的一具尸体：就位态那颗按钮在 nextWait 下被无条件
+   * 画成「已就位 ✓」，而服务端认 ready=false —— 界面写着 3/3，牌就是不发。 */
   const room = settledRoom([P('a'), P('b')]);
   const j = SM.joinRoom(room, P('x'));
   ok(j.ok, '结算期能进房', j.error);
   const x = SM.findPlayer(room, 'x');
   eq(x.wantNext, true, '自动算报名（否则开局时会被静默丢掉）');
-  eq(x.ready, false, '★ 但不替他点准备 —— 他还没看到这间房长什么样');
+  eq(x.ready, true, '★ 报名即就位 —— 和 wantNext 同步，界面与服务端才说同一件事');
+  eq(x.benched, true, '★ 但上一把他没打，所以名次表里仍算旁听（结算不把他算进分母）');
   SM.wantNext(room, 'a');
-  eq(SM.canStartNext(room), false, '★ 他卡着门槛：a 报了名也开不了（这是「不等他」存在的理由）');
-  SM.setReady(room, 'x', true);
-  eq(SM.canStartNext(room), true, '他点了准备就齐了');
+  eq(SM.canStartNext(room), false, '★ 还差 b 表态 → 仍不开（三缺一不再按两人开）');
+  SM.dropFromNext(room, 'a', 'b');
+  eq(SM.canStartNext(room), true, '不等 b 之后就齐了');
 }
 
 /* ================================================================ */
