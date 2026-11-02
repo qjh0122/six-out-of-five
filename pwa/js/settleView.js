@@ -689,25 +689,6 @@
       row.appendChild(b);
     });
     box.appendChild(row);
-
-    /* ★ v122「等个人」：房主在结算页把开牌挂起，等朋友输完房号进来。
-     *
-     * 为什么必须有它：三个人打完，手会一起点到「开始下一局」—— 那是这一屏唯一的
-     * 主动作。第四个人恰好在这时才到，牌已经发了，他这一整局都只能看。
-     * 门外有没有人，服务端不可能知道（没连接、没房间、没意图），只有房主能说。
-     *
-     * 为什么塞在这一行而不是单独一块：见上面标签缩短的理由。高度是这一页的硬约束。
-     * 非房主看不到这颗按钮 —— 等不等是整桌的时机决定，需要一个人负责（同改把数）；
-     * 但他们看得到 `#settle-wait` 里那句「房间已挂起」。 */
-    var hold = StateMachine.holdNextOf ? StateMachine.holdNextOf(room) : null;
-    if (iAmOwner) {
-      var hb = el('button', 'shl-hold' + (hold ? ' is-on' : ''), hold ? '开牌' : '等人');
-      hb.type = 'button';
-      /* data-hold-next: '1' = 挂起，'0' = 放行。渲染不绑事件，交给 game.js 的委托。 */
-      hb.setAttribute('data-hold-next', hold ? '0' : '1');
-      hb.setAttribute('aria-label', hold ? '人齐了，开牌' : '先别开牌，我等个人');
-      box.appendChild(hb);
-    }
     return box;
   }
 
@@ -980,7 +961,57 @@
         else if (who) waitTxt += ' · 还在等 ' + who;
       }
     }
-    $('#settle-wait').textContent = waitTxt;
+    renderWaitRow(room, waitTxt, holdNow);
+  }
+
+  /* 结算页底部：一句等待说明 + 房主的「等人」（v122）。
+   *
+   * ★ 「等人」按钮不在这里生成，它在 `#btn-next` 旁边（index.html 的 `.next-row`）。
+   *   试过三个位置，都撞同一堵墙 —— 结算页在 390×844 上没有多余的一行：
+   *     · 滚动区里单独一块 → 内容被推到底部动作条下面，cover 重叠 4177px²；
+   *     · 并进把数那一行 → 竖屏要往下滑才看得见，功能存在但点不到；
+   *     · 这一行（settle-wait）里 → 行高 +44，滚动区再压 5%，把数块与它自己重叠。
+   *   结论：不新增任何高度，只跟主按钮分一行宽度。房主只有几秒决策时间，它必须在首屏。
+   *
+   * 非房主看到的是同一句说明 —— 他们需要知道「为什么我点了没开牌」。 */
+  function renderWaitRow(room, text, holdNow) {
+    var box = $('#settle-wait');
+    var iAmOwner = !!(state && state.myId && room.ownerId === state.myId);
+    var line = text;
+    if (iAmOwner) {
+      /* ★ v123：挂着等人的时候，房主要能一眼看出「朋友到了没」。
+       * 原来只有「N 人已进入下一把」—— 那是个数字，房主要自己数、
+       * 还要回忆刚才有几个人。现在直接点名：刚进来的人（joinedLate）就是他要等的。
+       * 一个都还没到时，说清「还在等」，免得他以为按钮坏了。 */
+      if (holdNow) {
+        var arrived = room.players.filter(function (p) {
+          return !p.isBot && !p.left && p.joinedLate && p.wantNext;
+        });
+        if (arrived.length) {
+          var names = arrived.map(function (p) { return short(p.nickname || '朋友'); });
+          line = names.slice(0, 2).join('、') + ' 已进来，可以开牌了';
+        } else {
+          line = '房间已挂起，等朋友进来（最多 3 分钟）';
+        }
+      } else if (!line) {
+        line = '还有朋友要来？点「等人」先别开牌';
+      }
+    }
+    if (box) box.textContent = line || '';
+    renderHoldBtn(room, holdNow);
+  }
+
+  function renderHoldBtn(room, holdNow) {
+    var b = $('#btn-hold');
+    if (!b) return;
+    var iAmOwner = !!(state && state.myId && room.ownerId === state.myId);
+    if (!iAmOwner) { b.classList.add('hidden'); return; }
+    b.classList.remove('hidden');
+    b.classList.toggle('is-on', !!holdNow);
+    b.textContent = holdNow ? '开牌' : '等人';
+    /* data-hold-next: '1' = 挂起，'0' = 放行。渲染不绑事件，交给 game.js 的委托。 */
+    b.setAttribute('data-hold-next', holdNow ? '0' : '1');
+    b.setAttribute('aria-label', holdNow ? '人齐了，开牌' : '先别开牌，我等个人');
   }
 
   /* 就位态回看上一局结算：只读弹窗，不写任何状态。
