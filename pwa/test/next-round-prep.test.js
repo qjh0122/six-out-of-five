@@ -104,8 +104,10 @@ console.log('\n[3] 阈值没被顺手改掉：全真人房仍是「凑够 2 人�
   eq(SM.canStartNext(five), true, '★ 5 人房里 2 人报名 → 可开');
   const r = SM.startNextRound(five);
   ok(r.ok, '开得起来', r.error);
-  eq(five.players.length, 2, '新一局只有报名的那两个');
-  eq(r.removed.length, 3, '另外 3 人进 removed（服务端据此通知他们）');
+  eq(five.players.length, 5, '★ 新一局五个人都还在房间里（C-3b：座位不删）');
+  eq(SM.playingPlayers(five).length, 2, '★ 只有报名的那两个参与');
+  eq(r.removed.length, 0, '★ 没人被赶出去（以前另外 3 人会进 removed）');
+  eq(five.players.filter(function (p) { return p.benched; }).length, 3, '另外 3 人是旁听');
   ok(five.players.every(function (p) { return !p.wantNext && !p.ready; }),
     '新一局把报名与就位都清掉（下一把重新来）');
 }

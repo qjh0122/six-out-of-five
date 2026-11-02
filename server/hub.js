@@ -872,6 +872,15 @@ class Hub {
     SM.setReady(room, botId, true); // AI 永远准备好
 
     this._ok(client, reqId, { botId: botId });
+    /* ★ 补完 AI 可能**已经够人数了**，必须接一下自动开局。
+     *
+     * 这个缺口以前看不见：正常路径上补 AI 都在 WAITING，补完还要房主点「开始」；
+     * 或者是结算期补完，房主接着就点「开始下一局」—— 那一下会触发。
+     * C-3b 之后多了一条合法路径：**房主自己不报名，只补 AI**，
+     * 两张 AI 各自在结算期自动报名，人数就够了。不在这里推一把，
+     * 牌局永远不开，而房主正在旁听、什么动作都做不了（旁听者不能解散、不能准备）。
+     * 顺序同 wantNext / ready：先推进，再广播推进后的状态。 */
+    this._maybeAutoStart(found.roomId);
     this._broadcast(found.roomId);
   }
 

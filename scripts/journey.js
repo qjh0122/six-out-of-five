@@ -1270,12 +1270,89 @@ async function main() {
   }
 
   /* ---------------------------------------------------------------- */
+  /* ★ C-3b（v118）：旁听。
+   *
+   * 这是本次唯一「1 真人 + 1 AI 房造不出来」的场景 —— 旁听的前提是
+   * 「别人把下一局开了，而我没报名」，也就是至少两个人报了名。
+   * 而 AI 房里我能看见的「补 AI」按钮只在「我已经报名」时才出现（就位态），
+   * 一旦报名就自动开局、我就是上场的人，永远看不到旁听。
+   *
+   * 所以这里用协议补第二个 AI：等价于「房主在另一台设备上点了补 AI」。
+   * 两张 AI 都会在结算期自动报名（markSettled / addBot 各自预置），
+   * 人数一够服务端立刻开局，而我没报名 → 旁听。
+   *
+   *
+   * 把数保持 [7c] 改成的 15 不动，这是**故意的**：第一次跑的时候把它改回了 3，
+   * 结果两个 AI 一两秒就把整局打完，journey 的轮询连一帧旁听态都没抓到
+   * （诊断里已经是打完的结算页了）。要看得见这一屏，就得让它多活一会儿。
+   * 代价是这一段结束时这一局还在打 —— 所以旁听的人要从这颗卡自带的
+   * 「离开房间」退出去（旁听态藏了整条动作条，没有第二个出口）。 */
+  console.log('\n[7d] 旁听：别人开了下一局，我没报名');
+  const addedBot = await evaluate('RoomStore.addBot().then(function(r){ return JSON.stringify(r); })');
+  console.log('    补第二个 AI：' + addedBot);
+  const specShown = await waitFor('__journey.vis("spectator")', 12000, '没进旁听态');
+  if (specShown) {
+    const spec = await evaluate(`(function(){
+      var sp = document.getElementById('spectator');
+      var hand = document.getElementById('hand');
+      return {
+        text: (sp.textContent || '').replace(/\\s+/g, ' ').trim(),
+        slotsHidden: document.getElementById('slots').classList.contains('hidden'),
+        bottomHidden: document.querySelector('#screen-game .game-bottom').classList.contains('hidden'),
+        docOver: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        handCards: hand ? hand.querySelectorAll('.card').length : 0
+      };
+    })()`);
+    console.log('    旁听态：' + JSON.stringify(spec));
+    ok(/旁听中/.test(spec.text || ''), '★ 旁听卡画出来了（写着「旁听中」）', JSON.stringify(spec.text));
+    ok(/这一局你在旁观/.test(spec.text || ''), '★ 说清了「你在旁观这一局」');
+    ok(spec.slotsHidden === true, '★ 组槽藏起来了（旁听的人没有牌可放）');
+    ok(spec.bottomHidden === true, '★ 手牌与提交那块整体藏起来了');
+    ok(spec.handCards === 0, '★ 手上确实一张牌都没有');
+    ok(spec.docOver <= 0, '★ 旁听卡没把对局页撑出横向滚动', JSON.stringify(spec));
+    if (SHOTS) console.log('    截图：' + (await shot('spectator')));
+
+    /* 旁听卡自带的出口。底部动作条整块藏起来了（里面有「离开房间」），
+     * 所以这里必须有一颗自己的 —— 否则旁听的人只能关页面或干等。 */
+    const hasLeave = await evaluate(`(function(){
+      var b = document.querySelector('#spectator .btn');
+      return b ? (b.textContent || '').trim() : '';
+    })()`);
+    ok(/离开房间/.test(hasLeave || ''), '★ 旁听卡自带「离开房间」出口（动作条整块藏了）', JSON.stringify(hasLeave));
+    await evaluate('document.querySelector("#spectator .btn").click()');
+    /* 离开之前 onLeave 会先 fetch 一次快照（最长 2.5 秒）再弹确认框 ——
+     * 点完立刻看 #confirm-modal 一定是 false，得等它出来。 */
+    const askLeave = await waitFor('__journey.vis("confirm-modal")', 8000, '离开没弹确认框');
+    ok(askLeave, '★ 旁听时离开仍然先问一次');
+    if (askLeave) await evaluate('document.getElementById("btn-confirm-ok").click()');
+    const leftToHome = await waitFor('__journey.vis("screen-home")', 12000, '旁听后没离开房间');
+    ok(leftToHome, '★ 旁听状态下能正常离开 → 回到首页（不被锁在房间里）');
+  } else {
+    /* 失败时最想知道的一件事：**是没开局，还是开太快没抓到**。
+     * 这两种的修法完全相反（前者是服务端没推进，后者是这段脚本等不住），
+     * 所以把客户端手上的房间态一并打出来。 */
+    const dbg = await evaluate(`(function(){
+      var rid = (document.getElementById('room-code') || {}).textContent || '';
+      var r = RoomStore.getRoom(rid);
+      if (!r) return 'null';
+      return JSON.stringify({
+        phase: r.phase, n: r.players.length,
+        players: r.players.map(function(p){
+          return p.id.slice(-4) + ':' + (p.benched ? 'B' : '-') + ':' + (p.wantNext ? 'W' : '-');
+        })
+      });
+    })()`);
+    await diag('没进旁听态；room=' + dbg);
+  }
+
   console.log('\n[8] 查看战绩：必须是账号数据');
 
-  await evaluate('document.getElementById("btn-records").click()');
+  /* v118（C-3b）之后从这里开始我已经不在房间里了（旁听那一段结束时退了出来），
+   * 所以入口换成首页那颗。测的东西没变：战绩页读的是账号数据、人机局不计入。 */
+  await evaluate('document.getElementById("btn-records-home").click()');
   const recShown = await waitFor('__journey.vis("screen-records")', 8000, '战绩页没打开');
   if (!recShown) await diag('战绩页没打开');
-  ok(recShown, '从结算页点「查看战绩」→ #screen-records 可见');
+  ok(recShown, '从首页点「查看战绩」→ #screen-records 可见');
 
   /* 页脚文案是异步切的：登录后等账号数据回来才变成「已保存到账号」。
    * 所以要等文案到位才算数，不能拿第一帧的断言。 */
@@ -1339,9 +1416,14 @@ async function main() {
       };
     })()`);
     console.log('    真实数据回放：' + JSON.stringify(rv));
-    ok(rv.packs === 2, '★ 回放里是整场两把（不是单把兜底）', JSON.stringify(rv));
+    /* 把数不写死。原来这里断言「整场 2 把」，那是这段脚本恰好只打了两把；
+     * v118 加了旁听那一段（两个 AI 自己往下打了几把才被看见），现在是 4 把。
+     * 断言要守的是**「整场而不是单把」**，不是某个具体数字 ——
+     * 写成数字只会在场景一变时假红，然后被人把数字改大，守的东西一点没变。 */
+    ok(rv.packs >= 2, '★ 回放里是整场（不是单把兜底）', JSON.stringify(rv));
     ok(/这一局/.test(rv.title), '★ 标题写「这一局」（走的是整场档案，不是单把兜底）', JSON.stringify(rv.title));
-    ok(/整场 2 把/.test(rv.sub), '★ 副标题写「整场 2 把」，不是「这一把的过程」', JSON.stringify(rv.sub));
+    ok(new RegExp('整场 ' + rv.packs + ' 把').test(rv.sub),
+      '★ 副标题的「整场 N 把」与实际把数一致', JSON.stringify(rv.sub) + ' / packs=' + rv.packs);
     ok(rv.target === 1, '★ 我点的那把被标出来（不是一把都不标）', JSON.stringify(rv.target));
     if (SHOTS) console.log('    截图：' + (await shot('replay')));
 

@@ -519,8 +519,11 @@ ok(/btn-leave-game'\)\.addEventListener\('click', onLeave\)/.test(gameJs), '这�
  * 但结算页和就位态都是 SETTLED —— 人在结算页时猜出来的是对局页那颗，
  * 忙碌态加到一个 display:none 的按钮上，点的那个毫无反馈，人只会再点一次。 */
 ok(/function firstShown\(/.test(gameJs), '有 firstShown（按祖先链上的 .hidden 判可见性）');
-ok(/firstShown\(\['btn-leave', 'btn-leave-game', 'btn-back-room'\]\)/.test(gameJs),
-  '★ onLeave 按可见性选按钮，三个入口都在候选里');
+/* v118（C-3b）多了第四个入口：旁听卡的「离开房间」。
+ * 旁听态里整条动作条（含上面这三颗）都被藏起来了，不把这一颗登记进候选，
+ * onLeave 开头的 firstShown 会返回 null → 直接 return，点它等于什么都没发生。 */
+ok(/firstShown\(\['btn-leave-spectator', 'btn-leave', 'btn-leave-game', 'btn-back-room'\]\)/.test(gameJs),
+  '★ onLeave 按可见性选按钮，四个入口都在候选里（含旁听卡那颗）');
 ok(!/state\.room\.phase !== StateMachine\.PHASE\.WAITING\) \{\s*btn = \$\('#btn-leave-game'\)/.test(gameJs),
   '★ 不再按 phase 猜是哪个页面');
 ok(/btn-leave-game[^>]*>离开房间</.test(html), '对局页文案也是「离开房间」（和另外两个入口一致）');

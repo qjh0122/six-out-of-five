@@ -81,6 +81,25 @@
     return room.players.filter(function (p) { return !p.left; });
   }
 
+  /* ★ C-3b（v118）：**这一局真正在打的人** —— 在房间里、且没有在旁听。
+   *
+   * 为什么需要第二个名单：
+   *   以前「没报名下一局」的人会在开局那一刻被从 `room.players` 里删掉
+   *   （`startNextRound` 的 `room.players = joiners`），所以「在房间里」和
+   *   「在打这一局」是同一个集合，一个 `activePlayers` 就够。
+   *   C-3b 要求座位全保留（不续局的人留在牌桌边上看），两个集合就此分家：
+   *
+   *     activePlayers   = 房间里的人（占座位、算容量、算房间是否空了）
+   *     playingPlayers  = 参与本局的人（发牌、提交、结算、投票、算人数够不够）
+   *
+   * **凡是「影响这一局结果」的地方都该用 playingPlayers**：发牌、全员提交判定、
+   * 分组结算、解散投票、人数不足结束、成就累计、AI 快照。用错成 activePlayers
+   * 的症状是「旁听的人没有手牌却被等提交」→ 整桌卡住（这是最难查的一类）。
+   * **凡是「房间里还坐着谁」的地方用 activePlayers**：座位表、容量检查、回收。 */
+  function playingPlayers(room) {
+    return room.players.filter(function (p) { return !p.left && !p.benched; });
+  }
+
   /* 这个房间自己的人数上限。
    * 读 room.cap 而不是 CONFIG.MAX_PLAYERS：上限是可以改小的（8 → 5），
    * 但线上正在进行的房间必须按它建的时候那一档走完，
@@ -177,7 +196,9 @@
     var deck = Card.createDeck();
     Card.shuffle(deck);
     room.players.forEach(function (p) {
-      if (p.left) { p.hand = []; return; }
+      /* ★ C-3b：旁听的人不发牌。手牌清空是必须的 —— 留着上一局的牌，
+       * 结算时 `forfeitRound` / `isRoundLocked` 那些判定会把他当成「还在这局里」。 */
+      if (p.left || p.benched) { p.hand = []; return; }
       p.hand = deck.splice(0, CONFIG.CARDS_PER_PLAYER);
       p.groups = freshGroups();
       p.submitted = { round1: false, round2: false };
@@ -209,6 +230,9 @@
     owner.revising = null;      // 正在改的轮次号（见 beginRevise）
     owner.wantNext = false;     // 报名下一局（见 wantNext）
     owner.joinedLate = false;   // 是不是「结算期才进来、没打上一局」的人
+    /* ★ C-3b：在房间里、但不参与当前这一局（旁听）。
+     * 建房的人一定是来打的，恒 false；只有 startNextRound 会把没报名的人置真。 */
+    owner.benched = false;
     owner.out = false;          // ★ v103 起恒为 false（不再有见底出局），字段只为老回放兼容保留
     return {
       roomId: roomId,
@@ -312,6 +336,10 @@
      * 「确认我进的是这一间」；主路径上的人刚看完自己的成绩，两者不是同一件事。
      * 代价是他要多点一次准备 —— 而这一步有「不等他」兜着，卡不住整桌。 */
     p.wantNext = settling;
+    /* ★ C-3b：从房号摸进结算期的新面孔，这一局他没打 → 旁听。
+     * 中途离开过、又在结算期回来的老玩家不在此列：他打过上一局，
+     * 结算页上的名次与分数都得照常算他一份。 */
+    p.benched = settling && isNewcomer;
     p.ready = false;
     p.joinedLate = settling && isNewcomer;
     p.left = false;
@@ -399,6 +427,14 @@
      *   · SETTLED+wantNext —— 结算期里已经点了「开始下一局」的人，在房间页的准备
      * 第二种是新增的：房间 phase 故意停在 SETTLED（否则没点的人结算页会被顶掉），
      * 但那些人已经在打下一局的准备流程里，不能拿「对局已开始」把他们挡住。 */
+    /* ★ C-3b：旁听的人没有「准备」这个动作 —— 他不参与这一局。
+     * 必须放在下面那条 phase 判断**之前**：两条都命中时，先说的应该是
+     * 「你在旁听」这一句真话，而不是笼统的「对局已开始」。
+     * 结算期例外：那时 benched 还留着（标「这局我没打」），而他点了「开始下一局」，
+     * 属于下一局的准备流程，照旧放行。 */
+    if (p.benched && room.phase !== PHASE.SETTLED) {
+      return { ok: false, error: '这一局你在旁听，结算后点「开始下一局」' };
+    }
     var inNextRound = room.phase === PHASE.SETTLED && p.wantNext && !p.left;
     if (room.phase !== PHASE.WAITING && !inNextRound) {
       return {
@@ -455,7 +491,7 @@
     /* 本把是否有人机参与 —— 结算落档的口径依据（含 AI 的局不计入战绩）。
      * 开局时按当前座位快照一次；中途补进来的 AI 由 hub.addBot 置 true。
      * 必须**每把重置**：上一把有人机不代表这一把也有，反之同理。 */
-    room.handHadBot = room.players.some(function (p) { return !!p.isBot; });
+    room.handHadBot = playingPlayers(room).some(function (p) { return !!p.isBot; });
     dealAll(room);
     room.phase = PHASE.ROUND1_SPLIT;
     room.updatedAt = Date.now();
@@ -823,7 +859,8 @@
     // 所有「未弃局、未弃权」的人都定稿后，自动结算。
     // 弃权者（本回合超时/主动放弃）不算在等待名单里——否则他会卡死整桌。
     // 「正在改」的人也不算定稿——否则会拿他的旧分组替他把本轮结掉（见 isRoundLocked）。
-    var act = activePlayers(room);
+    /* C-3b：只算参与本局的人 —— 旁听者没有手牌，等他提交会把整桌卡死。 */
+    var act = playingPlayers(room);
     var allSubmitted = act.every(function (q) {
       return isRoundLocked(q, round);
     });
@@ -880,7 +917,8 @@
     room.updatedAt = Date.now();
 
     // 弃权也推进结算判定：其余在场未弃局者都提交（或弃权）后即结算
-    var act = activePlayers(room);
+    /* C-3b：只算参与本局的人 —— 旁听者没有手牌，等他提交会把整桌卡死。 */
+    var act = playingPlayers(room);
     var allSubmitted = act.every(function (q) {
       return isRoundLocked(q, round);
     });
@@ -903,7 +941,8 @@
 
     for (var gi = 0; gi < groupKeys.length; gi++) {
       var key = groupKeys[gi];
-      var pool = activePlayers(room);
+      /* 只结算参与本局的人。旁听者 groups 是空的，塞进去会被当成「三张散牌」参与输赢。 */
+      var pool = playingPlayers(room);
       if (!pool.length) break;
       var entries = pool.map(function (p) {
         return { id: p.id, nickname: p.nickname, hand: (p.groups['round' + round] || {})[key] || [] };
@@ -956,7 +995,9 @@
        * 那时这一把全场的分数才定下来。放在同一个 if 里，是因为它依赖
        * 上面刚建好的桶 —— 一轮就结算时分数还没定型，算了也是假的。 */
       if (round === 2 && typeof Ach.accumulateHand === 'function') {
-        room.achRun = Ach.accumulateHand(room.achRun, room.players);
+        /* 成就按「这一局真在打的人」累计。旁听者手牌是空的，
+         * 会把「小牌局」判定拉成「全场都是散牌」—— 给所有人白送一次小牌对撞。 */
+        room.achRun = Ach.accumulateHand(room.achRun, playingPlayers(room));
       }
     }
 
@@ -1059,7 +1100,8 @@
     if (!room) return false;
     if (room.phase !== PHASE.ROUND1_SPLIT && room.phase !== PHASE.ROUND2_SPLIT) return false;
     var rd = room.round;
-    var act = activePlayers(room);
+    /* C-3b：只算参与本局的人 —— 旁听者没有手牌，等他提交会把整桌卡死。 */
+    var act = playingPlayers(room);
     if (!act.length) return false;   // 人都走光了，交给 maybeEndGame / 房间回收
     var allIn = act.every(function (q) {
       return isRoundLocked(q, rd);
@@ -1137,6 +1179,9 @@
     if (p.left) return { ok: false, error: '你已经离开这一局了' };
     p.wantNext = true;
     p.ready = true;
+    /* ★ C-3b：报名下一局就是把「旁听」这个身份摘掉。
+     * 不摘的话，他下一局仍会被当成旁听（canStartNext 认他，发牌却不发给他）。 */
+    p.benched = false;
     room.updatedAt = Date.now();
     return { ok: true, room: room };
   }
@@ -1246,15 +1291,32 @@
 
     var joiners = nextRoundPlayers(room);
     var keepIds = joiners.map(function (p) { return p.id; });
-    var removed = room.players
-      .filter(function (p) { return !p.left && keepIds.indexOf(p.id) < 0; })
-      .map(function (p) { return p.id; });
 
-    room.players = joiners;
+    /* ★ C-3b（v118）：不续局的人**留在房间里旁听**，不再被删出去。
+     *
+     * 以前是 `room.players = joiners`：没报名的人在开局那一刻被静默移出，
+     * 服务端还要给他们推一条 roomDeleted 解释「本局打完后用房号 XXXX 还能进来」。
+     * 三个问题：座位凭空消失、结算页的名次表少了几个人、回来还得重新输房号。
+     * 现在他们只是 `benched = true` —— 座位留着、名次留着、牌桌上标「旁听」。
+     *
+     * 唯一仍然清掉的是 `left` 的人：他们已经明确退房，留着会一直占座。
+     * 也因此 `removed` 现在**恒为空**（hub 那边仍保留调用，处理旧数据里残留的 left）。 */
+    var removed = [];
+    room.players = room.players.filter(function (p) {
+      if (p.left && keepIds.indexOf(p.id) < 0) { removed.push(p.id); return false; }
+      return true;
+    });
+
     room.players.forEach(function (p) {
+      /* 报名的人上场，没报名的人旁听 —— 这一个字段就是 C-3b 的全部状态。 */
+      p.benched = keepIds.indexOf(p.id) < 0;
       p.score = CONFIG.INITIAL_SCORE;
       p.ready = false;
       p.wantNext = false;
+      /* 「不等他」的排除标记只对上一局那一次结算有效。新一局开始时必须清掉：
+       * 不清的话，一个上局被跳过的人，这一局连「愿意参与的真人」都不算了 ——
+       * 他明明在牌桌边看着，却在门槛里被当成空气。 */
+      p.outNext = false;
       p.joinedLate = false;   // 新一局他也是「打过的人」了，结算弹窗要照常给他
       p.resubmits = { round1: 0, round2: 0 };
       p.revising = null;      // 开下一把：谁都不在「正在改」的状态里
@@ -1269,7 +1331,7 @@
     room.anyScoreChange = false;
     room.bustedIds = [];
     room.groupsDone = 0;
-    room.handHadBot = room.players.some(function (p) { return !!p.isBot; });   // 同上：每把重算
+    room.handHadBot = playingPlayers(room).some(function (p) { return !!p.isBot; });   // 同上：每把重算
     room.settledAt = null;                                  // 新一局清空，下一局重新写
     room.dissolve = { active: false, initiatorId: null, startedAt: 0, votes: {},
                       lastReason: null, lastAt: 0 };
@@ -1321,7 +1383,8 @@
    * 机器人和掉线真人都不计入 quorum——它们永远不会应答投票，
    * 一旦计入就会永久卡在「等待其他玩家同意」（这是实际踩到的坑）。 */
   function dissolveVoters(room) {
-    return activePlayers(room).filter(function (p) {
+    /* 旁听者不解散一局他没有参与的对局 —— 也不该因为他不投票而卡住别人。 */
+    return playingPlayers(room).filter(function (p) {
       return !p.isBot && p.connected !== false;
     });
   }
@@ -1398,7 +1461,9 @@
   function proposeDissolve(room, playerId) {
     if (!room) return { ok: false, error: '房间不存在' };
     if (room.phase === PHASE.SETTLED) return { ok: false, error: '对局已结账' };
-    var act = activePlayers(room);
+    /* 旁听者不能解散这一局（他没在打），所以这里必须用 playingPlayers：
+     * 用 activePlayers 的话他能发起投票，却因为不在 dissolveVoters 里而永远凑不齐票。 */
+    var act = playingPlayers(room);
     if (!act.some(function (p) { return p.id === playerId; })) return { ok: false, error: '你不在该房间' };
     // 已在投票中：幂等返回
     if (room.dissolve && room.dissolve.active) return { ok: true, room: room };
@@ -1419,7 +1484,7 @@
   function voteDissolve(room, playerId, agree) {
     if (!room) return { ok: false, error: '房间不存在' };
     if (!room.dissolve || !room.dissolve.active) return { ok: false, error: '当前没有进行中的提议' };
-    var act = activePlayers(room);
+    var act = playingPlayers(room);
     if (!act.some(function (p) { return p.id === playerId; })) return { ok: false, error: '你不在该房间' };
     agree = !!agree;
     room.dissolve.votes[playerId] = agree;
@@ -1457,7 +1522,9 @@
        *
        * 写进 `if (!room.settledAt)` 里：结算后分数不再变化，判一次就够，
        * 也避免结算页停留期间的重复广播反复重算。 */
-      room.voided = !room.anyScoreChange && !room.players.some(function (p) {
+      /* 旁听者的分数永远是基准分（没参与就没人给他加减分），
+       * 用 room.players 的话这一局会被判成「非作废」—— 一个人打都没打，账上却记了一场。 */
+      room.voided = !room.anyScoreChange && !playingPlayers(room).some(function (p) {
         return (Number(p.score) || 0) !== CONFIG.INITIAL_SCORE;
       });
     }
@@ -1471,7 +1538,7 @@
      * 为什么要并：开局快照只覆盖「开局时已经在座」的情况，
      * 而 AI 是房主随时可以补的（补完立刻参与后面的分牌与计分）。
      * 用「或」而不是「等于」：中途被移除的 AI 也该让这一把算「含 AI」。 */
-    room.handHadBot = !!room.handHadBot || room.players.some(function (p) { return !!p.isBot; });
+    room.handHadBot = !!room.handHadBot || playingPlayers(room).some(function (p) { return !!p.isBot; });
     room.updatedAt = Date.now();
   }
 
@@ -1479,7 +1546,8 @@
   function maybeEndGame(room) {
     if (room.phase === PHASE.WAITING) return; // 等待中掉线已在服务端移除，不在此处理
     if (room.phase === PHASE.SETTLED) return; // 已结束（如解散/结账），不覆盖原因
-    if (activePlayers(room).length < CONFIG.MIN_PLAYERS) {
+    /* 人数不够就结束 —— 旁听的人不算数：他在旁边看着，凑不出两个人发牌。 */
+    if (playingPlayers(room).length < CONFIG.MIN_PLAYERS) {
       room.phase = PHASE.SETTLED;
       room.endReason = 'someoneLeft';
       markSettled(room);
@@ -1561,11 +1629,25 @@
       return { ok: true, room: room, offline: true };
     }
 
+    /* ★ C-3b：旁听的人掉线 = 退房，**不判弃局**。
+     *
+     * 他本来就没在打这一局：判 left 会让结算页给他记一条「弃局」，
+     * 而他从头到尾一分没得过、一张牌没出过 —— 那不是「弃」，是「没参加」。
+     * 直接摘掉座位更诚实，也不会让「剩几个人在打」这种判断被一具空壳拖着。
+     * （他自己再进来时走房号 / 重连，和其他人一样。） */
+    if (p.benched) {
+      room.players = room.players.filter(function (q) { return q.id !== playerId; });
+      room.updatedAt = Date.now();
+      if (room.players.length === 0) return { ok: true, room: null, deleted: true };
+      ensureLiveOwner(room);
+      return { ok: true, room: room, removed: true };
+    }
+
     p.left = true;
     p.ready = false;
     p.connected = false;
     // 手牌**不清空**：清空后即便人回来了也没牌可打，等于把「掉线」变成「永久出局」。
-    // 判弃期间结算会按 activePlayers 过滤掉他，手牌留着不会影响计分。
+    // 判弃期间结算会按 playingPlayers 过滤掉他，手牌留着不会影响计分。
     p.leftAtRound = room.round;
     room.updatedAt = Date.now();
 
@@ -1605,6 +1687,7 @@
     TENHALF_MAX_TENTHS: TENHALF_MAX_TENTHS,
     findPlayer: findPlayer,
     activePlayers: activePlayers,
+    playingPlayers: playingPlayers,
     capOf: capOf,
     handLimitOf: handLimitOf,
     setHandLimit: setHandLimit,
