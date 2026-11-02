@@ -241,19 +241,25 @@ async function run() {
   catch (e) { r3 = e.message; }
   ok(!!r3 && r3.indexOf('身份校验') >= 0, '伪造等长令牌被拒（长度对得上也不算数）', r3 || '(竟然成功了)');
 
-  let r4 = null;
-  try { await eve.request('joinRoom', { roomId: roomId, playerId: b.playerId, nickname: '冒名者' }); }
-  catch (e) { r4 = e.message; }
-  /* 接入账号后这里的拒绝理由变了：Eve 是另一个账号，服务端用令牌身份把她当陌生人，
-   * 根本没走到「座位令牌」那一步，直接因「对局已在进行」被挡。
-   *
-   * ★ 断言只要求「被挡」，不绑具体措辞 —— 这条注释以前是「对局已开始」，
-   * 现在 joinRoom 会区分「正在打」和「结算中」两种话（用户要求分开说），
-   * 绑死一句话的话，下次改文案又要来改测试。 */
-  const blockedByPhase = r4 && (r4.indexOf('正在打') >= 0 || r4.indexOf('结算') >= 0
-    || r4.indexOf('对局已开始') >= 0);
-  ok(!!r4 && (r4.indexOf('身份校验') >= 0 || blockedByPhase),
-    'joinRoom 也不能冒领已有座位', r4 || '(竟然成功了)');
+  let r4 = null, r4err = null;
+  try { r4 = await eve.request('joinRoom', { roomId: roomId, playerId: b.playerId, nickname: '冒名者' }); }
+  catch (e) { r4err = e.message; }
+  /* ★ v122 起「对局中一律拒绝」没了：晚到的人可以进房旁听。
+   * 所以这条断言要守的**不是「进不来」**，而是「抢不走座位」：
+   *   · 服务端只用令牌身份（this._pid(client)），payload 里写别人的 playerId 完全无效；
+   *   · 因此 Eve 进来拿的是她自己的座位，而且只能是旁听（benched）；
+   *   · 乙的座位一个字段都没变。
+   * 若哪天又收紧成拒绝，也算通过 —— 两种结果都不构成冒领。 */
+  if (r4err) {
+    ok(r4err.indexOf('身份校验') >= 0 || r4err.indexOf('正在打') >= 0,
+      'joinRoom 被挡（没有冒领成功）', r4err);
+  } else {
+    const eveSeat = SM.findPlayer(r4.room, eve.playerId);
+    const bSeat = SM.findPlayer(r4.room, b.playerId);
+    ok(!!eveSeat && eveSeat.benched === true,
+      '★ joinRoom 不能冒领：进来的只能是自己的座位，且是旁听');
+    ok(!!bSeat && bSeat.nickname === '乙玩家', '★ 乙的座位没被接管（payload 里的 playerId 被无视）');
+  }
 
   /* 最关键的一条：请求体里写别人的 playerId 完全无效。
    * 以前 createRoom 直接采信 payload.playerId，等于谁都能以别人的名字开房、把战绩记到别人头上。 */

@@ -156,12 +156,20 @@ ok((lateWant.error || '').indexOf('已经开始了') >= 0, '★ 文案是「新�
 ok((lateWant.error || '').indexOf('等这局打完') >= 0, '还说清了接下来该怎么办');
 
 /* ========================================================================== */
-console.log('\n[8] 打牌中进不来（这一条不变）');
+console.log('\n[8] 打牌中进得来，但只能旁听（v122）');
+/* 以前这里是「打牌中进不来 → ROOM_PLAYING」。规则没错，代价错了：
+ * 三个人在结算页都把「开始下一局」点了，第四个人恰好这时才输完房号，
+ * 就被关在门外整整一局。牌确实不能中途补人（发都发了），
+ * 但「进不来房间」和「这一把不打」是两件事。 */
 const playing = makeRoom(['a', 'b']);
 const joinPlaying = SM.joinRoom(playing, P('x'));
-eq(joinPlaying.ok, false, '打牌中进不来');
-eq(joinPlaying.code, 'ROOM_PLAYING', '★ 打牌中 → ROOM_PLAYING');
-ok(joinPlaying.error.indexOf('正在打') >= 0, '文案是「这局正在打」', joinPlaying.error);
+eq(joinPlaying.ok, true, '★ 打牌中也能进房（以前直接拒「这局正在打」）');
+const xSeat = SM.findPlayer(playing, 'x');
+eq(xSeat.benched, true, '★ 进来即旁听（牌已发完，不能中途补人）');
+eq(xSeat.wantNext, false, '旁听 ≠ 报名下一局');
+eq(xSeat.ready, false, '没就位（他还没看到结算页）');
+eq((xSeat.hand || []).length, 0, '手上没有这一把的牌');
+eq(SM.playingPlayers(playing).length, 2, '★ 在打的人仍是 2 个');
 
 /* ========================================================================== */
 /* 结算期必须能进来 —— 这是真机上被报回来的：
@@ -195,10 +203,15 @@ ok(!!SM.findPlayer(settling, 'x'), '★ 新人没有在开局瞬间被丢掉');
 eq(SM.findPlayer(settling, 'x').hand.length, 6, '★ 新人手里有牌（真的进了这一局）');
 eq(SM.findPlayer(settling, 'x').joinedLate, false, '新一局开始后 joinedLate 清掉（下一把结算要照常弹）');
 
-/* 打起来之后仍然进不来 —— 这条边界不能被上面的放行顺带破掉 */
+/* ★ v122：开打之后再来人，进得来但只能旁听 —— 上面那次「结算期放行」不再
+ * 是唯一入口，也不会因为放行就把「中途补人」这种错误的事顺带做掉。 */
 const joinDuringPlay = SM.joinRoom(settling, P('late'));
-eq(joinDuringPlay.ok, false, '新一局开打后再来人 → 仍然拒绝');
-eq(joinDuringPlay.code, 'ROOM_PLAYING', '★ 仍是 ROOM_PLAYING');
+eq(joinDuringPlay.ok, true, '新一局开打后再来人 → 能进房');
+const lateSeat = SM.findPlayer(settling, 'late');
+eq(lateSeat.benched, true, '★ 但他这一把是旁听');
+eq((lateSeat.hand || []).length, 0, '★ 没有给他发牌（中途补人等于凭空造一手分）');
+eq(SM.playingPlayers(settling).map(function (p) { return p.id; }).sort().join(','), 'a,x',
+  '★ 在打的人没变多（上一把 b 被「不等他」排除，这一把是 a + 新人 x）');
 
 /* 结算期里「中途离开过」的人也能回来：以前 findPlayer 命中 → 幂等返回 → 状态还是 left，
  * 之后点什么都回「你已经离开这一局了」，人卡在房间里出不来 */

@@ -663,8 +663,16 @@
 
     var hint = $('#room-hint');
     hint.classList.toggle('ready', false);
+    /* 「等个人」（v122）：房主挂起时，「等 X 点开始下一局」这句是**错的** ——
+     * 真实原因不是有人没表态，而是房主说了先别开。不单独说一句，
+     * 就会变成「所有人都已经就位，界面还在等一个不存在的人」。 */
+    var holdOn = !!(nextWait && StateMachine.holdNextOf && StateMachine.holdNextOf(room));
     if (room.dissolve && room.dissolve.active) {
       hint.textContent = '正在等大家表态要不要结束本局…';
+    } else if (holdOn) {
+      hint.textContent = isOwner
+        ? '你在等朋友进来 · 人齐了点「人齐了，开牌」'
+        : '房主在等朋友进来，先不开牌';
     } else if (pending.length) {
       hint.textContent = '等 ' + whoText(pending) + ' 点「开始下一局」…';
     } else if (act.length < CONFIG.MIN_PLAYERS) {
@@ -723,6 +731,14 @@
     if (disBtn) disBtn.classList.toggle('hidden', nextWait);
     var backBtn = $('#btn-next-back');
     if (backBtn) backBtn.classList.toggle('hidden', !nextWait);
+
+    /* 「人齐了，开牌」（v122）：只有「房主 + 正在等」才出现。
+     * 它必须在就位态也够得着 —— 房主在结算页点了「等个人」之后，
+     * 自己通常也会顺手点「开始下一局」进入这一屏；此时若只有结算页能解除，
+     * 他就得先撤回报名（unWantNext）再回去点，中途还会把自己从下一局里摘掉，
+     * 解除之后反而变成「还差一个人（他自己）」。 */
+    var holdBtn = $('#btn-hold-off');
+    if (holdBtn) holdBtn.classList.toggle('hidden', !(nextWait && isOwner && holdOn));
   }
 
   /* ====================== 准备态：画在牌桌上（v82） ======================
@@ -3438,6 +3454,26 @@
     }
   }
 
+  /* 「等个人」（v122）：房主在结算页挂起 / 解除「先别开牌」。
+   *
+   * 这是唯一一个「让全桌停下来」的动作，所以文案必须说清后果：
+   * 挂起之后别人点「开始下一局」不会开牌 —— 否则他们会以为按钮坏了。
+   * 解除之后服务端会立刻判一次开局（人都齐了就不该再等第二次点击）。 */
+  async function onHoldNext(on) {
+    if (blockedOffline()) return;
+    var btn = document.querySelector('[data-hold-next]') || $('#btn-hold-off');
+    var restore = btn ? pressBusy(btn, on ? '挂起中…' : '开牌中…') : function () {};
+    try {
+      var res = await RoomStore.holdNext(state.roomId, state.myId, !!on);
+      if (!res || !res.ok) { flash((res && res.error) || '操作失败'); return; }
+      flash(on ? '已挂起：朋友进来之前不会开牌（最多等 3 分钟）' : '已放行，人齐就开牌');
+    } catch (e) {
+      flash('网络不太稳，再试一次');
+    } finally {
+      restore();
+    }
+  }
+
   /* 就位态「回结算页」：撤回报名。
    * 存在的理由是「反悔」——「开始下一局」以前是个单向门，点错只能退房重进。
    * 撤回后界面由订阅回调自然重绘回结算页，这里不用手工切屏。 */
@@ -4372,7 +4408,13 @@
     var settleBody = $('#settle-body');
     if (settleBody) {
       settleBody.addEventListener('click', function (e) {
-        var btn = e.target && e.target.closest ? e.target.closest('[data-hand-limit]') : null;
+        if (!e.target || !e.target.closest) return;
+        var hold = e.target.closest('[data-hold-next]');
+        if (hold && !hold.disabled) {
+          onHoldNext(hold.getAttribute('data-hold-next') === '1');
+          return;
+        }
+        var btn = e.target.closest('[data-hand-limit]');
         if (!btn || btn.disabled) return;
         onSetHandLimit(Number(btn.getAttribute('data-hand-limit')));
       });
@@ -4408,6 +4450,10 @@
     });
     $('#btn-next').addEventListener('click', onNextRound);
     $('#btn-sit-out').addEventListener('click', onSitOut);
+    /* 「人齐了，开牌」：就位态里房主解除「等个人」。
+     * 就位态的按钮是**搬**进 #ready-acts 的原节点，事件绑一次就一直在。 */
+    var holdOffBtn = $('#btn-hold-off');
+    if (holdOffBtn) holdOffBtn.addEventListener('click', function () { onHoldNext(false); });
     $('#btn-revise').addEventListener('click', onRevise);
     // 分牌：标签选组 + 点手牌直落（主路径），拖拽进组（可选路径）
     $('#group-chips').addEventListener('click', function (e) {

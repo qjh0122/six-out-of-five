@@ -3264,7 +3264,7 @@ body.is-dragging { cursor: grabbing; }
 .settle-hl {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;   /* v122：末尾多了一颗「等人」，靠缩这里把整行压回滚动区内（journey 报 bodyOver 1px） */
   margin: 12px 0 2px;
   padding: 10px 14px;
   border-radius: 16px;
@@ -3272,7 +3272,7 @@ body.is-dragging { cursor: grabbing; }
   border: 1px solid rgba(255, 255, 255, 0.10);
 }
 .shl-k { flex: 0 0 auto; margin: 0; font-size: 20px; color: var(--gray-aux); }
-.shl-opts { display: flex; flex: 1 1 auto; gap: 10px; justify-content: flex-end; }
+.shl-opts { display: flex; flex: 1 1 auto; gap: 8px; justify-content: flex-end; }
 .shl-opt {
   flex: 0 0 auto;
   min-width: 88px; min-height: 88px;
@@ -3301,6 +3301,34 @@ body.is-dragging { cursor: grabbing; }
 .ls .shl-k { font-size: 16px; }
 /* 横屏的 scale 同样是 ~0.52（按高度算），所以 44 实际也≈88 设计 —— 不能压小。 */
 .ls .shl-opt { min-width: 88px; min-height: 88px; font-size: 20px; }
+
+/* ---------- 「等个人」（v122） ----------
+ * 它和 5 个把数档位挤在同一行里 —— 不是设计上想挤，是结算页在 390×844 上
+ * 已经到顶了：单独一开一块（按钮 88 + 说明一行）会把内容推到底部动作条下面，
+ * ui-flow 直接报 cover 重叠 4177px²（被压掉 75%）。
+ * 88 设计 px ≈ 44 实际（竖屏 scale≈0.52），是本项目热区下限，不能再压。 */
+.shl-hold {
+  flex: 0 0 auto;
+  min-width: 88px;
+  min-height: 88px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.28);
+  background: transparent;
+  color: var(--gray-aux);
+  font-size: 22px;
+  font-family: inherit;
+  cursor: pointer;
+}
+/* 挂起态用暖黄：它不是「选中了某个档位」，而是「整桌暂停中」 */
+.shl-hold.is-on {
+  background: rgba(255, 176, 32, 0.18);
+  border-style: solid;
+  border-color: #ffb020;
+  color: #ffb020;
+  font-weight: 700;
+}
+.ls .shl-hold { min-width: 88px; min-height: 88px; font-size: 18px; padding: 0 6px; }
 
 /* ---------- toast ---------- */
 .toast {

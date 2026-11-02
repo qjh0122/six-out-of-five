@@ -1270,6 +1270,65 @@ async function main() {
   }
 
   /* ---------------------------------------------------------------- */
+  /* ★ v122：房主「等个人」。
+   *
+   * 真机场景：三个人打完都在结算页，手一起点到「开始下一局」→ 服务端立刻发牌，
+   * 第四个人这时候才输完房号，被关在门外一整局。
+   * 门外有没有人，服务端不可能知道（没连接、没房间），所以只能由房主明说。
+   *
+   * 这一段验三件事，缺一件这个功能就是假的：
+   *   ① 结算页真的画出了那颗按钮（房主可见）；
+   *   ② 挂起之后**报名也不开牌** —— 这才是它存在的意义；
+   *   ③ 解除之后立刻开牌（不用再点一次「开始下一局」）。
+   * 用的是真按钮 + 真协议，不是直接改前端状态。 */
+  console.log('\n[7e] 等个人：挂起 → 报了名也不开牌 → 放行 → 立刻开');
+  const holdShown = await waitFor(
+    '!!document.querySelector("#settle-body [data-hold-next]")', 8000, '结算页没有「先别开，我等个人」');
+  ok(holdShown, '★ 结算页有「先别开，我等个人」（房主可见）');
+
+  await evaluate('document.querySelector(\'#settle-body [data-hold-next="1"]\').click()');
+  const held = await waitFor(
+    '!!document.querySelector(\'#settle-body [data-hold-next="0"]\')', 8000, '挂起后按钮没变成「人齐了，开牌」');
+  ok(held, '★ 点一下变成「人齐了，开牌」（服务端收下并广播回来了，不是前端自己翻转的）');
+  const heldTxt = await evaluate('(document.getElementById("settle-wait").textContent||"").trim()');
+  ok(/挂起/.test(heldTxt || ''), '★ 结算页说明「房间已挂起」', JSON.stringify(heldTxt));
+
+  /* 报名：AI 早就报了，我再点一下就齐了 —— 但挂起挡着，不许开。
+   * 判据不能用 IN_TABLE：就位态里 #slots 只是被加了 hidden，上一把的 slot 节点还在 DOM 里，
+   * 拿「节点数量」判断会假阳性（这里第一次跑就是这么红的）。
+   * 真正要看的是「停在就位态」：table-ready 露着、#slots 还是 hidden。 */
+  await evaluate('document.getElementById("btn-next").click()');
+  await sleep(1500);
+  const stillReady = await evaluate(`(function(){
+    var tr = document.getElementById('table-ready');
+    var slots = document.getElementById('slots');
+    return {
+      ready: !!(tr && !tr.classList.contains('hidden')),
+      slotsHidden: !!(slots && slots.classList.contains('hidden')),
+      cards: document.querySelectorAll('#hand .card-wrap').length
+    };
+  })()`);
+  ok(stillReady && stillReady.ready && stillReady.slotsHidden,
+    '★★ 报名之后停在就位态、没有发牌（挂起真的挡住了自动开局）', JSON.stringify(stillReady));
+  ok(await evaluate('__journey.vis("btn-hold-off")'), '★ 就位态里房主也能看到「人齐了，开牌」（不用先撤回报名）');
+
+  await evaluate('document.getElementById("btn-hold-off").click()');
+  const opened = await waitFor(IN_TABLE, 12000, '点「人齐了，开牌」之后没有开局');
+  ok(opened, '★ 解除之后立刻开牌（人已经齐了，不该再要一次点击）');
+
+  /* 收尾：这一把一分没打，服务端判 voided，不污染下面的战绩期望值。 */
+  if (opened) {
+    await evaluate('document.getElementById("btn-dissolve-game").click()');
+    if (await evaluate('__journey.vis("dissolve-modal")')) {
+      await evaluate('document.getElementById("btn-dissolve-agree").click()');
+    }
+    const backSettle2 = await waitFor('__journey.vis("screen-settle")', 10000, '结束本局后没回结算页');
+    ok(backSettle2, '新一局结束本局 → 回到结算页');
+  } else {
+    await diag('「等个人」解除后没开牌');
+  }
+
+  /* ---------------------------------------------------------------- */
   /* ★ C-3b（v118）：旁听。
    *
    * 这是本次唯一「1 真人 + 1 AI 房造不出来」的场景 —— 旁听的前提是

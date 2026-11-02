@@ -285,6 +285,9 @@
        * 后者会把「先赢 1 分又输 1 分」这种真打完的局误判成没打。 */
       anyScoreChange: false,
       settledAt: null,            // 进入 SETTLED 的时刻（一次性写入，本机战绩幂等键用）
+      /* 「等个人」（v122）：房主在结算页挂起的「先别开牌」。
+       * 结构 { by, at }，null = 没在等；过期 / 房主换人由 holdNextOf 判定。 */
+      holdNext: null,
       dissolve: { active: false, initiatorId: null, startedAt: 0, votes: {},
                   lastReason: null, lastAt: 0 }, // 解散投票（lastReason: rejected/cancelled/expired）
       createdAt: now,
@@ -294,13 +297,24 @@
 
   /* 加入房间
    *
-   * ★ 只有两个窗口能进：还没开打（WAITING），和**上一局结算完、下一局还没开**（SETTLED）。
+   * ★ 三个窗口都能进：还没开打（WAITING）、**打牌进行中**、结算期（SETTLED）。
    *
    * 结算期必须放行 —— 否则这个房间从第一局打完起就**再也进不来人**：
    *   开局后 phase 一路在 ROUND1/2_SPLIT → SETTLED 之间来回，
    *   除了 newRoom 那一刻，**再也没有任何地方把 phase 写回 WAITING**。
    *   于是「打牌中」被拒、「结算中」也被拒，朋友实际上是被永久锁在门外
    *   （真机上就是这么被报回来的：房主点了「开始下一局」在房间里等人，朋友进不来）。
+   *
+   * ★ v122：**打牌中**也放行，但只以「旁听」身份。
+   *   原来这里直接拒绝（ROOM_PLAYING），代价是：三个人在结算页都把「开始下一局」
+   *   点了 → 服务端立刻发牌 → 第四个人这时候才输完房号进来，只看到一句
+   *   「这局正在打，等这局结束再进来」，然后被关在门外整整一局（可能是 10 把）。
+   *   他要的只是「跟你们一起打」，得到的却是一道门。
+   *
+   *   现在他能进来，坐在同一张牌桌上，只是这一把不出牌（benched）——
+   *   这正是 C-3b 已经做好的旁听态，前端那张「你不在这一局」的卡直接复用。
+   *   牌已经发了、组已经开始分了，中途发牌等于凭空造一手分，不能做；
+   *   但「进不来房间」和「这一把不打」是两件事，前者没有任何理由。
    *
    * 结算期进来的人，语义是「我是来打下一局的」：
    *   · wantNext = true —— 不带这个标记，startNextRound 的 `room.players = joiners`
@@ -313,9 +327,8 @@
   function joinRoom(room, player) {
     if (!room) return { ok: false, error: '房间不存在' };
     var settling = room.phase === PHASE.SETTLED;
-    if (room.phase !== PHASE.WAITING && !settling) {
-      return { ok: false, code: 'ROOM_PLAYING', error: '这局正在打，等这局结束再进来' };
-    }
+    /* 局中（发牌 / 分牌 / 本轮结算）：进来只能旁观，这一把不补人。 */
+    var midGame = room.phase !== PHASE.WAITING && !settling;
     if (activePlayers(room).length >= capOf(room)) {
       return { ok: false, error: '房间已满（最多 ' + capOf(room) + ' 人）' };
     }
@@ -344,10 +357,12 @@
     p.wantNext = settling;
     /* ★ C-3b：从房号摸进结算期的新面孔，这一局他没打 → 旁听。
      * 中途离开过、又在结算期回来的老玩家不在此列：他打过上一局，
-     * 结算页上的名次与分数都得照常算他一份。 */
-    p.benched = settling && isNewcomer;
+     * 结算页上的名次与分数都得照常算他一份。
+     * ★ v122：局中进来的**一律**旁听（含回来的人）—— 这一把的牌早发完了，
+     * 他手上没有牌，只能等下一把。 */
+    p.benched = settling ? isNewcomer : midGame;
     p.ready = settling;
-    p.joinedLate = settling && isNewcomer;
+    p.joinedLate = (settling || midGame) && isNewcomer;
     p.left = false;
     p.connected = true;
     p.disconnectedAt = null;
@@ -402,6 +417,10 @@
       p.left = true;
       p.ready = false;
       p.connected = false;
+      /* 等人的人自己走了 → 这个「等」立刻作废。
+       * 留着的话，别人点「开始下一局」会被一个已经不在房间里的人挡住 3 分钟，
+       * 而界面上的理由（「房主在等人」）看起来还完全合理。 */
+      if (room.holdNext && room.holdNext.by === playerId) room.holdNext = null;
       /* 人都走了，别再留着「正在改」的标记 —— 它会让 isRoundLocked 一直判他未定稿，
        * 而 activePlayers 虽然已经排除 left，但删除账号/回收房间这类路径会复用这个对象。 */
       p.revising = null;
@@ -1165,14 +1184,75 @@
     });
   }
 
-  /* 下一局能不能开（v121 重写）。
+  /* 「等个人」（v122）：房主明说「先别开牌，我朋友在输房号」。
    *
-   * 三条同时成立：
-   *   ① 已报名的人 ≥ MIN_PLAYERS；
-   *   ② 已报名的人全部就位（C-2 之后报名即就位，这条是兜底）；
-   *   ③ **房间里没有「还没表态」的真人**。
+   * 为什么必须有一个显式开关，而不是靠「我不点」：
+   *   v121 之后确实「谁不点就等谁」，但三个人打完，大家的手会一起点到
+   *   「开始下一局」—— 那是这一屏唯一的主动作。第四个人恰好在这个瞬间才到，
+   *   牌已经发了，他只能旁听一整局。而服务端**没有任何办法知道门外有人**
+   *   （没连接、没房间、没有意图记录），所以只有房主能表达这件事。
    *
-   * ③ 是 v121 的全部内容，来自一次真实的三人局：
+   * 语义边界：
+   *   · 只认房主 —— 开牌时机是整桌的规则，需要一个人负责；
+   *   · 只认结算期 —— 打牌中本来就不开牌，这个开关没有意义；
+   *   · 最长 3 分钟 —— 「等个人」不该变成「全桌锁死」。房主挂机不走时，
+   *     时间一到自动失效，别人点「开始下一局」就能开（真等不到就重开一局）；
+   *   · 房主换人 / 房主离开 → 立刻失效（下面 holdNextOf 用 ownerId 比对）。
+   *
+   * 它挡住的只是「自动开牌」；报名照常进行，大家该点还能点。
+   */
+  var HOLD_TTL_MS = 3 * 60 * 1000;
+
+  /* 当前生效的等待（没有 / 已过期 / 房主换人 → null）。
+   * 判据集中在这一个函数里：canStartNext、前端提示、剩余时间都读它，
+   * 免得服务端认为在等、界面认为没在等。 */
+  function holdNextOf(room) {
+    var h = room && room.holdNext;
+    if (!h || !h.by) return null;
+    if (h.by !== room.ownerId) return null;                       // 房主换人了，旧人的等待作废
+    if (!(h.at > 0) || Date.now() - h.at >= HOLD_TTL_MS) return null;  // 到点自动失效
+    return h;
+  }
+
+  function holdNextLeftMs(room) {
+    var h = holdNextOf(room);
+    if (!h) return 0;
+    return Math.max(0, HOLD_TTL_MS - (Date.now() - h.at));
+  }
+
+  function setHoldNext(room, actorId, on) {
+    if (!room) return { ok: false, error: '房间不存在' };
+    if (room.phase !== PHASE.SETTLED) {
+      return { ok: false, error: '这一局还没结束，等结算页再说', code: 'NOT_SETTLED' };
+    }
+    var actor = findPlayer(room, actorId);
+    if (!actor) return { ok: false, error: '你不在该房间' };
+    if (actor.left) return { ok: false, error: '你已经离开这一局了' };
+    if (room.ownerId !== actorId) return { ok: false, error: '只有房主能决定等不等' };
+
+    if (!on) {
+      if (!room.holdNext) return { ok: true, room: room };   // 幂等
+      room.holdNext = null;
+      room.updatedAt = Date.now();
+      return { ok: true, room: room };
+    }
+    /* 已经在等的情况下再点一次：不重置计时。
+     * 否则「多按几下」等于无限续期，3 分钟的上限就白设了。 */
+    if (holdNextOf(room)) return { ok: true, room: room };
+    room.holdNext = { by: actorId, at: Date.now() };
+    room.updatedAt = Date.now();
+    return { ok: true, room: room };
+  }
+
+  /* 下一局能不能开（v121 定形，v122 加第 ④ 条）。
+   *
+   * 四条同时成立：
+   *   ① 房主没有挂着「等个人」（v122）；
+   *   ② 已报名的人 ≥ MIN_PLAYERS；
+   *   ③ 已报名的人全部就位（C-2 之后报名即就位，这条是兜底）；
+   *   ④ **房间里没有「还没表态」的真人**。
+   *
+   * ④ 是 v121 的全部内容，来自一次真实的三人局：
    *   A、B 点了「开始下一局」，C 还在看结算页，于是这一局按 2 人开了，
    *   C 直接被判成旁听 —— 他什么都没做，只是慢了几秒。
    *
@@ -1185,8 +1265,13 @@
    * target 指向自己）。被跳过是可见的、有确认的、有提示的，不再是静默淘汰。
    *
    * 代价是「有人挂机就全桌等」——所以「不等他」不是可选项，是这个规则的另一半。
+   * ④ 之后还剩一个洞：**门外的人**（第四个人正在输房号）不在房间里，
+   * 既不在报名名单、也不在等待名单，服务端根本看不见他。
+   * 那个洞由 ① 补 —— 见上面 setHoldNext 的说明。
    */
   function canStartNext(room) {
+    /* 房主说了在等人 → 谁点都不开。这条放在最前：它是最便宜也最优先的否决。 */
+    if (holdNextOf(room)) return false;
     var list = nextRoundPlayers(room);
     if (list.length < CONFIG.MIN_PLAYERS) return false;
     if (!list.every(function (p) { return p.ready; })) return false;
@@ -1397,6 +1482,9 @@
     room.groupsDone = 0;
     room.handHadBot = playingPlayers(room).some(function (p) { return !!p.isBot; });   // 同上：每把重算
     room.settledAt = null;                                  // 新一局清空，下一局重新写
+    /* 待到人、开了牌，「等个人」这一件事就结束了。不清的话下一次结算页
+     * 会凭空显示「房主在等人」—— 那是上一局留下的一句话。 */
+    room.holdNext = null;
     room.dissolve = { active: false, initiatorId: null, startedAt: 0, votes: {},
                       lastReason: null, lastAt: 0 };
     ensureLiveOwner(room);   // 房主可能没点进来 → 所有权交给留下的人，否则没人能补 AI / 发起解散
@@ -1778,6 +1866,10 @@
     unWantNext: unWantNext,
     nextRoundPlayers: nextRoundPlayers,
     canStartNext: canStartNext,
+    holdNextOf: holdNextOf,
+    holdNextLeftMs: holdNextLeftMs,
+    setHoldNext: setHoldNext,
+    HOLD_TTL_MS: HOLD_TTL_MS,
     startNextRound: startNextRound,
     autoStartIfReady: autoStartIfReady,
     proposeDissolve: proposeDissolve,

@@ -193,6 +193,16 @@
         publish(roomId, room);
         return res;
       },
+      /* 「等个人」（v122）。本地模式要自己判一次开局：解除等待之后，
+       * 人都齐了就该立刻开 —— 服务端那边是 hub.holdNext 里调的同一句。 */
+      holdNext: function (roomId, playerId, on) {
+        var room = getRoom(roomId);
+        var res = StateMachine.setHoldNext(room, playerId, on);
+        if (!res.ok) return res;
+        publish(roomId, room);
+        if (StateMachine.autoStartIfReady(room)) publish(roomId, room);
+        return res;
+      },
       wantNext: function (roomId, playerId) {
         var room = getRoom(roomId);
         var res = StateMachine.wantNext(room, playerId);
@@ -745,6 +755,14 @@
           .then(function (r) { return { ok: true, handLimit: (r && r.handLimit) }; })
           .catch(function (e) { return { ok: false, error: e.message }; });
       },
+      /* 「等个人」（v122）：挂起 / 解除房主的「先别开牌」。
+       * on 必须走 payload —— 服务端读 msg.payload.on，放顶层会永远收到 false，
+       * 于是点「等个人」等于立刻放行（v117 / v121 各踩过一次同类）。 */
+      holdNext: function (roomId, on) {
+        return request({ type: 'holdNext', payload: { on: !!on } })
+          .then(function (r) { return { ok: true, leftMs: (r && r.leftMs) || 0 }; })
+          .catch(function (e) { return { ok: false, error: e.message }; });
+      },
       dropNext: function (roomId, playerId, targetId) {
         /* ★ payload 这一层不能省。服务端读的是 msg.payload.targetId，
          * 写成顶层 targetId 会得到 undefined → 「缺少要跳过的人」。
@@ -961,6 +979,12 @@
     /* 就位态「回结算页」：撤回报名。 */
     unWantNext: function (roomId, playerId) {
       return MODE === 'local' ? Promise.resolve(local.unWantNext(roomId, playerId)) : ws.unWantNext(roomId, playerId);
+    },
+    /* 「等个人」（v122）：房主挂起 / 解除「先别开牌」。 */
+    holdNext: function (roomId, playerId, on) {
+      return MODE === 'local'
+        ? Promise.resolve(local.holdNext(roomId, playerId, on))
+        : ws.holdNext(roomId, on);
     },
     /* ★ v121 补上的缺口：「不等他」与「这一把先不打」。
      *
