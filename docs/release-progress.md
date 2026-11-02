@@ -28,8 +28,8 @@
 | R16 | 三个用户实测反馈：①起始分归 0 ②「改一下」不再被别人的提交抢先结算 ③满组拖拽交换 | — | — | ✅ v106 |
 | R17 | 座位面板的信息档不再重复一遍战绩卡（点一次头像 = 看到全部） | — | — | ✅ v107 |
 
-**当前线上：`20261102h` / sw `v119`（v119）**—— 修：从档案卡点「成就」时卡片还盖在成就页上。
-线上冒烟 **15/15**（浏览器实测版本号 `20261102h`、直抓 `sw.js` 确认 `CACHE_NAME = 'weile-liuxuanwu-v119'`）。
+**当前线上：`20261102i` / sw `v120`（v120）**—— 修：档案卡挡住成就页 + 首次打开不再因 SW 接管而白闪。
+线上冒烟 **15/15**（浏览器实测版本号 `20261102i`、直抓 `sw.js` 确认 `CACHE_NAME = 'weile-liuxuanwu-v120'`）。
 全量 `npm test` **131 文件 / 5163 条断言**；`journey` **134 项**；`probe-ui-flow` 竖/横各 1 视口 × 13 屏 ALL PASS。
 
 > 注意：冒烟脚本**第一次跑**报了 5 条 FAIL（标题/版本/白屏/manifest 带码/favicon 全是 undefined）——
@@ -2437,3 +2437,90 @@ openAchievements(pid, currentScreenId());
   往返 —— 但点「成就」那条委托与看谁无关，所以风险低。
 - **座位信息档（`.ss-info`）那条路没有回归断言**。它原来就是好的，这次没动它；
   但也没有任何测试盯着「从座位档点成就不留浮层」这件事。
+
+---
+
+## v120 · 同轮补修：首次打开不该因为 SW 接管而刷新（版本 `20261102i` / sw `v120`，2026-11-02）
+
+### 怎么发现的
+
+v119 部署后跑线上冒烟，**连续三次**都是 14 项通过、1 项失败：
+
+```
+FAIL  Service Worker 已接管（离线能力在这条路上）  -> none（等待 14 秒仍未接管）
+```
+
+但直抓 `/sw.js` 拿到的 `CACHE_NAME` 已经是 `v119`，其余 14 项（含「没有任何 HTTP >= 400」
+「没有请求失败」）全绿。所以**不是资源缺失，也不是部署没生效**。
+
+### 根因：SW 装好了，是页面把自己刷没了
+
+写了个临时探针直接读注册状态，结果是：
+
+```
+{"controller":true,"supported":true,
+ "regs":[{"scope":"...","active":"activated","waiting":null,"installing":null}]}
+```
+
+SW 明明已经 `activated` 并且接管了。但同一份日志里还有一行：
+
+```
+[sw] reload for controllerchange
+```
+
+**页面在 SW 接管后把自己 reload 了。**
+
+`index.html` 里那段逻辑本来是为了「新版本接管后别让用户停在旧代码上」，但它没有区分
+「换版本」和「首次安装」：
+
+- `sw.js` 的 activate 里有 `clients.claim()`；
+- `claim()` 会让**当前页面立刻被新 SW 接管**；
+- 首次访问同样会触发 `controllerchange` —— 于是首次打开也刷一次。
+
+三个后果，从轻到重：
+
+1. 首次打开白闪一下（页面已经是最新代码，这一刷没有任何收益）；
+2. 输入到一半的昵称会被冲掉（`controllerchange` 里那句 `setNickname` 只是兜底）；
+3. **「首次加载」变成两次加载** —— 任何盯着这个页面的自动化都会被中途打断。
+   冒烟那个「等 controller」是一个长轮询 Promise，页面一 reload，Promise 就死在了
+   旧上下文里，`Runtime.evaluate` 拿到 undefined，于是报「14 秒仍未接管」。
+
+也就是说：**这条 FAIL 是假红**，而它假红的原因正好是一个真实的体验问题。
+
+### 改了什么
+
+```js
+var hadController = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+var refreshing = false;
+navigator.serviceWorker.addEventListener('controllerchange', function () {
+  if (!hadController) { hadController = true; return; }   // 首次接管：页面已是最新，不刷
+  if (refreshing) return;
+  refreshing = true;
+  reloadWhenIdle('controllerchange');
+});
+```
+
+首次接管只把 `hadController` 置真（**下次**再变就是真换版本了），不刷新。
+
+### 验收（两条都实测过）
+
+| 场景 | 怎么验的 | 结果 |
+|---|---|---|
+| **首次打开不刷新** | 起本地服务 + CDP 读 `performance.timeOrigin` 与 console 日志 | `controller=true`、`active=activated`，且日志里**没有** `[sw] reload for controllerchange` |
+| **换版本仍然刷新** | 同一浏览器里先把 SW 装好，改 `sw.js` 的 `CACHE_NAME` 造一个「新版本」，再 `registration.update()` | `timeOrigin` 前进了 9 秒 —— 页面确实 reload 了 |
+
+两个临时探针用完已删（`scripts/_sw-diag.js` / `_sw-reload-check.js`）。
+第二条之所以要专门验：这段逻辑存在的唯一理由就是「别让用户停在旧代码上」，
+把它改坏了的后果（永远不刷新）比原来那个 bug 更隐蔽。
+
+| 项 | 结果 |
+|---|---|
+| `npm test` | **131 文件 / 5163 条断言 / 0 失败** |
+| `npm run journey` | **134 项 / 0 失败** |
+| 线上冒烟 | 见下方「发布结果」 |
+
+### 为什么单独占一版
+
+`index.html` 改了就必须换 `CACHE_NAME`：已经缓存过 v119 的客户端不会重新拉 `index.html`，
+只有「SW 发现 sw.js 变了 → 装新的 → 接管」这条路能把新页面送过去。不升版本号，
+老用户会永远停在会白闪的那一版上。
