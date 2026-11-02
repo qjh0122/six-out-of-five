@@ -2341,3 +2341,21 @@ pack 数一致、且 ≥ 2）。旁听那一段会让两个 AI 往下多打几�
 - **C-3b 之后 `_evictFromRoom` 实际上永远收到空名单**。保留了调用与那段注释
   （它还要处理旧数据里残留的 `left`），但「把人请出房间并告诉他原因」这条路
   现在只对「已经自己退房的人」生效 —— 等于死代码。下一轮要么删掉，要么并进退房流程。
+
+### 发布结果（v118）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `https://your-app.app.workbuddy.host/?sharecode=REDACTED`（同一个应用，链接不变） |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本号 `20261102g`，`sw.js` 直抓 `CACHE_NAME = weile-liuxuanwu-v118`） |
+| 公库 | `81aa743 chore: 同步自私有仓库（9330424）` |
+| 私库 | `9330424`（`git ls-remote` 比对一致） |
+
+### 发布结果（v118）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `https://your-app.app.workbuddy.host/?sharecode=REDACTED`（同一个应用，链接不变） |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本号 `20261102g`，`sw.js` 直抓 `CACHE_NAME = weile-liuxuanwu-v118`） |
+| 公库 | `81aa743 chore: 同步自私有仓库（9330424）` |
+| 私库 | `9330424`（`git ls-remote` 比对一致） |
