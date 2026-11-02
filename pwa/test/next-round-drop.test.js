@@ -57,12 +57,19 @@ console.log('\n[1] 正路：已准备的人可以把「不准备的人」退回�
 console.log('\n[2] 负路：不许变成「谁都能催」');
 {
   const room = roomWithStale();
-  eq(SM.dropFromNext(room, 'c', 'a').ok, false, '没准备的人不能催别人');
-  eq(SM.dropFromNext(room, 'a', 'a').ok, false, '不能跳过自己');
-  const b = SM.findPlayer(room, 'b');
-  b.ready = true;
+  const whoIsC = () => SM.findPlayer(room, 'c');
+  eq(SM.dropFromNext(room, 'c', 'a').ok, false, '没就位的人不能催别人');
+  ok(/先点「开始下一局」/.test(SM.dropFromNext(room, 'c', 'a').error || ''),
+    '并且提示说清了先做什么');
   eq(SM.dropFromNext(room, 'a', 'b').ok, false, '★ 已经准备好的人不能被撤下来');
   eq(SM.findPlayer(room, 'b').wantNext, true, '他的报名还在');
+  /* ★ v121 改了这一条：以前「不能跳过自己」，现在自己说自己不打
+   * 是一个正式动作（请假），不是误操作。它走同一个入口，但不需要先就位 ——
+   * 「想歇一把」的人本来就没报名。 */
+  ok(SM.dropFromNext(room, 'a', 'a').ok, '自己请假现在是被允许的（v121）');
+  eq(SM.findPlayer(room, 'a').left, false, '★ 请假不是退房（人还在，座位还在）');
+  eq(room.players.length, 3, '★ 也没人被移出房间');
+  ok(whoIsC, '');
 }
 {
   const room = roomWithStale();
@@ -108,28 +115,34 @@ console.log('\n[4] 结算期补 AI：给「剩 1 人」一条出路');
   ok(/PHASE\.SETTLED && !!nextWait/.test(game), '就位态里房主能看到「补 AI」');
 }
 
-console.log('\n[5] 人数确认（B-2 → v116 搬到「开始下一局」）');
+console.log('\n[5] 确认框退场：现在没有任何人被挤出去（v121）');
 {
   const game = fs.readFileSync(path.join(ROOT, 'js', 'game.js'), 'utf8');
-  ok(/还有 ' \+ waiting \+ ' 人停在结算页/.test(game), '★ 开局前把「会挤掉几个人」说清');
-  ok(/function doNextRound\(\)/.test(game), '真正的报名动作抽成了 doNextRound（确认后才执行）');
-  /* C-2 之后会开局的那一下是「点开始下一局」，警告必须挂在它上面 ——
-   * 留在 onReady 里就等于挂在一颗永远不会被点的按钮上（就位态那颗已经禁用）。 */
   const nextSrc = game.slice(game.indexOf('async function onNextRound()'),
-    game.indexOf('async function onNextRound()') + 700);
-  ok(/askConfirm\('现在就开下一局？'/.test(nextSrc), '★ 确认框挂在 onNextRound 上');
-  ok(/doNextRound/.test(nextSrc), '确认后调 doNextRound');
-  ok(!/askConfirm/.test(game.slice(game.indexOf('function onReady()'),
-    game.indexOf('function onReady()') + 400)), '★ onReady 不再问（它就是首次开局的准备）');
+    game.indexOf('async function onNextRound()') + 900);
+  /* ★ B-2 那个确认框（「还有 N 人停在结算页，他们会被挤出去」）现在讲的是
+   * 一件不可能发生的事 —— canStartNext 会一直等到那些人也表态。
+   * 一个警告如果描述的事情不会发生，它只剩一个作用：让人多点一次。 */
+  ok(!/askConfirm/.test(nextSrc), '★「开始下一局」不再弹确认框（没什么会被挤出去）');
+  ok(/doNextRound/.test(nextSrc), '直接调 doNextRound 报名');
+  /* 只看**给玩家看的那句**：注释里留着这段历史是好事，别一起删。 */
+  ok(!/你一点就开局，他们会被挤出去/.test(game), '★ 那句「你一点就开局，他们会被挤出去」的提示语消失了');
 
-  /* ★ 统计「会被挤出去的人数」时必须把自己排除掉。
-   *
-   * 这个坑真踩了：确认框从 onReady 搬到 onNextRound 时，判据原样搬了过来，
-   * 但那一刻**我自己的 wantNext 还是 false**（请求还没发出去），于是
-   * 「还有 1 人停在结算页」里的那个人就是我自己 —— 每点一次都弹一次确认框，
-   * 而 C-2 的全部意义就是少点一次。journey 的 [7b] 当场把这个抓了出来。 */
-  ok(/p\.id !== state\.myId/.test(nextSrc), '★ 人数里排除自己');
-  ok(/!p\.isBot/.test(nextSrc), '★ 也排除 AI（它已经由 markSettled 自动报名）');
+  /* 反过来：挤不出去之后，「有人一直在结算页」这件事必须有可见的出口。
+   * 这就是「不等他」，它现在挂在还没表态的人身上（不是「报名没准备的人」）。 */
+  ok(/StateMachine\.pendingNextPlayers/.test(game), '★「不等他」的候选来自 pendingNextPlayers');
+  const hint = game.slice(game.indexOf('function renderRoom'), game.indexOf('function renderRoom') + 6000);
+  ok(/等 ' \+ whoText\(pending\) \+ ' 点「开始下一局」/.test(hint),
+    '★ 等待文案点名「在等谁」（只说「等其他人」等于没说）');
+
+  /* 自己请假那颗按钮：必须真的接在 dropNext 上，而且目标是自己。 */
+  const sitOut = game.slice(game.indexOf('async function onSitOut()'),
+    game.indexOf('async function onSitOut()') + 700);
+  ok(/RoomStore\.dropNext\(state\.roomId, state\.myId, state\.myId\)/.test(sitOut),
+    '★「这一把先不打」= dropNext 指向自己');
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  ok(/id="btn-sit-out"/.test(html), '结算页有这颗按钮');
+  ok(/'#btn-sit-out'\)\.addEventListener\('click', onSitOut\)/.test(game), '并且绑上了');
 }
 
 console.log('\n----------------------------------------');

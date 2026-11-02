@@ -930,13 +930,28 @@
     setTimeout(function () { syncScrollFade(body); }, 80);
 
     /* 结算页不再有「只有房主能开」的按钮：按钮对所有人可见（见 index.html #btn-next），
-     * 这里只负责告诉还没点的人——已经有人进下一局了。
-     * 这一句解决的是「我该不该点」的犹豫：看到别人已经在等，
-     * 就知道不点的话这一局跟自己无关了。 */
+     * 这里只负责告诉还没点的人——已经有人进下一局了，以及**在等谁**。
+     *
+     * ★ v121：这一句从「已经有 N 人进入下一把」扩成「…· 还在等你」。
+     *   以前只说有人进了，不说大家在等谁，于是最后那个人看到的是
+     *   「2 人进入下一把」这句陈述 —— 他不知道自己是那个卡住整桌的人，
+     *   甚至不知道这一局还在等他。真机上他就是这样被落下的。
+     */
     var joined = StateMachine.nextRoundPlayers(room).length;
-    $('#settle-wait').textContent = joined > 0
-      ? '已经有 ' + joined + ' 人进入下一把'
-      : '';
+    var pending = StateMachine.pendingNextPlayers ? StateMachine.pendingNextPlayers(room) : [];
+    var waitTxt = '';
+    if (joined > 0) {
+      waitTxt = '已经有 ' + joined + ' 人进入下一把';
+      if (pending.length) {
+        var mine = pending.some(function (p) { return p.id === state.myId; });
+        var others = pending.filter(function (p) { return p.id !== state.myId; });
+        var names = others.map(function (p) { return short(p.nickname || '他'); });
+        var who = names.length === 0 ? '' : names.slice(0, 2).join('、');
+        if (mine) waitTxt += ' · 还在等' + (who ? '你和 ' + who : '你');
+        else if (who) waitTxt += ' · 还在等 ' + who;
+      }
+    }
+    $('#settle-wait').textContent = waitTxt;
   }
 
   /* 就位态回看上一局结算：只读弹窗，不写任何状态。

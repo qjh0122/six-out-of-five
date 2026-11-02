@@ -80,7 +80,12 @@ ok(/StateMachine\.ROUND_GROUPS\[1\]/.test(js), '两轮玩法从 StateMachine.ROU
  * 起始分改为 0 之后，「起始 0 分」既没信息量、又会让人以为兜里那几个 0 是筹码。
  * 断言跟着改成「这一行只说人话（人数 + 上限），不再拼起始分」。
  * 只盯 'tr-card-sub' 那一行，别扫全文 —— 注释里会提到旧文案。 */
-ok(/act\.length \+ ' 人 · 上限 ' \+ cap/.test(js), '人数与上限都从变量取，不写死');
+/* ★ v121：这一行改成「在场人数」（activePlayers）。
+ * 原来用的是 act（就位态 = 已报名的人），于是三个人的房间在还差一人表态时
+ * 显示成「2 人 · 上限 5」—— 看着像有人掉了，其实只是在等。
+ * 它比的是房间上限，就该数房间里的人。 */
+ok(/StateMachine\.activePlayers\(room\)\.length \+ ' 人 · 上限 ' \+ cap/.test(js),
+  '人数与上限都从变量取，不写死');
 ok(!/'tr-card-sub[^\n]*INITIAL_SCORE/.test(js), '★ 房间卡那行不再拼起始分');
 ok(/StateMachine\.capOf\(room\)/.test(js), '人数上限读 capOf(room)（老房间用老上限）');
 

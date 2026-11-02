@@ -95,6 +95,10 @@ function roomWithSpectator() {
   room.handLimit = 1;
   SM.wantNext(room, 'a');
   SM.wantNext(room, 'b');
+  /* ★ v121：a、b 点了还不够 —— 房间里还有 c 没表态，整桌会一直等。
+   * 旁听这个状态现在是「被明确不等」的结果，所以这里必须真的走一次那个动作。
+   * （以前不写这句也能开，代价是 c 被静默判旁听 —— 真机上就是这么被报回来的。） */
+  SM.dropFromNext(room, 'a', 'c');
   const r = SM.autoStartIfReady(room);
   return { room: room, start: r };
 }
@@ -260,8 +264,11 @@ console.log('\n[9] 房主旁听时仍然是房主（能补 AI / 改把数）');
   const room = settleByDissolve(makeRoom(['owner', 'b', 'c']));
   SM.wantNext(room, 'b');
   SM.wantNext(room, 'c');
+  /* v121：房主也要表态，或者被明确不等 —— 这里走后者。 */
+  ok(!SM.canStartNext(room), '★ 房主没表态 → 先不开（v121：房主也算一个人）');
+  SM.dropFromNext(room, 'b', 'owner');
   const r = SM.autoStartIfReady(room);
-  ok(!!r && r.kind === 'next', '两位客人报名即开');
+  ok(!!r && r.kind === 'next', '摘掉房主之后两位客人开起来');
   eq(room.ownerId, 'owner', '★ 房主没报名但还在房间里 → 所有权不转交');
   eq(SM.findPlayer(room, 'owner').benched, true, '他自己是旁听');
 }
@@ -290,10 +297,22 @@ console.log('\n[10] 源码结构：这几处必须是 playingPlayers');
     '★ 容量检查用 activePlayers（旁听的人也占一个位置）');
 
   /* 前端：提交进度条的分母。写成 room.players 的话，旁听者会让顶栏永远停在 3/5。 */
-  ok(/function ringProgress[\s\S]{0,400}if \(p\.left \|\| p\.benched\) return;/.test(GAME_SRC),
+  ok(/function ringProgress[\s\S]{0,1600}if \(p\.left \|\| p\.benched\) return;/.test(GAME_SRC),
     '★ 顶栏提交进度的分母排除了旁听者');
+  /* v121：就位态走的是另一条分支 —— 分母是「报名 + 没表态」。
+   * 写成「报名的人」的话，三缺一时顶栏照样满格（已准备 3/3），牌却不发。 */
+  ok(/if \(nextWait\) \{[\s\S]{0,400}total: joined\.length \+ pending\.length/.test(GAME_SRC),
+    '★ 就位态的分母把「还没表态的人」算进去了（否则满格不发牌）');
   ok(/if \(!nextWait && p\.benched && room\.phase !== StateMachine\.PHASE\.WAITING\)/.test(GAME_SRC),
     '★ 对手条上能看出「旁听」（否则他像一直不提交的队友）');
+
+  /* ★ v121：就位态与旁听态共用 #screen-game，但就位态不走 renderGame ——
+   * 漏掉一次清理，旁听卡就会压在就位态的房间信息卡上，变成真机截图里那一屏：
+   * 上面「准备中 已准备 3/3」，中间「这一局你在旁观」，下面并排两颗离开房间。 */
+  ok(/function showReadyTable[\s\S]{0,500}hideSpectator\(\)/.test(GAME_SRC),
+    '★★ 就位态进入时先收起旁听卡（否则两层 UI 叠在一起）');
+  ok(/function hideSpectator\(\)[\s\S]{0,300}sp\.innerHTML = ''/.test(GAME_SRC),
+    '★ 收起时连内容一起清掉（不只是 hidden）');
 
   /* 结算页：旁听与弃局必须是两个标记。 */
   ok(SETTLE_SRC.indexOf("（旁听）") > 0, '★ 结算名区分「（旁听）」与「（弃局）」');

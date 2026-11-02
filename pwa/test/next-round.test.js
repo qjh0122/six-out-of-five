@@ -2,11 +2,14 @@
  * 结算后「开始下一局」报名制测试
  * 跑法：node pwa/test/next-round.test.js
  *
- * 这套规则的核心不是「能开下一局」，而是**没点的人不被打扰、也不挡别人**：
+ * 这套规则的核心是**不替别人做决定**：
  *   · 有人点了「开始下一局」，房间必须仍停在 SETTLED ——
  *     一旦推到 WAITING，所有没点的人会被广播顶出结算页，正在看的回放当场消失
- *   · 分母是「已报名的人」而不是「房间里的人」，否则没点的人永远卡住别人
- *   · 房主不点也要能开（否则房主一关页面，剩下的人只能散场）
+ *   · 开局要等**房间里所有真人都表态**（v121）。以前分母是「已报名的人」，
+ *     于是三人房里两个人点了就按两人开，第三个还在看结算页的人被静默判成旁听 ——
+ *     他什么都没做，只是慢了几秒。想先开只有一条路：明确「不等他」。
+ *   · 房主不点同样会等（他不是特权，是另一个人）；但「不等他」能把他摘出去，
+ *     所以房主关掉页面也不会让整桌散场。
  *
  * 顺带覆盖「新的一局已经开始了」这条友好提示：它是玩家最可能撞到的一种「失败」，
  * 但玩家没做错任何事，所以必须是可读的一句话，不能是报错。
@@ -70,7 +73,7 @@ eq(r2.ok, false, 'b 没点「开始下一局」就准备 → 被拒');
 ok((r2.error || '').indexOf('开始下一局') >= 0, '提示说的是「先点开始下一局」，不是「对局已开始」', r2.error);
 
 /* ========================================================================== */
-console.log('\n[3] 分母是报名者，不是房间里所有人');
+console.log('\n[3] 两个人都报名 → 可以开');
 /* ★ C-2（v116）改口径：报名那一刻就置 ready，所以「两人都报名」= 「两人都就位」= 可以开。
  * 这一条正是「一次点击」的验收 —— 报完名不该再有一个「还差你点一下」的中间态。 */
 SM.wantNext(room1, 'b');
@@ -78,11 +81,20 @@ eq(SM.canStartNext(room1), true, '★ 两人都报名 → 立刻可开（报名�
 eq(SM.nextRoundPlayers(room1).length, 2, '参与名单就是这两人的名单');
 
 /* ========================================================================== */
-console.log('\n[4] 开局只带报名者，没点的人留在房间里旁听（C-3b）');
+console.log('\n[4] 三人房：两个点了还不够，要等第三个（v121 的核心）');
 const room4 = settleByDissolve(makeRoom(['a', 'b', 'c']));
 SM.wantNext(room4, 'a');
 SM.wantNext(room4, 'b');
-/* C-2 之后这里没有「再点一次准备」——两个人都报名，就已经是全员就绪。 */
+/* ★ 这就是被报回来的那个 bug：以前这里直接按 2 人开局，c 被判旁听。
+ * 他没做错任何事，只是还在看结算页。 */
+eq(SM.canStartNext(room4), false, '★★ 三个人、两个报名 → 不开（等 c 表态）');
+ok(!SM.autoStartIfReady(room4), '★ 自动开局也不会偷偷把 c 落下');
+eq(SM.pendingNextPlayers(room4).map(function (p) { return p.id; }).join(','), 'c',
+  '★ 卡住的人是 c，而且这个名单是公开的（前端拿它提示「等谁」）');
+/* 想先开只有一条路：明确说不等。 */
+const drop4 = SM.dropFromNext(room4, 'a', 'c');
+ok(drop4.ok, '「不等 c」成功', drop4.error);
+eq(SM.canStartNext(room4), true, '★ 明确不等他之后才开');
 const start4 = SM.autoStartIfReady(room4);
 ok(!!start4 && start4.kind === 'next', '全员就绪 → 自动开下一局');
 eq(room4.phase, SM.PHASE.ROUND1_SPLIT, '进入第一轮分牌');
@@ -99,14 +111,16 @@ ok(room4.players.every(function (p) { return p.score === CONFIG.INITIAL_SCORE; }
 ok(room4.players.every(function (p) { return !p.wantNext; }), 'wantNext 清零（下一局结算要重新报名）');
 
 /* ========================================================================== */
-console.log('\n[5] 房主没报名 → 所有权转移，别人照样能开');
+console.log('\n[5] 房主没报名 → 等不到就把他摘出去，别人照样能开');
 const room5 = settleByDissolve(makeRoom(['owner', 'b', 'c']));
 ok(room5.ownerId === 'owner', '前置：房主是 owner');
 SM.wantNext(room5, 'b');
 SM.wantNext(room5, 'c');
-SM.setReady(room5, 'b', true);
-SM.setReady(room5, 'c', true);
-ok(SM.canStartNext(room5), '房主没报名也不挡别人（分母里没有他）');
+/* ★ v121：房主不再是「分母里没有他」。他也是房间里的人，也在等。
+ * 这条变严了，但换来的是一致 —— 否则「房主可以不等，别人不行」。 */
+ok(!SM.canStartNext(room5), '★ 房主没表态 → 先不开（他也得表态，或者被明确不等）');
+ok(SM.dropFromNext(room5, 'b', 'owner').ok, '「不等房主」成功 —— 房主关掉页面也不会让整桌散场');
+ok(SM.canStartNext(room5), '摘掉房主之后可以开');
 const start5 = SM.autoStartIfReady(room5);
 ok(!!start5 && start5.kind === 'next', '★ 房主没点也照样开局');
 /* ★ C-3b 改了这里的答案：以前房主没报名就被删出房间，所有权必须转交。
@@ -164,17 +178,17 @@ const x = SM.findPlayer(settling, 'x');
 ok(!!x, '新人在房间里');
 eq(x.wantNext, true, '★ 自动算「报名下一局」：否则 startNextRound 会把他静默丢掉');
 eq(x.joinedLate, true, '★ 标记「没打上一局」（前端据此不弹上一局结算、分数不写上局）');
-eq(x.ready, false, '★ 从房号进来的人仍要自己点一次准备（C-2 只覆盖结算页那条主路径）');
+eq(x.ready, true, '★ 从房号进来即就位（v121：wantNext 和 ready 必须同步，否则界面写「已就位」而服务端还在等）');
 eq(x.score, CONFIG.INITIAL_SCORE, '分数是初始分，不继承别人的');
 
-/* 他真的能被带进下一局，不是「进来了但开下一局时消失」。
- * 分母是「已报名的人」，所以新人必须自己算进这个分母 —— 只挂个座位不算数。 */
+/* 他真的能被带进下一局，不是「进来了但开下一局时消失」。 */
 eq(SM.nextRoundPlayers(settling).length, 1, '还没人报名时，参与名单里只有新人 x');
 eq(SM.canStartNext(settling), false, '只有新人 x 一个 → 人数不够（MIN_PLAYERS=2）');
 SM.wantNext(settling, 'a');
-eq(SM.canStartNext(settling), false, 'a 报名了，但从房号进来的 x 还没就位 → 仍不开');
-SM.setReady(settling, 'x', true);
-eq(SM.canStartNext(settling), true, '★ x 也点了准备 → 可以开（他确实被算进下一局，不是挂名）');
+/* ★ v121：房间里还有 b 没表态 —— 以前这里会按 x、a 两个人开，b 变旁听。 */
+eq(SM.canStartNext(settling), false, '★ 三个人、两个报名 → 仍不开（等 b）');
+SM.dropFromNext(settling, 'a', 'b');
+eq(SM.canStartNext(settling), true, '★ 明确不等 b 之后才开（他确实被算进下一局，不是挂名）');
 SM.startNextRound(settling);
 eq(settling.phase, SM.PHASE.ROUND1_SPLIT, '下一局开了');
 ok(!!SM.findPlayer(settling, 'x'), '★ 新人没有在开局瞬间被丢掉');

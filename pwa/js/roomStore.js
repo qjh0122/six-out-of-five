@@ -209,6 +209,18 @@
         publish(roomId, room);
         return res;
       },
+      /* 「不等他」/「这一把先不打」（v114 / v121）。
+       * 本地模式下这条一直缺着 —— 于是本地模式里那颗按钮点了没反应，
+       * 而 ws 模式里它压根没接到对外接口上（见下面的 dropNext）。
+       * 现在补上：和 ws 一样，改完 publish 一次，必要时顺手判一次开局。 */
+      dropNext: function (roomId, playerId, targetId) {
+        var room = getRoom(roomId);
+        var res = StateMachine.dropFromNext(room, playerId, targetId);
+        if (!res.ok) return res;
+        publish(roomId, room);
+        if (StateMachine.autoStartIfReady(room)) publish(roomId, room);
+        return res;
+      },
       rename: function (roomId, playerId, nickname) {
         var res = StateMachine.rename(getRoom(roomId), playerId, nickname);
         if (res.ok) publish(roomId, res.room);
@@ -734,7 +746,11 @@
           .catch(function (e) { return { ok: false, error: e.message }; });
       },
       dropNext: function (roomId, playerId, targetId) {
-        return request({ type: 'dropNext', targetId: targetId })
+        /* ★ payload 这一层不能省。服务端读的是 msg.payload.targetId，
+         * 写成顶层 targetId 会得到 undefined → 「缺少要跳过的人」。
+         * v117 的 setHandLimit 踩过一模一样的坑，这里又踩了一次 ——
+         * 两次都是「单测只看源码里有没有那个名字」，只有真点一次才会露。 */
+        return request({ type: 'dropNext', payload: { targetId: targetId } })
           .then(function () { return { ok: true }; })
           .catch(function (e) { return { ok: false, error: e.message }; });
       },
@@ -945,6 +961,22 @@
     /* 就位态「回结算页」：撤回报名。 */
     unWantNext: function (roomId, playerId) {
       return MODE === 'local' ? Promise.resolve(local.unWantNext(roomId, playerId)) : ws.unWantNext(roomId, playerId);
+    },
+    /* ★ v121 补上的缺口：「不等他」与「这一把先不打」。
+     *
+     * 这两颗按钮从 v114 / v121 起就挂在 `RoomStore.dropNext(...)` 上，
+     * 而对外接口里**从来没有过这个名字** —— ws 对象里那个方法一直没被接出来，
+     * local 那边更是连实现都没有。于是点下去是「RoomStore.dropNext is not a function」，
+     * 被 catch 吞成一句「网络不太稳，再试一次」。
+     *
+     * 为什么一直没被发现：单测断言的是「roomStore.js 里有 `dropNext: function (...)`
+     * 这一行」—— 它匹配到了 ws 对象里那份，界面用的却是对外那份。
+     * 又一个「守卫站错层级」。真机上它只表现为「点了没反应」。
+     * journey 里现在有一次端到端的点击（[7d2]），会真的把它点出来。 */
+    dropNext: function (roomId, playerId, targetId) {
+      return MODE === 'local'
+        ? Promise.resolve(local.dropNext(roomId, playerId, targetId))
+        : ws.dropNext(roomId, playerId, targetId);
     },
     proposeDissolve: function (roomId, playerId) {
       return MODE === 'local' ? Promise.resolve(local.proposeDissolve(roomId, playerId)) : ws.proposeDissolve(roomId, playerId);

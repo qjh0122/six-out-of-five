@@ -1287,9 +1287,31 @@ async function main() {
    * （诊断里已经是打完的结算页了）。要看得见这一屏，就得让它多活一会儿。
    * 代价是这一段结束时这一局还在打 —— 所以旁听的人要从这颗卡自带的
    * 「离开房间」退出去（旁听态藏了整条动作条，没有第二个出口）。 */
-  console.log('\n[7d] 旁听：别人开了下一局，我没报名');
+  console.log('\n[7d] 门槛：我不表态，整桌就不开（v121）');
   const addedBot = await evaluate('RoomStore.addBot().then(function(r){ return JSON.stringify(r); })');
   console.log('    补第二个 AI：' + addedBot);
+  /* 两个 AI 都会在结算期自动报名（markSettled / addBot 各自预置），
+   * 所以「人数够」这件事已经成立 —— 但 v121 起还要等房间里所有真人表态。
+   * 我没点，就不许开。这一条就是真机上那个 bug 的正面复现：
+   * 以前这一刻会直接发牌，然后我被判成旁听。 */
+  await sleep(1500);
+  ok(await evaluate('__journey.vis("screen-settle")'),
+    '★★ 两个 AI 都报名了、我没点 → 不开局（不再把人静默判成旁听）');
+  const waitTxt = await evaluate('(document.getElementById("settle-wait").textContent || "").trim()');
+  console.log('    结算页等待文案：' + JSON.stringify(waitTxt));
+  ok(/还在等你/.test(waitTxt || ''),
+    '★★ 结算页点名「还在等你」（以前只说「已经有 N 人进入下一把」，不说是谁在等）', JSON.stringify(waitTxt));
+
+  console.log('\n[7d2] 自己请假：这一把先不打 → 他们开了，我在旁边看');
+  /* 「这一把先不打」是 v121 新增的出口。它存在的理由：门槛收紧之后，
+   * 一个人如果什么都不点，整桌就一直等 —— 于是「不等他」成了唯一出路，
+   * 而那是**别人**替他做的决定。让他自己说更省事，也不伤感情。
+   *
+   * 这一步同时是这条链路的端到端验收：它点的是真按钮、走的是真协议，
+   * 顺手把两个一直没被点过的 bug 打了出来（见 release-progress v121）。 */
+  await evaluate('document.getElementById("btn-sit-out").click()');
+  const satOut = await waitFor('__journey.vis("spectator")', 12000, '请假之后没进旁听态');
+  ok(satOut, '★★ 点「这一把先不打」→ 两个 AI 立刻开打 → 我进旁听（说明请假真的被服务端收下了）');
   const specShown = await waitFor('__journey.vis("spectator")', 12000, '没进旁听态');
   if (specShown) {
     const spec = await evaluate(`(function(){
@@ -1305,7 +1327,8 @@ async function main() {
     })()`);
     console.log('    旁听态：' + JSON.stringify(spec));
     ok(/旁听中/.test(spec.text || ''), '★ 旁听卡画出来了（写着「旁听中」）', JSON.stringify(spec.text));
-    ok(/这一局你在旁观/.test(spec.text || ''), '★ 说清了「你在旁观这一局」');
+    ok(/你不在这一局/.test(spec.text || ''), '★ 标题说清「你不在这一局」（v121 换掉了含糊的「这一局你在旁观」）');
+    ok(/打完会回到结算页/.test(spec.text || ''), '★ 说明里给出了终点：这一局打完就回结算页');
     ok(spec.slotsHidden === true, '★ 组槽藏起来了（旁听的人没有牌可放）');
     ok(spec.bottomHidden === true, '★ 手牌与提交那块整体藏起来了');
     ok(spec.handCards === 0, '★ 手上确实一张牌都没有');
