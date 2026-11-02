@@ -170,13 +170,30 @@ async function run() {
   eq(c.me(next).hand.length, 6, '★ 丙手里有 6 张牌（真的进了这一局）');
   eq(c.me(next).joinedLate, false, '新一局开始后 joinedLate 清掉（下一把结算要照常弹）');
 
-  console.log('\n[4] 打起来之后仍然进不来（边界没被放行顺带破掉）');
+  console.log('\n[4] 打起来之后进得来，但这一把只是旁听（v122）');
+  /* ★ 这里原来是「对局中进不来，文案是这局正在打」。
+   * 那条边界对**规则**没错（牌已经发了，不能补人），对**人**是错的：
+   * 三个人在结算页都把「开始下一局」点了，第四个人这时候才输完房号 ——
+   * 他被关在门外整整一局（可能是 10 把），只看到一句错误提示。
+   * v122 起他进得来，坐在同一张桌子边，只是这一把不出牌。 */
   const d = new Client('更晚的丁');
   await d.signup(); await d.connect();
-  let lateErr = null;
-  try { await d.request('joinRoom', { roomId: roomId, playerId: d.playerId, nickname: d.nickname }); }
+  let lateErr = null, late = null;
+  try { late = await d.request('joinRoom', { roomId: roomId, playerId: d.playerId, nickname: d.nickname }); }
   catch (e) { lateErr = e.message; }
-  ok(lateErr && lateErr.indexOf('正在打') >= 0, '★ 对局中进不来，文案是「这局正在打」', lateErr);
+  ok(!lateErr, '★ 对局中也能进房（以前是「这局正在打，等这局结束再进来」）', lateErr);
+
+  const dMe = late && SM.findPlayer(late.room, d.playerId);
+  eq(dMe && dMe.benched, true, '★ 进来即旁听：这一把的牌早发完了，不能中途补人');
+  eq(dMe && dMe.wantNext, false, '旁听 ≠ 报名下一局（下一局要自己在结算页点）');
+  eq(dMe && (dMe.hand || []).length, 0, '他手上没有这一把的牌');
+  eq(late && late.room.players.filter(function (p) { return !p.left && !p.benched; }).length, 3,
+    '★ 在打的人仍然是 3 个（旁听不计入 playingPlayers）');
+  const others = late ? late.room.players.filter(function (p) { return p.id !== d.playerId; }) : [];
+  ok(others.length === 3 && others.every(function (p) { return (p.hand || []).length === 0; }),
+    '★ 旁听者看不到任何人的手牌（视图按观众过滤，不是前端藏起来）');
+  await wait(120);
+  ok(a.lastRoom() && SM.findPlayer(a.lastRoom(), d.playerId), '甲的推送里也出现了丁（座位表会刷出来）');
 
   a.close(); b.close(); c.close(); d.close();
   await wait(80);

@@ -672,7 +672,11 @@
     var cur = StateMachine.handLimitOf(room);
     var iAmOwner = !!(state && state.myId && room.ownerId === state.myId);
 
-    box.appendChild(el('p', 'shl-k', '下一局打几把'));
+    /* 标签从「下一局打几把」缩成「打几把」（v122）：这一行末尾要腾出 88 设计 px
+     * 给「等个人」。结算页在 390×844 上已经到顶了 —— 新增一整块（按钮 + 说明）
+     * 会把内容推到底部动作条下面，ui-flow 当场报 cover 重叠 4177px²。
+     * 缩三个字换一颗按钮，是这一页唯一付得起的价格。 */
+    box.appendChild(el('p', 'shl-k', '打几把'));
 
     var row = el('div', 'shl-opts');
     opts.forEach(function (n) {
@@ -686,6 +690,24 @@
     });
     box.appendChild(row);
 
+    /* ★ v122「等个人」：房主在结算页把开牌挂起，等朋友输完房号进来。
+     *
+     * 为什么必须有它：三个人打完，手会一起点到「开始下一局」—— 那是这一屏唯一的
+     * 主动作。第四个人恰好在这时才到，牌已经发了，他这一整局都只能看。
+     * 门外有没有人，服务端不可能知道（没连接、没房间、没意图），只有房主能说。
+     *
+     * 为什么塞在这一行而不是单独一块：见上面标签缩短的理由。高度是这一页的硬约束。
+     * 非房主看不到这颗按钮 —— 等不等是整桌的时机决定，需要一个人负责（同改把数）；
+     * 但他们看得到 `#settle-wait` 里那句「房间已挂起」。 */
+    var hold = StateMachine.holdNextOf ? StateMachine.holdNextOf(room) : null;
+    if (iAmOwner) {
+      var hb = el('button', 'shl-hold' + (hold ? ' is-on' : ''), hold ? '开牌' : '等人');
+      hb.type = 'button';
+      /* data-hold-next: '1' = 挂起，'0' = 放行。渲染不绑事件，交给 game.js 的委托。 */
+      hb.setAttribute('data-hold-next', hold ? '0' : '1');
+      hb.setAttribute('aria-label', hold ? '人齐了，开牌' : '先别开牌，我等个人');
+      box.appendChild(hb);
+    }
     return box;
   }
 
@@ -916,6 +938,8 @@
      * 但人数不够 2 人时不给：那时下一局根本开不起来，摆一堆按不动的档位只是噪音。 */
     var canStillPlay = room.players.filter(function (p) { return !p.left; }).length >= CONFIG.MIN_PLAYERS;
     if (canStillPlay) inner.appendChild(handLimitBlock(room));
+    /* 「等个人」紧跟在把数下面：两块回答的其实是同一个问题 ——
+     * 「下一局怎么开」（打几把 / 现在开还是等人）。 */
     body.appendChild(inner);
     /* 结算列表在横屏是滚动的（.ls #screen-settle .settle-body 有 max-height + overflow-y:auto），
      * 而移动端滚动条是隐藏的 —— 不挂底部渐隐的话，第 5 行会被硬切成半行（844×390 实测），
@@ -939,8 +963,13 @@
      */
     var joined = StateMachine.nextRoundPlayers(room).length;
     var pending = StateMachine.pendingNextPlayers ? StateMachine.pendingNextPlayers(room) : [];
+    /* 「等个人」优先于「还差谁」：房主挂起时，就算所有人都点完了也不能开，
+     * 这时候还写「还在等你」等于把责任推给一个什么都没做错的人。 */
+    var holdNow = StateMachine.holdNextOf ? StateMachine.holdNextOf(room) : null;
     var waitTxt = '';
-    if (joined > 0) {
+    if (holdNow) {
+      waitTxt = '房间已挂起，等朋友进来' + (joined ? '（' + joined + ' 人已进入下一把）' : '');
+    } else if (joined > 0) {
       waitTxt = '已经有 ' + joined + ' 人进入下一把';
       if (pending.length) {
         var mine = pending.some(function (p) { return p.id === state.myId; });

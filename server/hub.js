@@ -1,11 +1,12 @@
 /**
  * 房间中心（服务端权威）
  *
- * 协议对齐前端 roomStore.js（请求 **20 种**，按用途分组）：
+ * 协议对齐前端 roomStore.js（请求 **23 种**，按用途分组）：
  *   身份   auth / rename
  *   房间   createRoom / joinRoom / leaveRoom / reconnect / peekRoom / addBot / getProfile
  *   对局   ready / start / submitGroups / restart
- *   结算   wantNext / unWantNext / proposeDissolve / voteDissolve / cancelDissolve
+ *   结算   wantNext / unWantNext / setHandLimit / holdNext / dropNext /
+ *          proposeDissolve / voteDissolve / cancelDissolve
  *   其它   ping / emoji（表情与短语，只转发不落库）
  *
  *   推送 6 种： room / roomDeleted / ok / error / pong / emoji
@@ -119,6 +120,11 @@ class Hub {
      * 重连时按剩余时间决定是否补时限（见 _refreshSplitDeadline）。 */
     this.splitStartedAt = new Map();
     this.dissolveTimers = new Map(); // roomId -> 解散投票超时 timer
+    /* 「等个人」（v122）到期 timer：房主挂起最多 3 分钟，到点自动放行并广播。
+     * 为什么要真的挂 timer，而不是等下一次有人动作时再判：
+     * 挂起之后所有人可能都已经就位、谁也不动了，那时没有任何一次请求
+     * 会再去问「还能不能开」—— 房间就停在一个「理由已经过期，但没人知道」的状态。 */
+    this.holdTimers = new Map();
     /* 座位恢复令牌："roomId#playerId" -> token。
      * 单独放一个 Map，不写进 player 对象——player 会被序列化进广播，
      * 一旦混进去等于广播给全房间，令牌就白做了。 */
@@ -360,6 +366,7 @@ class Hub {
       case 'wantNext': return this.wantNext(client, reqId);
       case 'unWantNext': return this.unWantNext(client, reqId);
       case 'setHandLimit': return this.setHandLimit(client, payload, reqId);
+      case 'holdNext': return this.holdNext(client, payload, reqId);
       case 'dropNext': return this.dropNext(client, payload, reqId);
       case 'proposeDissolve': return this.proposeDissolve(client, reqId);
       case 'voteDissolve': return this.voteDissolve(client, payload, reqId);
@@ -545,6 +552,12 @@ class Hub {
     this._armRoomRecycle(roomId);
 
     this._ok(client, reqId, { room: this._view(res.room, playerId), token: this._issueToken(roomId, playerId) });
+    /* ★ v122：加入也可能是「凑齐」的那一下。
+     * 典型场景：三人的局打完，两个人走了，剩一个人点了「开始下一局」——
+     * 此时 nextRoundPlayers 只有 1 人，开不了；新人从房号进来的这一刻才够 2 人。
+     * 不在这里判一次，房间会停在就位态：谁都不缺，但谁也不会再点（按钮已是「已就位」）。
+     * 与 wantNext / ready 同一类动作：它让房间更接近开局。 */
+    this._maybeAutoStart(roomId);
     this._broadcast(roomId);
   }
 
@@ -612,6 +625,44 @@ class Hub {
     this._broadcast(found.roomId);
   }
 
+  /* 「等个人」（v122）：房主在结算页说「先别开牌，我朋友在输房号」。
+   * 挂起期间谁点「开始下一局」都不会开牌；解除时立刻再判一次开局
+   * —— 人都到齐了，就不该再让房主多点一次。
+   * 解除和申请走同一条接口，payload.on 区分（true=挂起 / false=放行）。 */
+  holdNext(client, payload, reqId) {
+    const found = this._requireRoom(client, reqId);
+    if (!found) return;
+    const res = SM.setHoldNext(found.room, found.playerId, !!(payload && payload.on));
+    if (!res.ok) return this._fail(client, reqId, res.error);
+    this._ok(client, reqId, { leftMs: SM.holdNextLeftMs(found.room) });
+    if (SM.holdNextOf(found.room)) this._armHoldTimer(found.roomId);
+    else this._clearHoldTimer(found.roomId);
+    this._maybeAutoStart(found.roomId);
+    this._broadcast(found.roomId);
+  }
+
+  /* 「等个人」到点自动放行。
+   * 到点这一刻 holdNextOf 已经返回 null（它按 at + TTL 判定），
+   * 所以这里只需要再判一次开局、再广播一次，让所有人看到「等待结束」。 */
+  _armHoldTimer(roomId) {
+    this._clearHoldTimer(roomId);
+    const timer = setTimeout(() => {
+      this.holdTimers.delete(roomId);
+      const room = this.rooms.get(roomId);
+      if (!room) return;
+      this.log('hold expired', roomId);
+      this._maybeAutoStart(roomId);
+      this._broadcast(roomId);
+    }, SM.HOLD_TTL_MS);
+    if (timer.unref) timer.unref();
+    this.holdTimers.set(roomId, timer);
+  }
+
+  _clearHoldTimer(roomId) {
+    const t = this.holdTimers.get(roomId);
+    if (t) { clearTimeout(t); this.holdTimers.delete(roomId); }
+  }
+
   /* 「不等他」：把一个已报名但一直不准备的人退回结算页。
    * 不踢人、不判弃 —— 只撤报名，所以他还在房间、名次还在。
    * 调用 _maybeAutoStart：这一步本身是「让人更接近开局」，必须接。 */
@@ -643,6 +694,9 @@ class Hub {
     if (!room) return;
     const r = SM.autoStartIfReady(room);
     if (!r) return;
+    /* 开局了，「等个人」这一次等待就结束了：把到期 timer 收掉，
+     * 否则三分钟后它还会醒来广播一次（房间已经不在等待态）。 */
+    this._clearHoldTimer(roomId);
     if (r.kind === 'start') {
       this.log('auto start', roomId);
       return;
@@ -1266,6 +1320,11 @@ class Hub {
    */
   _armOneSplitTimer(room, p, round, delayMs, idempotent) {
     if (p.left || p.isBot) return;                       // 弃局者/AI 不挂
+    /* ★ v122：旁听的人不挂。
+     * 局中从房号摸进来的人就是旁听（他手上没有这一把的牌）。
+     * 不排除的话，60 秒后这个计时器会把他判成「本轮弃权」——
+     * 一个从头到尾没参与这一把的人，被记上一次弃权，还要在结算里按弃权处理。 */
+    if (p.benched) return;
     /* ★ v105：判「定稿」不再只看 submitted。
      * 进入修改态的人 submitted 仍然是 true（旧分组还在），但他已经不是「已交」了 ——
      * 别人全提交时不会结算（见 SM.isRoundLocked），这时他必须**自己**有个倒计时，
@@ -1409,6 +1468,7 @@ class Hub {
     this._tokens.forEach((_v, key) => { if (key.indexOf(roomId + '#') === 0) this._tokens.delete(key); });
     this._clearSplitTimers(roomId);
     this._clearDissolve(roomId);
+    this._clearHoldTimer(roomId);
     /* 断线宽限 timer 也要清。以前漏了：房间删掉后 90 秒里那些 timer 还会醒来，
      * 拿着已经不存在的房间去跑 finalizeLeave（回调里虽然有 `if (!room) return` 兜底，
      * 但在 Map 里白挂 90 秒、每删一个房间就多几条僵尸 timer，属于慢性泄漏）。 */

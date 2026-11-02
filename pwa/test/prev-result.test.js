@@ -56,7 +56,13 @@ if (ghostMatch) {
   ok(!/btn-prev-result/.test(ghostMatch[1]),
     '★ 没有塞进 .ghost-row：那里现在是 3 个按钮各 200px，加第 4 个会把每个挤到 148px，「补 AI 队友」要缩字');
   const ghostBtns = (ghostMatch[1].match(/<button/g) || []).length;
-  ok(ghostBtns === 4, '.ghost-row 保持 4 个按钮（含就位态才露的「回结算页」），实际 ' + ghostBtns + ' 个');
+  /* v122 多了一颗「人齐了，开牌」（#btn-hold-off）。它和「回结算页」一样默认 hidden，
+   * 就位态里最多同时露出 4 颗（补 AI / 回结算页 / 人齐了开牌 / 离开房间）——
+   * 布局承受能力由 ui-flow 的 13 屏实测把关，这里只钉「不要继续无节制地塞」。 */
+  ok(ghostBtns === 5, '.ghost-row 保持 5 个按钮（新增就位态才露的「人齐了，开牌」），实际 ' + ghostBtns + ' 个');
+  ok(/id="btn-hold-off"[^>]*class="[^"]*\bhidden\b/.test(ghostMatch[1])
+    || /class="[^"]*\bhidden\b[^"]*"[^>]*id="btn-hold-off"/.test(ghostMatch[1]),
+    '「人齐了，开牌」默认 hidden（只有房主 + 正在等时才露）');
 }
 
 /* ---------- 2. ★ 只读：不许碰报名状态 ---------- */
