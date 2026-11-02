@@ -1541,6 +1541,45 @@ async function main() {
    * 用 CDP 真页面 + 合成 KeyboardEvent：合成事件会正常派发到监听器上，
    * 而浏览器自己不会替我们移动焦点 —— 于是「焦点动了」只可能是我那段代码干的，
    * 正是要验的东西（真按 Tab 反而分不清是浏览器默认行为还是拦截生效）。 */
+  /* ★ 档案卡 → 成就页（v119）：档案卡必须一起关掉。
+   *
+   * 被报过：从档案卡底部点「成就 3/35 ›」，成就页确实打开了，
+   * 但那张个人信息卡还盖在上面 —— 玩家看到的是「一张挡住成就页的档案卡」，
+   * 以为功能坏了。根因是那个点击委托只关了座位信息档（.ss-info），
+   * 漏了档案卡自己（.profile-box 这个宿主）。
+   *
+   * 这里从排行榜点一行进档案卡（榜单里的行都带 data-pid），
+   * 再点卡里的「成就」，两条一起验：成就页打开了、档案卡关掉了。 */
+  console.log('\n[9a] 档案卡 → 成就页：不能留一张卡盖在成就页上');
+  const pfOpened = await evaluate(`(function(){
+    var row = document.querySelector('#rank-list .rank-row[data-pid]');
+    if (!row) return false;
+    row.click();
+    return true;
+  })()`);
+  ok(pfOpened, '排行榜点一行（能找到带 data-pid 的行）');
+  const pfShown = await waitFor('__journey.vis("profile-modal")', 8000, '档案卡没弹出来');
+  ok(pfShown, '★ 点榜单行 → 弹出玩家档案卡');
+
+  const achBtnReady = await waitFor('!!document.querySelector("#profile-body .pf-ach")', 12000,
+    '档案卡里没出现「成就」入口');
+  ok(achBtnReady, '★ 档案卡底部有「成就 N/35 ›」入口');
+  if (achBtnReady) {
+    await evaluate('document.querySelector("#profile-body .pf-ach").click()');
+    const achOpen = await waitFor('__journey.vis("screen-achievements")', 10000, '点了「成就」没进成就页');
+    ok(achOpen, '★ 点档案卡里的「成就」→ 进入成就页');
+    const pfGone = await evaluate('!(__journey.vis("profile-modal"))');
+    ok(pfGone, '★★ 档案卡同时被关掉（不再盖在成就页上）');
+    if (!pfGone) {
+      await diag('档案卡还在：' + JSON.stringify(await evaluate(
+        '(function(){var m=document.getElementById("profile-modal");return {cls:m.className, shown:!m.classList.contains("hidden")};})()')));
+    }
+    /* 返回：成就页的返回目标是「打开它时所在的那一屏」，也就是排行榜。 */
+    await evaluate('document.getElementById("btn-ach-back").click()');
+    const backRank = await waitFor('__journey.vis("screen-rank")', 8000, '成就页返回没回排行榜');
+    ok(backRank, '★ 成就页返回 → 回到排行榜（不是回首页）');
+  }
+
   console.log('\n[9b] 弹窗无障碍：语义 / 焦点进出 / Tab 圈定');
 
   /* 语义：在 DOM 里查，而不是回头 grep 源码。
