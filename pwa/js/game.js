@@ -451,8 +451,13 @@
       var meJoin = getMe(room);
       /* 逐组结算：一次结算里有 2~3 组，交给序列器一幕一幕放。
        * joinedLate 的人不弹 —— 他刚点「加入房间」就看见一张别人的成绩单，
-       * 只会以为「我一进来就结算了」。 */
-      if (!(meJoin && meJoin.joinedLate)) playResult(room.lastResult, room.resultSeq);
+       * 只会以为「我一进来就结算了」。
+       * ★ C-3b：旁听的人也不弹，理由更强 —— 这一局他从头到尾没上场，
+       * 弹出来的是「别人这一把怎么分的」，配着庆祝音和逐组动效，
+       * 只会让人以为那 3 组是他自己打的。他的入口是结算页那张名次表。 */
+      if (!(meJoin && (meJoin.joinedLate || meJoin.benched))) {
+        playResult(room.lastResult, room.resultSeq);
+      }
     }
 
     if (room.phase !== StateMachine.PHASE.SETTLED) {
@@ -814,7 +819,11 @@
      * 这里放个 0% 或 100% 会让刚进房的人以为自己在被打分。 */
     var rankTxt = '—';
     if (me && me.score != null) {
-      var sorted = room.players.slice().sort(function (a, b) { return b.score - a.score; });
+      /* ★ C-3b：名次只在「这一局真打了的人」之间算。用 room.players 的话，
+       * 一个从房号摸进结算期、还没上场的人（分数是干净的基准分）会把分母撑大，
+       * 让每个人都看到「第 1 / 5」而实际只有 3 个人在比。 */
+      var sorted = (StateMachine.playingPlayers ? StateMachine.playingPlayers(room) : room.players)
+        .slice().sort(function (a, b) { return b.score - a.score; });
       var at = -1;
       for (var i = 0; i < sorted.length; i++) if (sorted[i].id === me.id) { at = i; break; }
       rankTxt = (at >= 0 ? '第 ' + (at + 1) + ' / ' + sorted.length + ' · ' : '') + me.score + ' 分';
@@ -902,6 +911,67 @@
     var me = getMe(room);
     if (!me) { render(); return; }
     var round = room.round;
+
+    /* ★ C-3b（v118）：我在旁听这一局。
+     *
+     * 这一局是别人开的，我没点「开始下一局」—— 座位和分数都还在房间里，
+     * 但我手上没有牌（服务端发牌时就把旁听的人跳过了）。
+     * 顶栏照画：他能看见谁在打、打到哪一轮、比分多少，这才是「旁听」的意思。
+     * 底部整块（组槽 / 手牌 / 提交）换一条说明，因为这些控件对他一个都用不了。
+     *
+     * 判据只认服务端下发的 benched，不认「我手牌为空」：手牌为空也可能是
+     * 刚发牌那一帧还没到，拿它当判据会让人看到一闪而过的「旁听中」。 */
+    if (me.benched) {
+      renderTopBar(room, me, round, true);
+      var slotsEl0 = $('#slots');
+      var gb0 = document.querySelector('#screen-game .game-bottom');
+      if (slotsEl0) { slotsEl0.classList.add('hidden'); slotsEl0.innerHTML = ''; }
+      if (gb0) {
+        gb0.classList.add('hidden');
+        /* 手牌区也要真的清空，不只是藏起来。
+         * 上一把的 6 张牌 DOM 留在里面，视觉上看不见（父级 hidden），
+         * 但「手上一张牌都没有」这件事在 DOM 里是假的 —— 任何读 DOM 的
+         * 检查（巡检、辅助技术、以后某个统计）都会读到一副他不存在的牌。 */
+        var hand0 = $('#hand');
+        if (hand0) hand0.innerHTML = '';
+        var chips0 = $('#group-chips');
+        if (chips0) chips0.innerHTML = '';
+      }
+      var sp = $('#spectator');
+      if (sp) {
+        sp.classList.remove('hidden');
+        sp.innerHTML = '';
+        sp.appendChild(el('div', 'sp-badge', '旁听中'));
+        sp.appendChild(el('h2', 'sp-title', '这一局你在旁观'));
+        sp.appendChild(el('p', 'sp-tip',
+          '结算后点「开始下一局」就能上场。座位和分数都还留着，不用重新进房。'));
+        sp.appendChild(el('p', 'sp-sub', '第 ' + round + ' 轮 · 本局第 ' + (room.handCount || 1)
+          + ' 把' + (room.handLimit ? ' / 共 ' + room.handLimit + ' 把' : '')));
+        /* ★ 出口。底部那条动作条整块藏起来了（手牌 / 提交 / 结束本局 / 离开都在里面），
+         * 于是旁听的人**没有任何办法退出** —— 只能关掉页面或者干等这一局打完。
+         * 这里必须单独给一颗：旁听是「我自己选择不在这一局上场」，
+         * 不是把这个人锁在房间里。 */
+        var leaveBtn = el('button', 'btn btn-ghost', '离开房间');
+        leaveBtn.type = 'button';
+        /* ★ id 必须进 firstShown 那个列表：onLeave 开头要找一颗「当前可见的离开按钮」
+         * 来挂忙碌态，找不到就直接 return（连点短路）。而在旁听态里，
+         * 原有的三颗离开按钮全被 `.game-bottom` 的 hidden 包住了 ——
+         * 不把这一颗登记进去，点它等于什么都没发生。 */
+        leaveBtn.id = 'btn-leave-spectator';
+        leaveBtn.addEventListener('click', onLeave);
+        sp.appendChild(leaveBtn);
+      }
+      return;
+    }
+    /* 回到正常对局形态。旁听是「整局保持」的状态，但直播间一样会有相位变化：
+     * 结算 → 我再报名 → 下一局开打，同一次运行里必须能切回来。 */
+    var slotsEl = $('#slots');
+    if (slotsEl) slotsEl.classList.remove('hidden');
+    var gb2 = document.querySelector('#screen-game .game-bottom');
+    if (gb2) gb2.classList.remove('hidden');
+    var sp2 = $('#spectator');
+    if (sp2) { sp2.classList.add('hidden'); sp2.innerHTML = ''; }
+
     // 下游渲染只认「锁定态」：正在改一次时按可编辑处理，槽位/手牌要重新可点
     var locked = !canEdit(room, me, round);
     var groups = getCurrentGroups(room, me);
@@ -1268,6 +1338,13 @@
    * 最典型的是 nextWait 必须先于 submitted 判断，漏了就会在就位态写「已提交」。 */
   function oppSeatState(p, room, round, nextWait) {
     if (p.left) return { text: '已离开', cls: 'left', badge: '—' };
+    /* ★ C-3b：对局中旁听的人在对手条上也要能认出来 ——
+     * 否则他看起来就像「一个一直不提交的队友」，而顶栏的提交进度是用
+     * playingPlayers 算的（分母里没有他），两边对不上，玩家会以为界面坏了。
+     * 就位态（nextWait）不判旁听：那一屏问的是「下一局谁来」，他不是旁听。 */
+    if (!nextWait && p.benched && room.phase !== StateMachine.PHASE.WAITING) {
+      return { text: '旁听', cls: 'idle', badge: '👀' };
+    }
     if (p.connected === false) return { text: '掉线中', cls: 'off', badge: '!' };
     if (room.phase === StateMachine.PHASE.WAITING || nextWait) {
       var ready = !!p.ready;
@@ -1333,8 +1410,10 @@
     var total = 0;
     var done = 0;
     var isReadyPhase = nextWait || room.phase === StateMachine.PHASE.WAITING;
+    /* ★ C-3b：分母只算参与本局的人。旁听者没有手牌、永远不会提交，
+     * 算进来的话顶栏会一直卡在「3/5 已提交」，而这一轮其实早就该结算了。 */
     room.players.forEach(function (p) {
-      if (p.left) return;
+      if (p.left || p.benched) return;
       total++;
       if (isReadyPhase) {
         if (p.ready || (nextWait && p.wantNext)) done++;
@@ -3382,7 +3461,7 @@
      * 但结算页和就位态都是 SETTLED，人在结算页时猜出来的却是对局页那颗 ——
      * 忙碌态加到一个 display:none 的按钮上，玩家点的那个一点反应都没有，
      * 于是再点一次，被连点短路静默吞掉。请求没重发，人已经困惑了。 */
-    var btn = firstShown(['btn-leave', 'btn-leave-game', 'btn-back-room']);
+    var btn = firstShown(['btn-leave-spectator', 'btn-leave', 'btn-leave-game', 'btn-back-room']);
     var restore = pressBusy(btn, '核对中…');
     if (!restore) return;                     // 连点：上一个还在核对，忽略这一次
     var snap = null;

@@ -3062,6 +3062,9 @@ body.is-dragging { cursor: grabbing; }
 /* 弃局者那一行（v104）：沉到列表末尾、整行压暗、角标给一根横杠。
  * 压暗不是装饰：只靠「排在最后」会被读成「他垫底」，而垫底是有名次的 ——这里有。 */
 .settle-row.is-abandoned { opacity: 0.62; }
+/* 旁听比弃局抬一档：弃局是「他走了」，旁听是「他在看」，两者不该长成一样。
+ * 0.82 让名字仍然清楚可读 —— 玩家还得知道「这一局是谁在旁边看着」。 */
+.settle-row.is-benched { opacity: 0.82; }
 .settle-rank.is-gone {
   background: rgba(255, 255, 255, 0.16);
   color: rgba(255, 255, 255, 0.82);
@@ -3194,6 +3197,55 @@ body.is-dragging { cursor: grabbing; }
  *   22px 字号 + 8px 内边距，实测热区只有 37×24，被 ui-flow 当场拦下。
  * 也因此没有第二行说明文字 —— 那一行会把结算页再挤掉一截，
  * 而「改了从下一局算」这件事，点下去的成功 toast 已经说清楚了。 */
+/* ---------- 旁听卡（v118 / C-3b）----------
+ * 别人开了下一局、我没报名时，牌桌底部那块换成这张卡。
+ *
+ * 尺寸仍按「750 设计空间整体缩放」倒推：390 宽的竖屏 scale≈0.52，
+ * 所以正文 26 设计 px ≈ 13.5 实际，能读；标题 40 ≈ 21。
+ * 不做成全屏遮罩 —— 顶栏那张桌子还是有效的观战信息，
+ * 盖住它等于把唯一有用的东西挡了。 */
+.spectator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* 高度按内容走，靠 margin:auto 在顶栏之外的那片空地上垂直居中。
+   * 试过 flex:1（撑满）：卡片会变成一整块空面板，边框把「空」框了出来，
+   * 比原来贴顶还难看。也试过不管它：卡片贴顶、下面一大片空绿。
+   * margin:auto 是这两者之间那个正确的档 —— 卡片还是原来那张卡，位置在中间。 */
+  flex: 0 0 auto;
+  gap: 12px;
+  margin: auto 16px;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  text-align: center;
+}
+/* 实底 + 白字。第一版是「绿字 + 半透明绿底 + 绿描边」，
+ * 直接压在深绿毡面上等于没有对比 —— 截图里那个胶囊几乎看不见（对比度约 1.3:1）。
+ * 旁听是个「你得先知道自己不在这一局里」的状态，标识看不清就等于没有。 */
+.sp-badge {
+  padding: 4px 16px;
+  border-radius: 999px;
+  background: var(--brand-green);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.sp-title { margin: 0; font-size: 40px; color: var(--text-main); }
+.sp-tip { margin: 0; font-size: 26px; line-height: 1.55; color: var(--gray-aux); }
+.sp-sub { margin: 0; font-size: 22px; color: var(--gray-aux); opacity: 0.8; }
+
+/* 横屏只有 390 高，三行字会把牌桌挤没 —— 缩一档。 */
+.ls .spectator { margin: auto 12px; padding: 16px 18px; gap: 8px; }
+.ls .sp-badge { font-size: 18px; padding: 2px 12px; }
+.ls .sp-title { font-size: 26px; }
+.ls .sp-tip { font-size: 18px; }
+.ls .sp-sub { font-size: 15px; }
+
 .settle-hl {
   display: flex;
   align-items: center;

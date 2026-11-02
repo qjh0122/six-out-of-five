@@ -78,7 +78,7 @@ eq(SM.canStartNext(room1), true, '★ 两人都报名 → 立刻可开（报名�
 eq(SM.nextRoundPlayers(room1).length, 2, '参与名单就是这两人的名单');
 
 /* ========================================================================== */
-console.log('\n[4] 开局只带报名者，没点的人被移出并拿到通知');
+console.log('\n[4] 开局只带报名者，没点的人留在房间里旁听（C-3b）');
 const room4 = settleByDissolve(makeRoom(['a', 'b', 'c']));
 SM.wantNext(room4, 'a');
 SM.wantNext(room4, 'b');
@@ -86,10 +86,15 @@ SM.wantNext(room4, 'b');
 const start4 = SM.autoStartIfReady(room4);
 ok(!!start4 && start4.kind === 'next', '全员就绪 → 自动开下一局');
 eq(room4.phase, SM.PHASE.ROUND1_SPLIT, '进入第一轮分牌');
-eq(room4.players.length, 2, '★ 新一局只有 a、b 两个人');
-ok(!SM.findPlayer(room4, 'c'), '没点的 c 不在新一局里');
-ok(start4.removed.indexOf('c') >= 0, '★ c 在 removed 名单里（服务端据此通知他「新的一局开始了」）');
-ok(room4.players.every(function (p) { return p.hand.length === 6; }), '新一局每人都拿到 6 张牌');
+/* ★ C-3b（v118）：没报名的人不再被删出房间 —— 座位留着、名字留着，只是不参与这一局。 */
+eq(room4.players.length, 3, '★ 新一局三个人都还在房间里（座位不删）');
+eq(SM.playingPlayers(room4).length, 2, '★ 但只有 a、b 参与这一局');
+eq(SM.playingPlayers(room4).map(function (p) { return p.id; }).sort().join(','), 'a,b', '参与名单就是 a、b');
+const c4 = SM.findPlayer(room4, 'c');
+ok(c4 && c4.benched === true, '★ 没点的 c 变成旁听（benched），座位与分数都还在');
+eq(c4.hand.length, 0, '★ 旁听的人不发牌（发了他会被当成还在这一局里）');
+eq(start4.removed.length, 0, '★ 没人被赶出房间（removed 为空）—— C-3b 的全部意义');
+ok(SM.playingPlayers(room4).every(function (p) { return p.hand.length === 6; }), '参与的人各拿 6 张');
 ok(room4.players.every(function (p) { return p.score === CONFIG.INITIAL_SCORE; }), '分数重置为初始分');
 ok(room4.players.every(function (p) { return !p.wantNext; }), 'wantNext 清零（下一局结算要重新报名）');
 
@@ -104,8 +109,11 @@ SM.setReady(room5, 'c', true);
 ok(SM.canStartNext(room5), '房主没报名也不挡别人（分母里没有他）');
 const start5 = SM.autoStartIfReady(room5);
 ok(!!start5 && start5.kind === 'next', '★ 房主没点也照样开局');
-ok(room5.ownerId !== 'owner', '★ 所有权交给了留下的人（否则补 AI / 发起解散会失效）');
-ok(room5.ownerId === 'b' || room5.ownerId === 'c', '新房主是 b 或 c', room5.ownerId);
+/* ★ C-3b 改了这里的答案：以前房主没报名就被删出房间，所有权必须转交。
+ * 现在他还坐在房间里（只是旁听），补 AI、改把数这些房主权限仍然该由他持有 ——
+ * 转交反而会让他「明明还在房间里，却什么都改不了」。 */
+eq(room5.ownerId, 'owner', '★ 房主没报名但仍在房间里 → 所有权不转交（他还能补 AI / 改把数）');
+eq(SM.findPlayer(room5, 'owner').benched, true, '他自己是旁听状态');
 
 /* ========================================================================== */
 console.log('\n[6] AI 自动报名 + 自动准备（单人 + AI 局不会被卡住）');

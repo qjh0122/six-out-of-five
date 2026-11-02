@@ -64,8 +64,8 @@ ok(/'settle-pos' \+ \(r\.tied \? ' is-tie' : ''\), String\(r\.rank\)/.test(settl
 ok(!/String\(i \+ 1\)/.test(settleList),
   '★ 列表序号不再被当成名次（弃局者沉底后 i+1 会撒谎）');
 ok(/if \(r\.champion\) \{[\s\S]{0,80}crown/.test(settleList)
-  && /else if \(r\.abandoned\) \{[\s\S]{0,300}'settle-pos is-out', '—'/.test(settleList),
-  '皇冠与角标互斥（冠军不再多一个「1」，弃局者给「—」）');
+  && /else if \(r\.abandoned \|\| r\.benched\) \{[\s\S]{0,300}'settle-pos is-out', '—'/.test(settleList),
+  '皇冠与角标互斥（冠军不再多一个「1」，弃局者与旁听者都给「—」）');
 ok(/row\.appendChild\(el\('span', 'settle-go', '›'\)\)/.test(settleList),
   '★ 每行有「可点」的箭头提示');
 

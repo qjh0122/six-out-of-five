@@ -599,7 +599,14 @@
    */
   function settleRank(players) {
     var byScore = function (a, b) { return b.score - a.score; };
-    var playing = players.filter(function (p) { return !p.left; }).sort(byScore);
+    /* ★ C-3b（v118）：三种人，三种位置。
+     *   playing —— 这一局真打了的人，按分数排名次；
+     *   benched —— 在房间里但这一局没打（别人开下一局时他没报名）。**不进名次**：
+     *     他的分数是干净的基准分，混进排名里会跟真正打得最差的人并列，
+     *     甚至因为「大家都是 0 分」被标成并列冠军 —— 他一张牌都没出过。
+     *   left    —— 弃局，沉底、不计名次（原有规则）。 */
+    var playing = players.filter(function (p) { return !p.left && !p.benched; }).sort(byScore);
+    var benched = players.filter(function (p) { return !p.left && !!p.benched; }).sort(byScore);
     var gone = players.filter(function (p) { return !!p.left; }).sort(byScore);
     var rows = [];
     var prevScore = null, prevRank = 0;
@@ -608,10 +615,13 @@
        * 不能写 `prevScore !== p.score` —— 分数可能真是 0 或负数。 */
       var rank = (prevScore !== null && p.score === prevScore) ? prevRank : i + 1;
       prevScore = p.score; prevRank = rank;
-      rows.push({ p: p, rank: rank, champion: rank === 1, abandoned: false });
+      rows.push({ p: p, rank: rank, champion: rank === 1, abandoned: false, benched: false });
+    });
+    benched.forEach(function (p) {
+      rows.push({ p: p, rank: 0, champion: false, abandoned: false, benched: true });
     });
     gone.forEach(function (p) {
-      rows.push({ p: p, rank: 0, champion: false, abandoned: true });
+      rows.push({ p: p, rank: 0, champion: false, abandoned: true, benched: false });
     });
     /* tied：这个名次是不是被两个人以上占了。渲染要用它决定角标要不要标并列
      *（第 2 名并列时两个「2」本身已经是并列的写法，所以只加类、不加字）。 */
@@ -690,6 +700,9 @@
       var row = el('div', 'settle-row');
       if (r.champion) row.classList.add('champion');
       if (r.abandoned) row.classList.add('is-abandoned');
+      /* 旁听：人还在，只是这一局没打。视觉上比弃局轻一档 ——
+       * 弃局是「他走了」，旁听是「他在看」，两者不该长成一样。 */
+      if (r.benched) row.classList.add('is-benched');
       if (p.id === state.myId) row.classList.add('me');
       row.dataset.pid = p.id;   // 点头像 → 查看该玩家档案；点行 → 看这一把回放
       row.style.animationDelay = ((i === 0 ? 0 : 200) + i * 150) + 'ms';
@@ -710,6 +723,7 @@
       rank.setAttribute('tabindex', '0');
       var rankText;
       if (r.abandoned) rankText = '已离开，不计名次';
+      else if (r.benched) rankText = '旁听，这一局没参与';
       else if (championCount > 1 && r.rank === 1) rankText = '并列第 1 名';
       else rankText = '第 ' + r.rank + ' 名';
       rank.setAttribute('aria-label', rankText + ' ' + (p.nickname || '?') + '，查看档案');
@@ -719,8 +733,8 @@
       rank.innerHTML = avatarInner(p.id, p.avatar, (p.nickname || '?').charAt(0), !!p.isBot, p.photo);
       if (r.champion) {
         rank.appendChild(el('span', 'crown', '🏆'));
-      } else if (r.abandoned) {
-        /* 弃局者的角标写一根横杠，不写数字：他没有名次，
+      } else if (r.abandoned || r.benched) {
+        /* 弃局者与旁听者的角标都写一根横杠，不写数字：他们没有名次，
          * 写任何数字（包括「4」）都是在说「你排第 4」——那是撒谎。 */
         rank.appendChild(el('span', 'settle-pos is-out', '—'));
       } else {
@@ -739,18 +753,20 @@
        *     删了那一行会念成「正常打完的」。
        * 文案只写「弃局」，不写「不计名次」：名字列在 320 宽下会省略号，
        * 「不计名次」这件事由角标「—」和沉底位置承担，说两遍反而挤掉名字。 */
-      var tag = p.left ? '（弃局）' : (p.out ? '（见底）' : '');
+      var tag = p.left ? '（弃局）' : (r.benched ? '（旁听）' : (p.out ? '（见底）' : ''));
       var name = el('div', 'settle-name', (p.nickname || '?') + tag);
       if (me) name.appendChild(el('i', 'settle-you', '我'));
       /* 并列冠军的「并列」胶囊：两颗皇冠并排，可能被读成「奖杯漏了名次」。
        * 只给冠军挂 —— 第 2 名并列时两个「2」本身就是并列的写法。 */
       if (r.champion && championCount > 1) name.appendChild(el('i', 'settle-tie', '并列'));
-      var score = el('div', 'settle-score', p.score + ' 分');
+      /* 旁听的人分数是干净的基准分，写「0 分」会被读成「打了但一分没拿到」。
+       * 写「—」而不是「未参与」：这一列是数字列，长度一变整行就歪。 */
+      var score = el('div', 'settle-score', r.benched ? '—' : (p.score + ' 分'));
       /* 净胜走 netCls / netText，和战绩卡、排行榜、玩家档案完全同一套：
        *   netText(0) = '0'（不带符号）   netCls(0) = 'flat'（中性灰）
        * 以前这里按「净胜非负」分成两态，把 0 归进了赢的那一档 —— 净胜 0 显示成
        * 红色，看着像赢了；而同一个 0 在排行榜是灰的。两套说法，只能有一个对。 */
-      var net = p.score - CONFIG.INITIAL_SCORE;
+      var net = r.benched ? 0 : (p.score - CONFIG.INITIAL_SCORE);
       var netEl = el('div', 'settle-net', netText(net));
       netEl.className = 'settle-net ' + netCls(net);
       row.appendChild(rank); row.appendChild(name); row.appendChild(score); row.appendChild(netEl);

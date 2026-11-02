@@ -162,9 +162,13 @@ ok(!!nextStarted && nextStarted.kind === 'next', '本人 + AI 都就绪 → 自�
 ok(room.phase === SM.PHASE.ROUND1_SPLIT, '回到第一轮分牌');
 ok(room.dissolve.active === false && room.dissolve.initiatorId === null, '新一局解散状态已重置');
 ok(room.handSeq === 1, '场次序号保留，不会归零（否则战绩判重会出错）');
-ok(room.players.every(function (p) { return p.hand.length === 6; }), '新一局每人重新发 6 张');
-ok(!SM.findPlayer(room, 'b'), '★ 没点「开始下一局」的 b 不在新一局里（没点的人不影响别人）');
-ok(nextStarted.removed.indexOf('b') >= 0, '★ b 被告知「新的一局开始了」（removed 名单里有他）');
+/* ★ C-3b：只有参与的人重新发牌，旁听的人手牌清空。 */
+ok(SM.playingPlayers(room).every(function (p) { return p.hand.length === 6; }), '新一局参与的人各 6 张');
+ok(SM.findPlayer(room, 'b').hand.length === 0, '旁听的人没有手牌');
+/* ★ C-3b：没点的人不再被删出房间，座位留着、名字留着，只是不参与这一局。 */
+ok(!!SM.findPlayer(room, 'b'), '★ 没点「开始下一局」的 b 仍在房间里（座位不删）');
+ok(SM.findPlayer(room, 'b').benched === true, '★ 他变成旁听（benched）');
+ok(nextStarted.removed.length === 0, '★ 没人被告知「你被移出了」（removed 为空）');
 
 console.log('\n[发起人可以取消，别人不行]');
 room = makeRoom([P('a'), P('b'), P('c')]);
