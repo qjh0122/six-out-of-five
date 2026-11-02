@@ -1006,8 +1006,14 @@
         sp.appendChild(el('p', 'sp-tip',
           '这一局你在旁边看。打完会回到结算页，点「开始下一局」就能上场 —— '
           + '座位、分数、房号都还在。'));
+        /* ★ v123：旁听的人要能看到「打到哪了」，否则这张卡只有一句「你不在这局」，
+         * 干等一局（最多 10 把）居然没有任何进度可看 —— 那才是真的没意义。
+         * 只给「已交 N/M」这种聚合信息：不泄露任何人的牌，也不猜谁在改。 */
+        var actP = StateMachine.playingPlayers(room);
+        var lockedN = actP.filter(function (q) { return StateMachine.isRoundLocked(q, round); }).length;
         sp.appendChild(el('p', 'sp-sub', '第 ' + round + ' 轮 · 本局第 ' + (room.handCount || 1)
-          + ' 把' + (room.handLimit ? ' / 共 ' + room.handLimit + ' 把' : '')));
+          + ' 把' + (room.handLimit ? ' / 共 ' + room.handLimit + ' 把' : '')
+          + ' · 已交 ' + lockedN + '/' + actP.length));
         /* ★ 出口。底部那条动作条整块藏起来了（手牌 / 提交 / 结束本局 / 离开都在里面），
          * 于是旁听的人**没有任何办法退出** —— 只能关掉页面或者干等这一局打完。
          * 这里必须单独给一颗：旁听是「我自己选择不在这一局上场」，
@@ -4402,12 +4408,13 @@
       });
     }
     $('#btn-add-bot').addEventListener('click', onAddBot);
-    /* 候场期改把数（v117 / C-3）：和「不等他」一样是渲染出来的按钮，走委托。
-     * 绑在 #settle-body 上而不是 document：这块只存在于结算页，
-     * 挂在 document 上等于给每一次点击（包括牌桌上的）都加一道 closest 查询。 */
-    var settleBody = $('#settle-body');
-    if (settleBody) {
-      settleBody.addEventListener('click', function (e) {
+    /* 候场期改把数（v117 / C-3）与「等人」（v122）：都是渲染出来的按钮，走委托。
+     * ★ v122 起监听从 `#settle-body` 上移到 `#screen-settle`：
+     * 「等人」现在挂在 `#settle-wait` 那一行（不在滚动区里），
+     * 挂在 body 上会漏掉它 —— 点下去什么都不发生，而且没有任何报错。 */
+    var settleScreen = $('#screen-settle');
+    if (settleScreen) {
+      settleScreen.addEventListener('click', function (e) {
         if (!e.target || !e.target.closest) return;
         var hold = e.target.closest('[data-hold-next]');
         if (hold && !hold.disabled) {

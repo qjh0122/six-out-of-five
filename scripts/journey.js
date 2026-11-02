@@ -1283,12 +1283,26 @@ async function main() {
    * 用的是真按钮 + 真协议，不是直接改前端状态。 */
   console.log('\n[7e] 等个人：挂起 → 报了名也不开牌 → 放行 → 立刻开');
   const holdShown = await waitFor(
-    '!!document.querySelector("#settle-body [data-hold-next]")', 8000, '结算页没有「先别开，我等个人」');
+    '!!document.querySelector("[data-hold-next]")', 8000, '结算页没有「先别开，我等个人」');
   ok(holdShown, '★ 结算页有「先别开，我等个人」（房主可见）');
 
-  await evaluate('document.querySelector(\'#settle-body [data-hold-next="1"]\').click()');
+  /* ★ 必须在首屏：结算列表在 390×844 上要滚动才看得全，而房主只有几秒决策时间。
+   * 第一版把它放在滚动区底部，功能"存在"但点不到 —— 那等于不存在。 */
+  const holdRect = await evaluate(`(function(){
+    var b = document.querySelector('[data-hold-next]');
+    if (!b) return null;
+    var r = b.getBoundingClientRect();
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom),
+             vh: window.innerHeight, w: Math.round(r.width), h: Math.round(r.height) };
+  })()`);
+  ok(holdRect && holdRect.top >= 0 && holdRect.bottom <= holdRect.vh,
+    '★★ 「等人」在首屏可见（不用滚动就能点）', holdRect && JSON.stringify(holdRect));
+  ok(holdRect && holdRect.h >= 44 && holdRect.w >= 44,
+    '★ 热区 ≥ 44×44（拇指点得到）', holdRect && (holdRect.w + '×' + holdRect.h));
+
+  await evaluate('document.querySelector(\'[data-hold-next="1"]\').click()');
   const held = await waitFor(
-    '!!document.querySelector(\'#settle-body [data-hold-next="0"]\')', 8000, '挂起后按钮没变成「人齐了，开牌」');
+    '!!document.querySelector(\'[data-hold-next="0"]\')', 8000, '挂起后按钮没变成「人齐了，开牌」');
   ok(held, '★ 点一下变成「人齐了，开牌」（服务端收下并广播回来了，不是前端自己翻转的）');
   const heldTxt = await evaluate('(document.getElementById("settle-wait").textContent||"").trim()');
   ok(/挂起/.test(heldTxt || ''), '★ 结算页说明「房间已挂起」', JSON.stringify(heldTxt));

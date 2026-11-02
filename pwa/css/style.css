@@ -3303,32 +3303,53 @@ body.is-dragging { cursor: grabbing; }
 .ls .shl-opt { min-width: 88px; min-height: 88px; font-size: 20px; }
 
 /* ---------- 「等个人」（v122） ----------
- * 它和 5 个把数档位挤在同一行里 —— 不是设计上想挤，是结算页在 390×844 上
- * 已经到顶了：单独一开一块（按钮 88 + 说明一行）会把内容推到底部动作条下面，
- * ui-flow 直接报 cover 重叠 4177px²（被压掉 75%）。
- * 88 设计 px ≈ 44 实际（竖屏 scale≈0.52），是本项目热区下限，不能再压。 */
-.shl-hold {
+ * 房主的「等人 / 开牌」跟「开始下一局」同排 —— 这是试过三个位置之后唯一不撞的一处。
+ * 结算页在 390×844 上没有多余高度：滚动区里放一块会把内容推到底部动作条下面
+ * （cover 重叠 4177px²）；塞进 settle-wait 那一行会把它抬高 44，反过来压住把数块。
+ * 同排只缩短主按钮，不新增任何高度。
+ * 88 设计 px ≈ 44 实际（竖屏 scale≈0.52），是本项目热区下限。 */
+.next-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 560px;
+}
+.next-row #btn-next { flex: 1 1 auto; width: auto; min-width: 0; }
+.next-row .btn-hold {
   flex: 0 0 auto;
-  min-width: 88px;
+  /* 120 设计 px ≈ 62 实际：两个字要放得下，字号还得看得清。
+   * 88 宽时字号只能压到 22 设计（≈11 实际），截图上几乎读不出来 ——
+   * 热区够不等于能用。主按钮从 462 缩到 430 设计，一句「开始下一局」仍然放得下。 */
+  width: 120px;
   min-height: 88px;
-  padding: 0 10px;
-  border-radius: 12px;
+  margin: 8px 0;
+  padding: 0;
+  border-radius: 16px;
   border: 1px dashed rgba(255, 255, 255, 0.28);
   background: transparent;
   color: var(--gray-aux);
-  font-size: 22px;
+  font-size: 34px;
   font-family: inherit;
   cursor: pointer;
 }
 /* 挂起态用暖黄：它不是「选中了某个档位」，而是「整桌暂停中」 */
-.shl-hold.is-on {
+.next-row .btn-hold.is-on {
   background: rgba(255, 176, 32, 0.18);
   border-style: solid;
   border-color: #ffb020;
   color: #ffb020;
   font-weight: 700;
 }
-.ls .shl-hold { min-width: 88px; min-height: 88px; font-size: 18px; padding: 0 6px; }
+/* 横屏的 `.ls #screen-settle .room-actions .btn { width:100% }` 特异性更高，
+ * 会把这颗方块撑满一整行 —— 显式盖回来。 */
+.ls #screen-settle .room-actions .next-row .btn-hold {
+  width: 120px;
+  min-height: 88px;
+  font-size: 34px;
+}
+.ls #screen-settle .room-actions .next-row #btn-next { width: auto; }
 
 /* ---------- toast ---------- */
 .toast {

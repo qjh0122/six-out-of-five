@@ -208,14 +208,24 @@ console.log('\n[6] 接线守卫（单测绿、真机失败过两次，都是这�
   ok(/MODE === 'local'\s*\n\s*\? Promise\.resolve\(local\.holdNext/.test(rs), '对外接口接到两条路上');
 
   ok(/data-hold-next/.test(sv) && /data-hold-next/.test(game), '★ 按钮走委托（渲染不绑事件）');
-  /* 「等个人」并进把数那一行（v122 定稿）：结算页高度是硬约束，
-   * 单独一块会把内容推到动作条下面（ui-flow 报 cover 4177px²）。
-   * 所以它必须挂在 handLimitBlock 里，而 handLimitBlock 必须真的被画进结算页。 */
-  ok(/function handLimitBlock/.test(sv) && /setAttribute\('data-hold-next'/.test(sv),
-    '★ 「等个人」并进把数行（不新增块高度）');
-  ok(/inner\.appendChild\(handLimitBlock\(room\)\)/.test(sv), '★ 它真的被画进结算页（不只是导出）');
+  /* 「等个人」与「开始下一局」同排（v122 定稿）：结算页在 390×844 上没有多余高度，
+   * 新增的任何一行都会撞到底部动作条（两次实测都是 cover）。同排只缩短主按钮。 */
+  ok(/function renderHoldBtn/.test(sv) && /#btn-hold/.test(sv) && /setAttribute\('data-hold-next'/.test(sv),
+    '★ 「等人」按钮由 renderHoldBtn 控制（文案/状态/aria 都跟着变）');
+  ok(/class="next-row"/.test(html) && /id="btn-hold"/.test(html),
+    '★ 按钮和「开始下一局」在同一行（不新增高度）');
+  /* 委托必须挂在 #screen-settle 上：挂在 #settle-body 上就漏掉 settle-wait 里的按钮。 */
+  ok(/\$\('#screen-settle'\)[\s\S]{0,400}data-hold-next/.test(game),
+    '★ 点击委托覆盖 #settle-wait（挂在 #settle-body 上会漏掉它）');
+  ok(/inner\.appendChild\(handLimitBlock\(room\)\)/.test(sv), '把数块仍画在结算页');
   ok(/btn-hold-off/.test(html) && /btn-hold-off/.test(game), '★ 就位态也有解除入口（房主点完下一局后够得着）');
   ok(/onHoldNext/.test(game), '前端有动作实现');
+
+  /* 挂起时房主要能看出「朋友到了没」：只报「N 人已进入」等于让他自己数数。 */
+  ok(/joinedLate && p\.wantNext/.test(sv), '★ 房主视角点名「谁进来了，可以开牌」');
+  /* 旁听的人要能看到进度（已交 N/M），否则这一局只是干等。 */
+  ok(/isRoundLocked\(q, round\)/.test(game) && /已交 '/.test(game),
+    '★ 旁听卡显示「已交 N/M」进度（不泄露任何人的牌）');
 }
 
 /* ================================================================ */
