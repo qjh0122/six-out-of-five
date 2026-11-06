@@ -169,14 +169,26 @@ console.log('\n[6] 从房号进来的人：wantNext 与 ready 必须同步');
 }
 
 /* ========================================================================== */
-console.log('\n[7] 三条判据一条都不能少（源码级）');
+console.log('\n[7] 四条判据一条都不能少（源码级）');
 {
+  /* v126 之后这三条搬进了 nextRoundGate —— canStartNext 只剩一行布尔转发。
+   * 守卫跟着搬：判据还在不在，比它写在哪个函数名底下重要。 */
   const src = fs.readFileSync(path.join(ROOT, 'js', 'stateMachine.js'), 'utf8');
-  const fn = src.slice(src.indexOf('function canStartNext('), src.indexOf('function wantNext('));
-  ok(/list\.length < CONFIG\.MIN_PLAYERS/.test(fn), '① 人数够');
-  ok(/list\.every\(function \(p\) \{ return p\.ready; \}\)/.test(fn), '② 报名的人都就位');
-  ok(/return pendingNextPlayers\(room\)\.length === 0;/.test(fn), '★ ③ 房间里没有还没表态的真人');
+  const fn = src.slice(src.indexOf('function nextRoundGate('), src.indexOf('function canStartNext('));
+  ok(/list\.length < need/.test(fn), '① 人数够');
+  ok(/notReady/.test(fn), '② 报名的人都就位（正常路径不会触发，留着是兜底）');
+  ok(/code: offline\.length \? GATE_CODES\.WAITING_OFFLINE/.test(fn),
+    '★ ③ 房间里没有还没表态的真人（掉线单独一个原因码）');
+  ok(/if \(holdNextOf\(room\)\) return \{ ok: false, code: GATE_CODES\.HOLD \}/.test(fn),
+    '★ ④ 房主挂起最优先（放在人数之前，否则会说错人）');
   eq(CONFIG.MIN_PLAYERS, 2, '门槛常量本身没被动过（改的是分母，不是阈值）');
+
+  /* canStartNext 必须是**转发**，不能自己再算一遍 ——
+   * 两份实现迟早分叉（一份允一份拒），那正是这个版本要消掉的东西。 */
+  const cfn = src.slice(src.indexOf('function canStartNext('), src.indexOf('function wantNext('));
+  ok(/return nextRoundGate\(room\)\.ok;/.test(cfn),
+    '★ canStartNext 只剩布尔转发（不保留第二套判据）');
+  ok(!/MIN_PLAYERS/.test(cfn), '★ 转发里没有自己的门槛常量');
 }
 
 /* ========================================================================== */

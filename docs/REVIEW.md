@@ -68,7 +68,7 @@
 | 社交粘性 +0.5 | 成就可被别人点开看，形成可比较的社交货币 | `achievementsView.entryRowHtml` + 座位面板入口 |
 | 架构清晰度 +0.5 | 存储 / 统计 / 转义三处重复实现收口；`bindEvents` 786 → 20 行；`state` 清单化 | `storage.test.js` / `stats.test.js` / `binder-split.test.js` / `state-reset.test.js` |
 | 代码质量 +0.5 | 隐式字段补进声明，新模块都写了「为什么不这么做」 | `state-reset.test.js` [3]「不许出现清单外字段」 |
-| 可测试性 0 | 140 文件 / 5434 断言、13 组结构不变量守卫；v124「回放把次序号」44 项、v125「重启补挂 + 三个到期回调」55 项 | `npm test` |
+| 可测试性 0 | 141 文件 / 5494 断言、13 组结构不变量守卫；v125「重启补挂 + 到期回调」55 项、v126「门槛原因码 + 出口语义」54 项 | `npm test` |
 | 新人上手成本 +1.0 | 三处「该改哪儿」有了唯一答案 | 同上 |
 | 回归防护力 +1.5 | 8 个红探针修绿 + UI 巡检进 CI，本轮真抓到两次回归 | GitHub Actions `ui-probe` job |
 | 缺陷密度 +0.5 | BACKLOG 全量状态行 + 开放条目 17 → 6 | `node scripts/backlog-status.js` |

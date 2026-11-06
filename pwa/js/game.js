@@ -20,6 +20,9 @@
    * 它没有注入需求，所以直接执行并挂到 LXW）。调用点里仍然判空 ——
    * 老客户端缓存的 index.html 没有这个脚本，这里拿到 undefined。 */
   var AV = window.LXW.achievementsView;
+  /* 「下一局为什么开不了」的文案表（v126）。与 AV 一样是对象不是工厂，
+   * 但调用点仍判空：老客户端缓存的 index.html 里没有这个脚本。 */
+  var Hints = window.LXW.nextRoundHints;
   var AVATAR_COLORS = U.AVATAR_COLORS, colorFor = U.colorFor, short = U.short;
   var netText = U.netText, netCls = U.netCls, pad2 = U.pad2, fmtTime = U.fmtTime;
   var SUIT_CHAR = U.SUIT_CHAR, cardText = U.cardText;
@@ -650,44 +653,45 @@
      * 会把还在结算页看回放的人算进去，永远等不到。 */
     var act = nextWait ? StateMachine.nextRoundPlayers(room) : StateMachine.activePlayers(room);
     var allReady = act.length > 0 && act.every(function (q) { return q.ready; });
-    /* ★ v121：还没表态的真人。allReady 只回答「报名的人是不是都就位了」，
-     * 它答不了「还有没有人没表态」—— 而后者才是开局真正在等的东西。
-     * 三缺一的时候 allReady 是 true，界面就写了「全部准备好，马上开始」，
-     * 然后一直不动。这一幕是真机上被报回来的（「已准备 3/3」卡死）。 */
-    var pending = (nextWait && StateMachine.pendingNextPlayers)
-      ? StateMachine.pendingNextPlayers(room)
-      : [];
-    function whoText(list) {
-      var names = list.map(function (q) { return short(q.nickname || '他'); });
-      if (names.length <= 2) return names.join('、');
-      return names.slice(0, 2).join('、') + ' 等 ' + names.length + ' 人';
-    }
 
     var hint = $('#room-hint');
     hint.classList.toggle('ready', false);
-    /* 「等个人」（v122）：房主挂起时，「等 X 点开始下一局」这句是**错的** ——
-     * 真实原因不是有人没表态，而是房主说了先别开。不单独说一句，
-     * 就会变成「所有人都已经就位，界面还在等一个不存在的人」。 */
-    var holdOn = !!(nextWait && StateMachine.holdNextOf && StateMachine.holdNextOf(room));
+    /* 原因码先算一次：下面的话术、以及屏底那颗「人齐了，开牌」，
+     * 读的必须是同一个结论（一处算两遍就会分叉）。 */
+    var gate = nextWait ? StateMachine.nextRoundGate(room) : null;
+    /* ★ v126：就位态这句话不再由这里逐条 if 出来，改由「原因码 → 文案表」。
+     *
+     * 旧写法的病：门槛有四条否决条件，而这里只渲染了三条的原因。
+     * 2 人房对手一掉线，`pending` 里挂着他 → 界面写「等 X 点开始下一局」，
+     * 而 X 已经掉线；「不等他」还在，点下去返回成功，房间依旧开不了。
+     * 现在 code 由 SM.nextRoundGate 给，文案在 nextRoundHints 里一 code 一条 ——
+     * 状态机加条件而文案没跟上时，守卫会红（两边枚举必须等值）。
+     *
+     * 注意只用**就位态**（nextWait）。WAITING 阶段问的是另一件事
+     * （还没开打，等大家点准备），那是下面 else 分支的语义，不能混。 */
     if (room.dissolve && room.dissolve.active) {
       hint.textContent = '正在等大家表态要不要结束本局…';
-    } else if (holdOn) {
-      hint.textContent = isOwner
-        ? '你在等朋友进来 · 人齐了点「人齐了，开牌」'
-        : '房主在等朋友进来，先不开牌';
-      /* 还剩多久（v125）：同一处 tick 每秒只改这个 span。
-       * 就位态和结算页共用 `.hold-left` 这个类，见 syncHoldTick。 */
-      hint.appendChild(el('span', 'hold-left', holdLeftText(room)));
-    } else if (pending.length) {
-      hint.textContent = '等 ' + whoText(pending) + ' 点「开始下一局」…';
+    } else if (nextWait) {
+      hint.textContent = (Hints && Hints.hintFor)
+        ? Hints.hintFor(gate.code, {
+          stage: 'ready',
+          isOwner: isOwner,
+          myId: state.myId,
+          pending: gate.pending || [],
+          offline: gate.offline || [],
+          joined: gate.joined,
+          need: gate.need
+        })
+        : '';
+      if (gate.code === StateMachine.GATE_CODES.OK) hint.classList.add('ready');
+      /* 挂起时补一句还剩多久（v125）：同一处 tick 每秒只改这个 span。 */
+      if (gate.code === StateMachine.GATE_CODES.HOLD) {
+        hint.appendChild(el('span', 'hold-left', holdLeftText(room)));
+      }
     } else if (act.length < CONFIG.MIN_PLAYERS) {
-      hint.textContent = nextWait
-        ? '还差 ' + (CONFIG.MIN_PLAYERS - act.length) + ' 人才能开下一局，等其他人点「开始下一局」'
-        : '还差 ' + (CONFIG.MIN_PLAYERS - act.length) + ' 人才能开局，可以点「补 AI 队友」一个人先玩';
+      hint.textContent = '还差 ' + (CONFIG.MIN_PLAYERS - act.length) + ' 人才能开局，可以点「补 AI 队友」一个人先玩';
     } else if (!allReady) {
-      /* 就位态下「准备」这个词已经不存在了（点开始下一局即就位），
-       * 所以这里等的是「别人点开始下一局」，不是「别人点准备」。 */
-      hint.textContent = nextWait ? '等其他人点「开始下一局」…' : '等待所有玩家准备…';
+      hint.textContent = '等待所有玩家准备…';
     } else {
       hint.textContent = '全部准备好，马上开始';
       hint.classList.add('ready');
@@ -743,7 +747,10 @@
      * 他就得先撤回报名（unWantNext）再回去点，中途还会把自己从下一局里摘掉，
      * 解除之后反而变成「还差一个人（他自己）」。 */
     var holdBtn = $('#btn-hold-off');
-    if (holdBtn) holdBtn.classList.toggle('hidden', !(nextWait && isOwner && holdOn));
+    if (holdBtn) {
+      holdBtn.classList.toggle('hidden',
+        !(nextWait && isOwner && gate && gate.code === StateMachine.GATE_CODES.HOLD));
+    }
 
     /* 挂起中，这屏也有 `.hold-left`（hint 里那个 span）→ 让倒计时转起来；
      * 没挂起时这一句什么也不做（内部先判 holdNextOf）。 */

@@ -131,11 +131,14 @@ console.log('\n[5] 确认框退场：现在没有任何人被挤出去（v121）
   /* 反过来：挤不出去之后，「有人一直在结算页」这件事必须有可见的出口。
    * 这就是「不等他」，它现在挂在还没表态的人身上（不是「报名没准备的人」）。 */
   ok(/StateMachine\.pendingNextPlayers/.test(game), '★「不等他」的候选来自 pendingNextPlayers');
-  /* 窗口给到 9000：renderRoom 在 v125 多了几行（挂起倒计时的 span 与 syncHoldTick），
-   * 6000 的窗口会把「等 X 点开始下一局」那句挤出切片 —— 那时的红是窗口太窄，
-   * 不是文案没了。 */
+  /* v126：就位态那句话不再由 game.js 逐条 if 出来，改由原因码查表。
+   * 所以「点名在等谁」这条断言跟着搬到文案表里 —— 守的东西没变，
+   * 守的位置从「某个函数里的字符串」变成「表里那一条」。 */
   const hint = game.slice(game.indexOf('function renderRoom'), game.indexOf('function renderRoom') + 9000);
-  ok(/等 ' \+ whoText\(pending\) \+ ' 点「开始下一局」/.test(hint),
+  ok(/Hints\.hintFor\(gate\.code/.test(hint),
+    '★ 就位态文案由原因码查表（不在渲染函数里再 if 一遍）');
+  const hintsSrc = fs.readFileSync(path.join(ROOT, 'js', 'nextRoundHints.js'), 'utf8');
+  ok(/whoText\(others\)/.test(hintsSrc) || /whoText\(ctx\.pending\)/.test(hintsSrc),
     '★ 等待文案点名「在等谁」（只说「等其他人」等于没说）');
 
   /* 自己请假那颗按钮：必须真的接在 dropNext 上，而且目标是自己。 */

@@ -1288,13 +1288,93 @@
    * 既不在报名名单、也不在等待名单，服务端根本看不见他。
    * 那个洞由 ① 补 —— 见上面 setHoldNext 的说明。
    */
-  function canStartNext(room) {
-    /* 房主说了在等人 → 谁点都不开。这条放在最前：它是最便宜也最优先的否决。 */
-    if (holdNextOf(room)) return false;
+  /* 下一局为什么开不了 —— 原因码（v126）。
+   *
+   * ── 为什么要把布尔改成原因码
+   * 旧实现 `canStartNext` 返回 true/false，而**否决条件有四条**，
+   * 视图却只渲染了其中三条的原因。于是 2 人房里对手一掉线：
+   *   · 房间确实开不了（人数不够）；
+   *   · 界面写「等 X 点开始下一局」—— 而 X 已经掉线，永远不会点；
+   *   · 「不等他」还在，点下去返回**成功**，房间依旧开不了。
+   * 玩家看到的是一句真话（在等人）、一个成功提示（已跳过）、和一个不动的房间。
+   *
+   * 现在每个否决条件都有自己的 code，视图按 code 出话。以后再加第 5 个条件时，
+   * `GATE_CODES` 与视图的文案表必须同时加，守卫会拦下只改一边的提交。
+   *
+   * ── 5 个 code 的语义（顺序即优先级）
+   *   HOLD           房主明说「先别开牌」，谁点都不开（最优先、最便宜）
+   *   NEED_PLAYERS   能上场的人不够 MIN_PLAYERS —— 这条下面再分「有人掉线」的说法
+   *   WAITING_OTHERS 还有在场真人没表态（没点开始下一局）
+   *   WAITING_OFFLINE 没表态的人里有掉线的（他没连接，点了也收不到）
+   *   OK             可以开
+   */
+  var GATE_CODES = {
+    OK: 'OK',
+    HOLD: 'HOLD',
+    NEED_PLAYERS: 'NEED_PLAYERS',
+    WAITING_OTHERS: 'WAITING_OTHERS',
+    WAITING_OFFLINE: 'WAITING_OFFLINE'
+  };
+
+  /* 下一局的门槛：返回 { ok, code, ... }。
+   *
+   * 四个判据的**顺序不能换**：先挂起（最便宜、且是唯一「与人无关」的否决），
+   * 再人数（结构性不足），最后才是「在等谁」。顺序换了会出现
+   * 「明明人不够，却说在等某个掉线的人」—— 那会把玩家引向一个解决不了的方向。
+   */
+  function nextRoundGate(room) {
+    if (!room) return { ok: false, code: GATE_CODES.NEED_PLAYERS, joined: 0, need: CONFIG.MIN_PLAYERS };
+    if (holdNextOf(room)) return { ok: false, code: GATE_CODES.HOLD };
+
+    var need = CONFIG.MIN_PLAYERS;
+    /* ★ 「还在等谁」要排在「人够不够」前面 —— 这个顺序是 v126 里改过一版的。
+     *
+     * 反过来（先判人数）会把最常见的场景判错：2 人房里我报了名、对方还没点，
+     * 此时「能上场 1 人 < 2」成立，于是说「人不够，去补 AI」——
+     * 可对方只是还没来得及点，几十秒后他就会点。把「他还没表态」说成
+     * 「人不够」，等于催房主去补一只 AI 把自己朋友挤成旁听。
+     *
+     * 正确的语义：**只要房间里还有能表态的人，就等人**；
+     * 等所有人都表完态还是不够，才叫「人不够」。
+     * 掉线的人也要等（他可能重连），只是话要说得不一样 —— 那是 WAITING_OFFLINE。 */
+    var pending = pendingNextPlayers(room);
+    if (pending.length) {
+      var offline = pending.filter(function (p) { return p.connected === false; });
+      return {
+        ok: false,
+        code: offline.length ? GATE_CODES.WAITING_OFFLINE : GATE_CODES.WAITING_OTHERS,
+        pending: pending,
+        offline: offline,
+        joined: nextRoundPlayers(room).length,
+        need: need
+      };
+    }
+
     var list = nextRoundPlayers(room);
-    if (list.length < CONFIG.MIN_PLAYERS) return false;
-    if (!list.every(function (p) { return p.ready; })) return false;
-    return pendingNextPlayers(room).length === 0;
+    /* 已经报了名但没就位：正常路径下不会出现（wantNext 把两件事绑成一次点击），
+     * 留着是因为老快照/异常路径可能带出这种状态。它实质也是「能上场的人不够」，
+     * 所以归到 NEED_PLAYERS，不单独占一个 code —— 视图不需要为它多一个分支。 */
+    var notReady = list.filter(function (p) { return !p.ready; });
+    if (list.length < need || notReady.length) {
+      return {
+        ok: false,
+        code: GATE_CODES.NEED_PLAYERS,
+        joined: list.length,
+        need: need,
+        notReady: notReady.length,
+        /* 到这一步「没人可等」了：在场的真人都表过态，不够就是不够。
+         * 视图据此说「还差 N 人 · 可以补 AI」，而不是「等 X」。 */
+        offline: []
+      };
+    }
+
+    return { ok: true, code: GATE_CODES.OK, joined: list.length, need: need };
+  }
+
+  /* 能不能开下一局。**保留成布尔转发**：4 个生产调用点与 40 多处测试断言
+   * 读的都是它，改成对象会让这一整片一起红 —— 而它们要问的确实只是「能不能」。 */
+  function canStartNext(room) {
+    return nextRoundGate(room).ok;
   }
 
   /* 点「开始下一局」：报名 + 就位，一次点击（C-2 / v116）。
@@ -1437,6 +1517,35 @@
     if (!target || target.left) return { ok: false, error: '找不到要跳过的人' };
     if (target.isBot) return { ok: false, error: 'AI 不用催，它已经在等你了' };
     if (target.wantNext && target.ready) return { ok: false, error: '他已经准备好了' };
+
+    /* ★ v126（#11 止血）：跳过一个人之后**必须还开得起来**，否则这个动作只是
+     * 把「在等一个掉线的人」换成「等人够了再说」，中间多了一次**假成功**。
+     *
+     * 具体场景（不需要任何人做错事）：2 人房，对手在结算期掉线。
+     * v113 的设计是结算期掉线只标 `connected = false`、**不判 left** —— 这是对的，
+     * 他随时可能回来。于是：
+     *   · 我报名 → 能上场的是 1 人 < 2；
+     *   · `pendingNextPlayers` 不过滤 connected，那个掉线的人一直挂在等待名单里；
+     *   · 界面写「等 X 点开始下一局」，并且「不等他」一直亮着；
+     *   · 我点下去，旧实现返回 ok（真的把他 outNext 了），房间依旧开不了。
+     *
+     * 判据用 `nextRoundPlayers`（已报名的人）长度：target 本来就没报名，
+     * 不在这个名单里，所以跳过他不改变长度。长度本身不够，说明**跳过也救不了**，
+     * 这时候必须明说，让玩家去按那颗真正有用的键（补 AI），而不是再点一次「不等他」。
+     *
+     * 注意：这条只拦 `target ≠ self`。自己说「这一把先不打」必须继续允许 ——
+     * 那是 v121 留下的唯一出口，拦掉等于把人锁在房间里。 */
+    var joiners = nextRoundPlayers(room);
+    if (joiners.length < CONFIG.MIN_PLAYERS) {
+      return {
+        ok: false,
+        code: GATE_CODES.NEED_PLAYERS,
+        error: joiners.length <= 1
+          ? '现在只有你一个人能上场，跳过他也开不了 —— 补个 AI 队友，或者等他回来'
+          : '人不够，跳过他也开不了'
+      };
+    }
+
     if (target.outNext && !target.wantNext) return { ok: true, room: room };   // 幂等
 
     target.wantNext = false;
@@ -1885,6 +1994,8 @@
     unWantNext: unWantNext,
     nextRoundPlayers: nextRoundPlayers,
     canStartNext: canStartNext,
+    nextRoundGate: nextRoundGate,
+    GATE_CODES: GATE_CODES,
     holdNextOf: holdNextOf,
     holdNextLeftMs: holdNextLeftMs,
     setHoldNext: setHoldNext,
