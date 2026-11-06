@@ -115,7 +115,12 @@ ok(SM.activePlayers(room).length === 2, '在场人数不会被重复扣');
 console.log('\n[服务端宽限与客户端一致]');
 const hubSrc = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'server', 'hub.js'), 'utf8');
 const storeSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'js', 'roomStore.js'), 'utf8');
-const hubMs = (hubSrc.match(/GRACE_MS\s*=\s*(\d+)/) || [])[1];
+/* 服务端从 v125 起把宽限改成「环境变量可覆写 + 默认 90 秒」
+ * （90 秒在 CI 里等于永不发生，到期回调体一次都跑不到）。
+ * 所以这里不能再按 `GRACE_MS = 90000` 的字面量抠数字 ——
+ * 要守的是「默认值仍是 90 秒」，写法跟着改。 */
+const hubMs = (hubSrc.match(/GRACE_MS\s*=\s*Number\(process\.env\.GRACE_MS\)\s*\|\|\s*(\d+)/) || [])[1]
+  || (hubSrc.match(/GRACE_MS\s*=\s*(\d+)/) || [])[1];
 const storeMs = (storeSrc.match(/GRACE_MS\s*=\s*(\d+)/) || [])[1];
 ok(hubMs === '90000', '服务端宽限 90 秒', 'got ' + hubMs);
 ok(storeMs === '90000', '客户端宽限 90 秒', 'got ' + storeMs);

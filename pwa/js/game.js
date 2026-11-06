@@ -485,6 +485,8 @@
       }
       showScreen('screen-settle');
       renderSettle(room);
+      /* 挂起中才启动，其余一律停掉 —— 见 syncHoldTick 上方注释 */
+      syncHoldTick(room);
       if (!state.settleCelebrated) {
         state.settleCelebrated = true;
         /* ★ v113（A-4）：庆祝音改用**与名次同一份**结果（settleRank）。
@@ -673,6 +675,9 @@
       hint.textContent = isOwner
         ? '你在等朋友进来 · 人齐了点「人齐了，开牌」'
         : '房主在等朋友进来，先不开牌';
+      /* 还剩多久（v125）：同一处 tick 每秒只改这个 span。
+       * 就位态和结算页共用 `.hold-left` 这个类，见 syncHoldTick。 */
+      hint.appendChild(el('span', 'hold-left', holdLeftText(room)));
     } else if (pending.length) {
       hint.textContent = '等 ' + whoText(pending) + ' 点「开始下一局」…';
     } else if (act.length < CONFIG.MIN_PLAYERS) {
@@ -739,6 +744,10 @@
      * 解除之后反而变成「还差一个人（他自己）」。 */
     var holdBtn = $('#btn-hold-off');
     if (holdBtn) holdBtn.classList.toggle('hidden', !(nextWait && isOwner && holdOn));
+
+    /* 挂起中，这屏也有 `.hold-left`（hint 里那个 span）→ 让倒计时转起来；
+     * 没挂起时这一句什么也不做（内部先判 holdNextOf）。 */
+    syncHoldTick(room);
   }
 
   /* ====================== 准备态：画在牌桌上（v82） ======================
@@ -1650,6 +1659,51 @@
     chip.classList.remove('hidden');
     tickSplitTimer();
     splitTickTimer = setInterval(tickSplitTimer, 1000);
+  }
+
+  /* ---------------------------- 「等人」倒计时 ----------------------------
+   * 只在房主挂起「先别开牌」时出现，结算页和就位态共用 `.hold-left`。
+   *
+   * 为什么要有：服务端最长等 3 分钟就自动放行，而以前界面上一个字都不说 ——
+   * 所有人只看到「房间已挂起」，没人知道它会不会自己开、还有多久。
+   * 到点那一刻牌突然开了，反而像 bug。
+   *
+   * 为什么不整块重绘：整块重绘会打断正在点的按钮、也会让手牌动画重来。
+   * 所以每秒只改这一个 span 的文本，做法与上面的分牌倒计时一致。 */
+  var holdTickTimer = null;
+
+  /* settleView 里实现（它同时要渲染那一行），这里只做转发。
+   * `Settle` 是 var，在本文件靠后赋值 —— 调用发生在界面初始化之后，
+   * 但保留 undefined 判断：万一有人在赋值前渲染，也只是少一句倒计时，不该抛。 */
+  function holdLeftText(room) {
+    if (!Settle || !Settle.holdLeftText) return '';
+    return Settle.holdLeftText(room);
+  }
+
+  function stopHoldTick() {
+    if (holdTickTimer) { clearInterval(holdTickTimer); holdTickTimer = null; }
+  }
+
+  function tickHoldLeft() {
+    var room = state.room;
+    if (!room || !(StateMachine.holdNextOf && StateMachine.holdNextOf(room))) { stopHoldTick(); return; }
+    var nodes = document.querySelectorAll('.hold-left');
+    if (!nodes.length) { stopHoldTick(); return; }
+    /* 整屏被切走时也要停：元素还在 DOM 里（只是祖先 display:none），
+     * 只按「找不找得到」判断会让这个 timer 在牌桌上白跑一整局。 */
+    var visible = false;
+    for (var i = 0; i < nodes.length; i++) { if (nodes[i].offsetParent) { visible = true; break; } }
+    if (!visible) { stopHoldTick(); return; }
+    var txt = holdLeftText(room);
+    for (var j = 0; j < nodes.length; j++) nodes[j].textContent = txt;
+  }
+
+  function syncHoldTick(room) {
+    stopHoldTick();
+    if (!room || !(StateMachine.holdNextOf && StateMachine.holdNextOf(room))) return;
+    if (!document.querySelector('.hold-left')) return;
+    tickHoldLeft();
+    holdTickTimer = setInterval(tickHoldLeft, 1000);
   }
 
   /* 对手座位条可滑动方向提示：内容超宽时加右缘渐隐，滑到边缘取消对应侧渐隐 */

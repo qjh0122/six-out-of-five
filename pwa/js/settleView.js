@@ -974,6 +974,28 @@
    *   结论：不新增任何高度，只跟主按钮分一行宽度。房主只有几秒决策时间，它必须在首屏。
    *
    * 非房主看到的是同一句说明 —— 他们需要知道「为什么我点了没开牌」。 */
+  /* 「等人」还剩多久（v125）。
+   *
+   * 服务端下发的是**绝对到期时刻** `holdNextEndsAt`，不是「还剩几秒」——
+   * 相对秒数一旦离开响应就作废了，重绘时只能显示一个越来越旧的值；
+   * 而绝对时刻配合 `room.now` 可以扣掉设备时钟偏差（与分牌倒计时同一口径，
+   * 见 hub._view 里 splitEndsAt 那段注释）。设备时间被手动改过时，
+   * 纯按本地 Date.now() 算出来的倒计时会整体偏掉。
+   *
+   * 返回空串表示「现在没在等」——调用方据此决定要不要显示这一段。 */
+  function holdLeftText(room) {
+    var ends = Number(room && room.holdNextEndsAt) || 0;
+    if (!ends) return '';
+    var skew = (Number(room.now) || Date.now()) - Date.now();
+    var left = Math.ceil((ends - skew - Date.now()) / 1000);
+    if (!isFinite(left)) return '';
+    if (left <= 0) return '即将放行';
+    var m = Math.floor(left / 60);
+    var s = left % 60;
+    if (m > 0) return '还剩 ' + m + ' 分' + (s ? ' ' + s + ' 秒' : '');
+    return '还剩 ' + s + ' 秒';
+  }
+
   function renderWaitRow(room, text, holdNow) {
     var box = $('#settle-wait');
     var iAmOwner = !!(state && state.myId && room.ownerId === state.myId);
@@ -997,7 +1019,14 @@
         line = '还有朋友要来？点「等人」先别开牌';
       }
     }
-    if (box) box.textContent = line || '';
+    if (box) {
+      box.textContent = line || '';
+      /* 挂起时补一句「还剩多久」：3 分钟自动放行这件事，界面以前一个字都不说，
+       * 所有人只看到「房间已挂起」，没人知道它会不会自己开、什么时候开。
+       * 独立一个 span 是为了让 game.js 每秒只改这个节点（不整块重绘，
+       * 整块重绘会打断正在点的按钮和手牌动画）。 */
+      if (holdNow) box.appendChild(el('span', 'hold-left', holdLeftText(room)));
+    }
     renderHoldBtn(room, holdNow);
   }
 
@@ -1069,6 +1098,7 @@
       settleListEl: settleListEl,
       settleReasonText: settleReasonText,
       settleTipText: settleTipText,
+      holdLeftText: holdLeftText,
       renderSettle: renderSettle,
       openPrevResult: openPrevResult,
       closePrevResult: closePrevResult

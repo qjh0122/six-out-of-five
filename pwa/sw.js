@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v124';
+const CACHE_NAME = 'weile-liuxuanwu-v125';
 
 /* network-first 的超时上限。
  *

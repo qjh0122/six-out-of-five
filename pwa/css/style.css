@@ -3202,6 +3202,14 @@ body.is-dragging { cursor: grabbing; }
   color: var(--gray-aux);
 }
 .settle-wait { font-size: 24px; color: var(--gray-aux); }
+/* 「等人」还剩多久（v125）：跟在说明后面的一小截，不换行占高度 ——
+   结算页在 390×844 上没有多余的一行（见 settleView renderWaitRow 上方那段）。
+   等宽数字：不这样的话每跳一秒整句会左右抖一下。 */
+.hold-left {
+  margin-left: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
 
 /* ---------- 候场期改把数（v117 / C-3）----------
  * 一行排完：左边一句「下一局打几把」，右边五个档位。
