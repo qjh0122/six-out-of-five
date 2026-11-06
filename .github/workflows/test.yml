@@ -44,7 +44,26 @@ jobs:
           exit $fail
 
       - name: 全量测试
-        run: npm test
+        run: |
+          set +e
+          npm test > /tmp/t.log 2>&1
+          code=$?
+          cat /tmp/t.log
+          # ★ v128：把失败的文件提成 annotation。
+          # 在此之前 CI 红的时候，check-run 上只有一句「Process completed with exit code 1」，
+          # 想知道是哪条测试红的必须去翻几十万行的日志（而且没有 admin 权限连日志都下不了）。
+          # 这跟 v127 修的是同一个病：**失败必须自己说出来是哪一条**。
+          # 用 node 解析而不是 grep —— runner 的 C locale 下 grep 匹配不到 ✗ 这种多字节字符。
+          if [ $code -ne 0 ]; then
+            node -e "
+              const fs = require('fs');
+              const lines = fs.readFileSync('/tmp/t.log', 'utf8').split('\n');
+              const bad = lines.filter((l) => /^\s+✗/.test(l));
+              for (const l of bad) console.log('::error::' + l.trim());
+              console.log('::error::失败 ' + bad.length + ' 个测试文件（详情见日志末尾「失败详情」段）');
+            "
+          fi
+          exit $code
 
       # 测试产物（临时档案、.tmp）不该留在工作区；有残留多半说明某个测试没清干净，
       # 而"没清干净"正是下一次运行偶发失败的主要来源。
