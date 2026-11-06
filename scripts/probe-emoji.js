@@ -166,7 +166,7 @@ async function main() {
    * 不用改游戏代码加测试钩子：探针越少碰内部实现，验的东西越接近线上。 */
   const table = await evaluate(`(function(){
     return __wait(function(){
-      var rooms = JSON.parse(localStorage.getItem('weile_rooms') || '{}');
+      var rooms = JSON.parse(Store.read(Store.KEYS.ROOMS) || '{}');
       var id = Object.keys(rooms)[0];
       if (!id) return null;
       var room = rooms[id];
@@ -178,7 +178,7 @@ async function main() {
     }, 6000);
   })()`);
   await evaluate(`(function(){
-    var rooms = JSON.parse(localStorage.getItem('weile_rooms') || '{}');
+    var rooms = JSON.parse(Store.read(Store.KEYS.ROOMS) || '{}');
     var id = Object.keys(rooms)[0];
     if (id) { RoomStore.setReady(id, 'probe-pal', true); }
     return id;
@@ -369,7 +369,7 @@ async function main() {
 
   console.log('\n[4] 节流');
   const throttle = await evaluate(`(function(){
-    var cards = JSON.parse(localStorage.getItem('weile_rooms') || '{}');
+    var cards = JSON.parse(Store.read(Store.KEYS.ROOMS) || '{}');
     document.getElementById('btn-emoji').click();
     var cell = document.querySelectorAll('#emoji-grid .emoji-cell')[1];
     cell.click();

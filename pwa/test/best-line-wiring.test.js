@@ -89,7 +89,12 @@ ok(/if\s*\(\s*me\s*\)\s*\{/.test(before), '★ 调用点被 if (me) 包住（不
 /* 函数本身必须有「数据不全就返回 null」的早退 —— 没有它，页面上会出现
  * 「理论最高 0 · 你拿了 -8」这种荒唐行。 */
 ok(/if\s*\(!rec\)\s*return\s*null;/.test(settle), '★ rec 为空时整块不显示（不硬造一行）');
-ok(/try\s*\{\s*rec = BL\.ofHand/.test(settle), '★ 计算包了 try（老客户端/脏数据不该让结算页崩掉）');
+ok(/try\s*\{\s*rec = BL\.ofMatch/.test(settle), '★ 计算包了 try（老客户端/脏数据不该让结算页崩掉）');
+/* v131：整场复盘 + 只在对局结束给 */
+ok(/BL\.ofMatch\(room\.history, pid\)/.test(settle), '★ 用的是整场 ofMatch(room.history)，不是只挑最后一把');
+ok(/if \(!room \|\| !room\.endReason\) return null;/.test(settle), '★ 只在对局结束后显示（判据 room.endReason）');
+ok(settle.indexOf("'整场理论最高'") >= 0, '文案说「整场理论最高」');
+ok(/rec\.partial > 0/.test(settle), '★ 有把没打完时说出来（否则「整场」在骗人）');
 ok(settle.indexOf('window.BestLine') > 0, '读的是 window.BestLine（没有硬 require）');
 
 console.log('\n[5] 样式与文案');
@@ -98,7 +103,7 @@ ok(/\.settle-recheck\s*\{/.test(css), 'style.css 里有 .settle-recheck');
 ok(/grid-column:\s*1\s*\/\s*-1/.test(css), '★ 复盘行跨满整行（否则会被塞成第 5 列）');
 /* 文案口径：说「理论最高 / 你拿了」，不说「亏了」。
  * 「亏不亏」取决于运气，这个数字衡量的是决策 —— 用词错了，整个功能的意思就变了。 */
-ok(settle.indexOf("'理论最高'") >= 0, '文案用「理论最高」');
+ok(settle.indexOf("'理论最高'") >= 0 || settle.indexOf("'整场理论最高'") >= 0, '文案用「理论最高」');
 ok(settle.indexOf("'你拿了'") >= 0, '文案用「你拿了」');
 /* 只查**字符串字面量**里不出现「亏了」。
  * 不能全文查「亏」：注释里写着「亏不亏取决于运气」这句话本身就是在解释为什么不用它。 */

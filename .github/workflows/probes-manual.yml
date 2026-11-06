@@ -1,0 +1,83 @@
+name: probes-manual
+
+# 为什么要有这个 workflow（v130）
+#
+# 台账把 37 个探针分成三档：ci 1 条 / manual 17 条 / oneshot 19 条。
+# `ci` 那条由 test.yml 每次 push 保证；`oneshot` 明说不保证。**中间那 17 条原来只有
+# 一条链：「发版前记得跑」。**
+#
+# 这条链已经被证明会腐坏：v108 跑过一次全量（25 绿 / 10 红），下一次是 v129，
+# 相隔 21 个版本；而 v110 修好的 8 个里，有 6 个又以**同样的原因**红了回去。
+# 更贵的是 v129 的台账把三条红的根因写错，下一轮差点按错因去修。
+#
+# 所以：夜里跑一遍，红了第二天上班能看到。**不挂在 push 上** ——
+# 全量串行实测 931 秒，塞进每次 push 会把反馈时间从 5 分钟推到 20 分钟，
+# 后果不是更安全，是没人看。
+#
+# 注意：这不是「把 manual 变成 ci」。manual 的含义不变（发版前仍要跑），
+# 这里只是给「它现在到底绿不绿」一个**有日期的答案**。
+
+on:
+  schedule:
+    # 每天 18:10 UTC = 次日 02:10 北京时间（半夜跑，不占白天的额度）
+    - cron: '10 18 * * *'
+  workflow_dispatch:
+
+jobs:
+  manual-probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 准备浏览器与字体
+        run: |
+          # 中文字体是必须的：探针量的是「文字撑开的留白 / 换行 / 热区」，
+          # 没有中文字体会渲染成方块，所有尺寸断言都会偏 —— 那会造出一堆假红。
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-color-emoji || true
+          if ! node -e "require('./scripts/lib/browser.js').findBrowser()" 2>/dev/null; then
+            sudo apt-get install -y -qq chromium-browser || sudo apt-get install -y -qq chromium || true
+          fi
+          node -e "console.log('浏览器：' + require('./scripts/lib/browser.js').findBrowser())" \
+            || { echo "::error::找不到可用浏览器，manual 档无法验证"; exit 1; }
+
+      - name: 先校验台账自身（登记与真实是否一致）
+        run: node scripts/probes.js --check
+
+      - name: 跑 manual 档（串行，约 15 分钟）
+        run: |
+          set +e
+          node scripts/probes.js --list-manual > /tmp/manual.txt
+          cat /tmp/manual.txt
+          node scripts/run-probes.js --manual > /tmp/m.log 2>&1
+          code=$?
+          cat /tmp/m.log
+          if [ $code -ne 0 ]; then
+            # 把「哪几条红了」提成 annotation —— 夜里跑的东西如果只留一个退出码，
+            # 第二天没人会去翻日志（v128 之前的 test job 就是这么烂掉的）。
+            node -e "
+              const fs = require('fs');
+              const t = fs.readFileSync('/tmp/m.log', 'utf8');
+              const bad = t.split('\n').filter((l) => /^\s*(\[[0-9]+\/[0-9]+\].*(✗|‼|≠))/.test(l));
+              for (const l of bad) console.log('::error::' + l.trim());
+              console.log('::error::manual 档有 ' + bad.length + ' 条没通过（详见日志「未通过」段）');
+            "
+          fi
+          exit $code
+
+      # 结果回写不在这里做（workflow 改仓库要 PAT 权限）。台账的「最近确认绿」仍是手填，
+      # 但**它现在有唯一可信的来源**：这个 job 的产物。下一步再做成自动回写。
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-probes-log
+          path: /tmp/m.log
+          retention-days: 14

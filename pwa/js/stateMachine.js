@@ -54,6 +54,26 @@
     SETTLED: 'SETTLED'           // 结账（有人输完）
   };
 
+  /**
+   * 结账原因的唯一权威源（v130）。
+   *
+   * 为什么要有：这四个字符串以前以**字面量**散在五处 —— 状态机自己、
+   * `hub.js` 的 meta 白名单、`settleView.js` 的文案分支、`historyKit.js` 的校验、
+   * `recordsView.js` 的中文映射表。改一条规则要改五处，漏一处就是「界面说打满、
+   * 记录说提前」，而且**没有任何测试会红**（玩家读到的字没有守卫）。
+   *
+   * 探针也要用它：探针如果自己抄一份 'handLimit'，就成了第六处字面量，
+   * 判据与被测实现共用一份抄来的字符串，红绿都不可信。
+   *
+   * 老的 `'scoreZero'` 保留：v103 之后不再产生，但两个月前的老战绩里还有。
+   */
+  var END_REASON = {
+    SCORE_ZERO: 'scoreZero',     // v103 前：有人分数见底（只为老记录保留）
+    SOMEONE_LEFT: 'someoneLeft', // 人数不足
+    DISSOLVE: 'dissolve',        // 中途解散
+    HAND_LIMIT: 'handLimit'      // 打满建房时选的把数（唯一的正常终局）
+  };
+
   var GROUP_LABEL = {
     single: '单张比大小',
     tenhalf: '十点半',
@@ -1084,7 +1104,20 @@
         };
       })
     });
-    if (room.history.length > 4) room.history = room.history.slice(-4);
+    /* ★ v131：整场都要留，不再只留「最近 2 把」。
+     *
+     * 以前是 `slice(-4)`（4 轮 = 2 把），理由是「回看本局过程用不了那么多」。
+     * 但复盘改成「整场合并」之后，这个上限直接决定了功能能做到什么：
+     * 留 2 把就只能复 2 把的盘，而「整场理论最高 vs 实际」要每一把都在。
+     *
+     * 上限按 handLimit 算：一把两轮，再留两轮余量（正在打的那把 + 刚结算的那把）。
+     * 最大档 30 把 → 62 条，单条约 2~4KB，一个房最大 200KB 左右 ——
+     * 房间快照有 400ms 去抖与原子写，这个量级可以接受；
+     * 换来的是「复盘不再只能看最后两把」。 */
+    var keepPerHand = 2;
+    var keepHands = Math.max(2, Number(room.handLimit) || 10);
+    var keepMax = keepHands * keepPerHand + 2;
+    if (room.history.length > keepMax) room.history = room.history.slice(-keepMax);
 
     /* ★ v103：这里原本是「爆分收口」——busted 非空就 SETTLED + endReason='scoreZero'。
      * 现在整段删掉，终局只剩下面两条路：
@@ -1110,7 +1143,7 @@
         room.bustedIds = [];
         room.groupsDone = results.length;
         room.phase = PHASE.SETTLED;
-        room.endReason = 'handLimit';
+        room.endReason = END_REASON.HAND_LIMIT;
         markSettled(room);
         return;
       }
@@ -1693,7 +1726,7 @@
      * 见那里的说明）。这里再算一遍就又多出一份「同一件事两种判据」。 */
     /* endReason 一并写：结算页据此说明「为什么结束」。
      * 以前这里是空的，玩家点完同意跳到结算页只看到一堆分数，没人解释发生了什么。 */
-    room.endReason = 'dissolve';
+    room.endReason = END_REASON.DISSOLVE;
     room.dissolve.active = false;
     room.dissolve.initiatorId = null;
     room.dissolve.startedAt = 0;
@@ -1829,7 +1862,7 @@
     /* 人数不够就结束 —— 旁听的人不算数：他在旁边看着，凑不出两个人发牌。 */
     if (playingPlayers(room).length < CONFIG.MIN_PLAYERS) {
       room.phase = PHASE.SETTLED;
-      room.endReason = 'someoneLeft';
+      room.endReason = END_REASON.SOMEONE_LEFT;
       markSettled(room);
     }
   }
@@ -1996,6 +2029,9 @@
     canStartNext: canStartNext,
     nextRoundGate: nextRoundGate,
     GATE_CODES: GATE_CODES,
+    END_REASON: END_REASON,
+    /* 值列表：给「白名单校验」用（不复制字面量） */
+    END_REASON_VALUES: Object.keys(END_REASON).map(function (k) { return END_REASON[k]; }),
     holdNextOf: holdNextOf,
     holdNextLeftMs: holdNextLeftMs,
     setHoldNext: setHoldNext,

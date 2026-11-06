@@ -117,9 +117,12 @@ ok(labels2.indexOf('douniu') >= 0, '第二轮里有斗牛');
 
 /* ---------------------------------------------------------------- */
 console.log('\n[5] 上限：history 不会无限长');
-ok(/history\.length > 4/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'js', 'stateMachine.js'), 'utf8')),
-  '★ 有上限判断（保留最近 4 条 ≈ 两把）');
-ok(room.history.length <= 4, '当前没超上限');
+/* ★ v131：上限不再是写死的 4，而是「按 handLimit 保留整场」（一把两轮 + 两轮余量）。
+ * 写死 4 的时候，整场复盘只能覆盖最后两把 —— 那正是这一轮要修的东西。 */
+var smSrc = require('fs').readFileSync(require('path').join(__dirname, '..', 'js', 'stateMachine.js'), 'utf8');
+ok(/keepHands \* keepPerHand/.test(smSrc), '★ 上限按 handLimit 算（不是写死 4）');
+ok(/slice\(-keepMax\)/.test(smSrc), '★ 超了才裁，裁剪点用的是 keepMax');
+ok(room.history.length <= 64, '当前没超上限（最大档 30 把 → 62 条）');
 
 /* ---------------------------------------------------------------- */
 console.log('\n[6] 空房间 / 新房间的默认值');

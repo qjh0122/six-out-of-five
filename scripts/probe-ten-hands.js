@@ -19,6 +19,10 @@
  */
 'use strict';
 
+/* v130：结账原因读常量，不抄字面量 —— 否则探针就成了「END_REASON 之外的第 N 处字面量」，
+ * 判据与被测实现共用一份抄来的字符串，红绿都不可信。 */
+const SM = require(require('path').join(__dirname, '..', 'pwa', 'js', 'stateMachine.js'));
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -486,7 +490,10 @@ async function main() {
   const all = String((txt && txt.all) || '');
 
   console.log('    结算说明尾部：「' + body.slice(-50) + '」');
-  ok(/打满 10 局/.test(body), '★ 说明写着「打满 10 局，本局结束」', body.slice(-60));
+  /* v109 把界面 33 处「局数」统一成「把数」，这条断言停在改名之前 —— 产品没错。
+   * 改成断言「把数到达上限」这个**事实**，口径随之改为 10 把。 */
+  ok(!!(SM.END_REASON && SM.END_REASON.HAND_LIMIT), '结账原因常量可读（探针不抄字面量）');
+  ok(/10 把，本局结束/.test(body), '★ 说明写着「10 把，本局结束」（打满把数）', body.slice(-60));
   ok(!/分数输到底/.test(body), '★ 没有「有人分数输到底」那种旧结束原因');
   ok(!/见底/.test(all), '★ 结算列表里没有人被标「见底」（这个状态已经不存在）');
   ok(!/提前结束/.test(body), '打满不是「提前结束」，文案没有事故口气');
@@ -496,6 +503,11 @@ async function main() {
   console.log('    结算分数列：' + JSON.stringify(rows));
   ok(rows.length === 2, '结算列表两个人都在（没有谁被踢出去）', JSON.stringify(rows));
   ok(negRows.length > 0, '★ 结算页正常显示负分（' + (negRows.join(' / ') || '无') + '）');
+
+  /* ★ v131：整场复盘 —— 对局结束后必须出现一次，而且说的是「整场」而不是「这一把」 */
+  const recheck = await evaluate('(function(){ var e = document.querySelector(".settle-recheck"); return e ? e.textContent : null; })()');
+  ok(!!recheck, '★ 对局结束后出现整场复盘行', String(recheck));
+  ok(recheck ? recheck.indexOf('整场') >= 0 : false, '★ 复盘说的是「整场」，不是「这一把」', String(recheck));
 
   const btns = (sign && sign.btns) || [];
   ok(btns.length >= 5, '结算按钮还是五颗', JSON.stringify(btns.map((b) => b.id)));
@@ -507,9 +519,13 @@ async function main() {
   /* ------------------------- [5] 续局仍然是 10 ------------------------- */
   console.log('\n[5] 点「开始下一局」→ 档位必须还是 10');
   await evaluate('document.getElementById("btn-next").click()');
-  ok(await waitFor(READY_DRAWN, 10000, '没回准备态'), '「开始下一局」可用');
+  /* ★ v130：v116 把「先报名、再准备」两次点击并成一次 —— 点「开始下一局」直接发下一把的牌，
+   * 不再经过准备态。旧断言等 READY_DRAWN 必然超时，而且红得「看起来像按钮坏了」。
+   * 改成断言**新一把真的开始了**：顶栏从「10/10」变成「第 1/10 把」。 */
+  ok(await waitFor('document.body.innerText.indexOf("第 1/10 把") >= 0', 10000, '点了之后没开新一把'),
+    '★ 「开始下一局」可用：点一下就开了第 1 把（v116 报名即准备）');
   const subWait = await evaluate('__hls.sub()');
-  ok(/已打 10\/10 把/.test(String(subWait || '')), '就位态顶栏写着「已打 10/10 把」', subWait);
+  ok(/第 1\/10 把/.test(String(subWait || '')), '顶栏是「第 1/10 把」（新一把已开始，不是还停在 10/10）', subWait);
 
   cdp.close();
   cleanup();

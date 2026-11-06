@@ -503,7 +503,7 @@ async function main() {
         hasAuth: !!document.getElementById('screen-auth'),
         docAge: Math.round(performance.now()),
         navType: (performance.getEntriesByType('navigation')[0] || {}).type || null,
-        verReloaded: (function(){ try { return sessionStorage.getItem('weile_version_reloaded'); } catch(e){ return 'n/a'; } })(),
+        verReloaded: (function(){ try { return Store.read(Store.KEYS.VERSION_RELOADED, null, 'session'); } catch(e){ return 'n/a'; } })(),
         screenStates: [].slice.call(document.querySelectorAll('[id^="screen-"]')).map(function(e){ return e.id + ':' + (e.classList.contains('hidden') ? 'h' : 'SHOW'); })
       };
     })()`);

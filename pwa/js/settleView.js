@@ -811,15 +811,29 @@
     var pid = state.myId;
     if (!pid) return null;
 
-    /* ★ 取「刚打完的那一把」由 bestLine.lastHandRounds 负责，**不能用 room.handId**。
-     * 实测踩过：结算页读到 handId=2，而 history 里那两条的 hid 都是 1 →
-     * 过滤出 0 条，复盘行整块消失，而页面其余部分完全正常、没有任何报错。
-     * 原因与取舍写在 bestLine.lastHandRounds 的注释里（handId 是「当前这把」，
-     * 而结算页展示的是「上一把」）。 */
-    var rounds = BL.lastHandRounds(room.history);
+    /* ★ v131（用户裁决）：复盘**只在对局结束后**出现，中途每把结算不给，而且给的是**整场合并**。
+     *
+     * 判据用 `room.endReason`：它只在整局收尾时被赋值（打满把数 / 人数不足 / 解散），
+     * 中途每一把结算时是 null（newRoom / startGame 都会清成 null）。
+     *
+     * 为什么改：以前每把结算都弹一次「这一把的理论最高」，一局 10 把就播报 10 次；
+     * 同一个性质的话说到第 9 次只剩噪音，而且那行数字挂在「我」的名次旁边，
+     * 很容易被当成整局成绩。复盘本来该是「打完这一整局，回头看我怎么分」。 */
+    if (!room || !room.endReason) return null;
 
+    /* ★ v131：**整场**复盘 —— 把 room.history 里每一把（两轮）的最优与实得分分别求和，
+     * 只在对局结束时给这一次（上一个 return null 就是那个判据）。
+     *
+     * 不再挑「最后一把」：用户裁决是整场合并。也不再每把都给 —— 那等于把
+     * 「这一把的账」当「整局的成绩」播报 10 次。
+     *
+     * 为什么逐把求和、不是拿整场历史重新枚举：每一把的对手分法只在那把有效，
+     * 牌不同、人也可能换，跨把比较没有意义。
+     *
+     * 数据前提：`room.history` 现在按 handLimit 保留整场（stateMachine 里 keepMax 那段）。
+     * 以前只留 4 条（2 把），所以那时想算整场也算不出来。 */
     var rec = null;
-    try { rec = BL.ofHand(rounds, pid); } catch (e) { rec = null; }
+    try { rec = BL.ofMatch(room.history, pid); } catch (e) { rec = null; }
     if (!rec) return null;
 
     var box = el('div', 'settle-recheck');
@@ -827,13 +841,13 @@
       /* 实际 = 最优（diff 理论上不可能 <0，真出现说明枚举漏了分法 —— 那就别报「最优」，
        * 免得给玩家一个「你的实际分比理论最高还高」的荒唐结论）。 */
       if (rec.diff === 0) {
-        box.appendChild(el('span', 'sr-note', '这一把分到了理论最高'));
+        box.appendChild(el('span', 'sr-note', '整场每一把都分到了理论最高'));
         box.appendChild(el('span', 'sr-val', netText(rec.best)));
       }
       return box;
     }
 
-    box.appendChild(el('span', 'sr-key', '理论最高'));
+    box.appendChild(el('span', 'sr-key', '整场理论最高'));
     box.appendChild(el('span', 'sr-val', netText(rec.best)));
     box.appendChild(el('span', 'sr-sep', '·'));
     box.appendChild(el('span', 'sr-key', '你拿了'));
@@ -841,7 +855,9 @@
     /* 差 3 分以上补一句 —— 1~2 分属于正常波动，每次都说会让提示变成噪音。
      * 用「再想想」而不是「你亏了」：亏不亏取决于运气，这个数字衡量的是决策。 */
     if (rec.diff >= 3) box.appendChild(el('span', 'sr-hint', '差 ' + rec.diff + ' 分，分牌可以再想想'));
-    box.setAttribute('title', '按这一把所有人摊开的牌，重新枚举你的分法算出来的最好结果');
+    /* 有把没打完（中途解散 / 有人离开）必须说出来，否则「整场」这个词在骗人 */
+    if (rec.partial > 0) box.appendChild(el('span', 'sr-hint', '有 ' + rec.partial + ' 把没打完，按已打的轮次算'));
+    box.setAttribute('title', '按整场每一把所有人摊开的牌，重新枚举你的分法算出来的最好结果（逐把求和）');
     return box;
   }
 

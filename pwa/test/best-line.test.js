@@ -43,17 +43,42 @@ var c = function (suit, rank) { return { suit: suit, rank: rank }; };
 var HAND_A = [c('spade', 13), c('heart', 10), c('club', 12), c('diamond', 11), c('heart', 11), c('club', 11)];
 var HAND_B = [c('diamond', 3), c('diamond', 2), c('diamond', 4), c('spade', 2), c('heart', 7), c('diamond', 9)];
 
-var OTHER_B = [{ id: 'p2', hand: HAND_B }];
+/* 乙的手牌按**组**切好。★ v130：`others` 必须按组给，不能给整手 6 张 ——
+ * 以前给整手，于是单张组变成「我 1 张 vs 他 6 张」，而这是每把都显示给玩家看的数字。
+ * 现在夹具本身就按组写，错的那个形状连表达都表达不出来。 */
+var OTHER_B = {
+  single: [{ id: 'p2', hand: [HAND_B[0]] }],
+  tenhalf: [{ id: 'p2', hand: [HAND_B[1], HAND_B[2]] }],
+  piaosanye: [{ id: 'p2', hand: [HAND_B[3], HAND_B[4], HAND_B[5]] }],
+  douniu: [{ id: 'p2', hand: HAND_B.slice(1) }]
+};
 
 var SPLIT_A1 = { single: [HAND_A[0]], tenhalf: [HAND_A[1], HAND_A[2]], piaosanye: [HAND_A[3], HAND_A[4], HAND_A[5]] };
 var SPLIT_A2 = { single: [HAND_A[0]], tenhalf: [], piaosanye: [], douniu: [HAND_A[1], HAND_A[2], HAND_A[3], HAND_A[4], HAND_A[5]] };
 
-/* 用引擎逐组算一遍「按这个分法我实际能得几分」—— 这是独立于 bestLine 的算法 */
-function engineNet(round, split, others) {
+/* 把整手 6 张按「1 / 2 / 3」和「1 / 5」切成两组形状。
+ * 只用于构造夹具 —— 真实场景里对手怎么分是**结算记录**告诉我们的，不用这里猜。 */
+function byModeOf(hand, pid) {
+  var who = pid || 'p2';
+  return {
+    single: [{ id: who, hand: [hand[0]] }],
+    tenhalf: [{ id: who, hand: [hand[1], hand[2]] }],
+    piaosanye: [{ id: who, hand: [hand[3], hand[4], hand[5]] }],
+    douniu: [{ id: who, hand: hand.slice(1) }]
+  };
+}
+
+/* 逐组算一遍「按这个分法我实际能得几分」。
+ *
+ * ⚠️ 这个函数**只能是「逐组拼接」这一层的对照**，不能当「bestLine 算对了没」的判据 ——
+ * 它的拼接表达式与 netOf 同形，netOf 错它也错。真正独立的判据在第五节：
+ * 拿 history 里记的 deltas 比（那是状态机结算时写下的，不是 bestLine 算的）。 */
+function engineNet(round, split, othersByMode) {
   var keys = SM.ROUND_GROUPS[round];
   var net = 0;
   keys.forEach(function (mode) {
-    var entries = [{ id: 'me', hand: split[mode] || [] }].concat(others);
+    var theirs = (othersByMode && othersByMode[mode]) || [];
+    var entries = [{ id: 'me', hand: split[mode] || [] }].concat(theirs);
     var r = Engine.settleGroup(mode, entries);
     net += r.deltas.me || 0;
   });
@@ -61,9 +86,9 @@ function engineNet(round, split, others) {
 }
 
 eq(BL.netOf(1, OTHER_B, SPLIT_A1), engineNet(1, SPLIT_A1, OTHER_B),
-  '★ 交叉验证（第一轮）：bestLine 的净分 == 引擎按同一分法算出的净分');
+  '逐组拼接一致（第一轮）：确认没有多算/漏算某一组');
 eq(BL.netOf(2, OTHER_B, SPLIT_A2), engineNet(2, SPLIT_A2, OTHER_B),
-  '★ 交叉验证（第二轮）：同上');
+  '逐组拼接一致（第二轮）：同上');
 
 /* 三个组都必须真的被结算到：netOf 只看 deltas['__bestline_me']，
  * 少算一组就会偏小，而这在「刚好不输不赢」的牌上会完美隐藏（差 0 和 差一组也可能都是 0）。 */
@@ -89,8 +114,10 @@ ok(best2.net >= engineNet(2, SPLIT_A2, OTHER_B), '★ 第二轮最优 ≥ 实际
 /* 构造一手「怎么分都很烂」的牌：最优也必须 ≥ 任何一个分法 */
 var HAND_WEAK = [c('diamond', 2), c('club', 3), c('diamond', 4), c('spade', 5), c('heart', 6), c('club', 8)];
 var HAND_STRONG = [c('spade', 14), c('spade', 13), c('spade', 12), c('spade', 11), c('spade', 10), c('club', 9)];
-var w1 = BL.bestOf(1, HAND_WEAK, [{ id: 'p2', hand: HAND_STRONG }]);
-var s1 = BL.bestOf(1, HAND_STRONG, [{ id: 'p2', hand: HAND_WEAK }]);
+var OTHER_STRONG = byModeOf(HAND_STRONG);
+var OTHER_WEAK = byModeOf(HAND_WEAK);
+var w1 = BL.bestOf(1, HAND_WEAK, OTHER_STRONG);
+var s1 = BL.bestOf(1, HAND_STRONG, OTHER_WEAK);
 ok(s1.net > 0, '强牌对弱牌，最优是正的（' + s1.net + '）');
 ok(s1.net >= w1.net, '同一副牌强势一方的最优不小于弱势一方（' + s1.net + ' ≥ ' + w1.net + '）');
 
@@ -127,8 +154,8 @@ function bruteForce1(hand, others) {
   return best;
 }
 eq(best1.net, bruteForce1(HAND_A, OTHER_B), '★ 与手写暴力枚举的结果一致（没漏分法也没多数）');
-eq(BL.bestOf(1, HAND_WEAK, [{ id: 'p2', hand: HAND_STRONG }]).net,
-  bruteForce1(HAND_WEAK, [{ id: 'p2', hand: HAND_STRONG }]),
+eq(BL.bestOf(1, HAND_WEAK, OTHER_STRONG).net,
+  bruteForce1(HAND_WEAK, OTHER_STRONG),
   '★ 换一副弱牌，暴力枚举同样一致');
 
 /* ================================================================
@@ -166,7 +193,7 @@ try { BL.bestOf(3, HAND_A, OTHER_B); } catch (e) { err = e; }
 ok(!!err, '未知轮次 → 抛错（不是静默返回 0）');
 
 /* 没有对手：一个人打（理论上不会发生，但枚举不能因此崩） */
-var solo = BL.bestOf(1, HAND_A, []);
+var solo = BL.bestOf(1, HAND_A, {});
 ok(!!solo && solo.tried === 60, '没有对手时照常枚举 60 种');
 
 /* ================================================================
@@ -199,6 +226,51 @@ eq(recP1.actual, room.players[0].score,
   '★ 还原出来的「实际」必须等于结算后的分数（' + recP1.actual + ' vs ' + room.players[0].score + '）');
 ok(recP1.best >= recP1.actual, '还原出来的最优 ≥ 实际');
 eq(recP1.diff, recP1.best - recP1.actual, 'diff 就是两者之差');
+
+/* ★★ 真正独立的交叉验证（v130 补，这是本轮唯一能抓住「对手手牌没按组切」的判据）
+ *
+ * 取 history 里「我实际用的那几组牌」当分法，喂给 netOf，净分必须等于
+ * **状态机结算时写下的 deltas 之和**。deltas 是 Engine.settleGroup 在结算那一刻算的，
+ * bestLine 只是事后重算 —— 只有在「对手手牌按组给」时两边才相等。
+ *
+ * 变异自证（写完立刻验过）：把 netOf 里 `.concat(theirs)` 改成 `.concat([])`
+ * （等于无视对手），这条立刻红；而上一版那条「交叉验证」照样绿 —— 因为它抄的就是 netOf。
+ */
+function splitFromHistory(roundObj, pid) {
+  var split = { single: [], tenhalf: [], piaosanye: [], douniu: [] };
+  (roundObj.groups || []).forEach(function (g) {
+    (g.entries || []).forEach(function (e) {
+      if (e.id === pid) split[g.group] = e.hand;
+    });
+  });
+  return split;
+}
+(function () {
+  for (var i = 0; i < rounds.length; i++) {
+    var h = rounds[i];
+    eq(BL.netOf(h.round || 1, BL.othersByModeFrom(h, 'p1'), splitFromHistory(h, 'p1')),
+      BL.actualOfRound(h, 'p1'),
+      '★★ 用「实际分法」重算 → 必须等于结算记录里的净分（第 ' + (h.round || 1) + ' 轮）');
+  }
+})();
+
+/* ★ v131：整场复盘 = 逐把求和（不是重新枚举整场，也不是取平均） */
+var h2 = JSON.parse(JSON.stringify(rounds[0]));
+h2.hid = 99;
+var m = BL.ofMatch([rounds[0], h2], 'p1');
+ok(!!m, '两把的 history 能算出整场复盘');
+eq(m.hands, 2, '★ 两把都算进去（不是只挑最后一把）');
+eq(m.best, recP1.best * 2, '整场理论最高 = 每把之和');
+eq(m.actual, recP1.actual * 2, '整场实得 = 每把之和');
+eq(m.diff, m.best - m.actual, 'diff 是差的求和');
+eq(m.partial, 2, '★ 两把都只打了一轮 → partial=2（页面必须说出来）');
+eq(BL.ofMatch([], 'p1'), null, '空 history → null');
+eq(BL.ofMatch([rounds[0]], ''), null, '没有玩家 id → null');
+
+/* 只打到一轮 → complete=false，调用方改用按轮显示（不许把单轮说成「整局」） */
+eq(recP1.complete, false, '★ 只打到一轮 → complete=false（这一局是中途结束的）');
+eq(recP1.byRound.length, 1, 'byRound 里只有一条（按轮兜底要能拿到数）');
+ok(recP1.byRound[0].best >= recP1.byRound[0].actual, '按轮的那条也满足最优 ≥ 实际');
 
 var recP2 = BL.ofHand(rounds, 'p2');
 ok(!!recP2, '乙的视角也算得出来');

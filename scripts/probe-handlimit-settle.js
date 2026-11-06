@@ -25,6 +25,9 @@
  */
 'use strict';
 
+/* v130：结账原因读常量，不抄字面量（同 probe-ten-hands） */
+const SM = require(require('path').join(__dirname, '..', 'pwa', 'js', 'stateMachine.js'));
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -357,6 +360,10 @@ async function main() {
   console.log('视口 ' + W + '×' + H + '  截图目录 ' + OUT);
 
   /* ------------------------- 注册 ------------------------- */
+  /* v130：结账原因从常量取，不抄字面量 —— 抄一份就成了 END_REASON 之外的第 N 处字面量，
+   * 判据与被测实现共用一份抄来的字符串，红绿都不可信。 */
+  ok(!!(SM.END_REASON && SM.END_REASON.HAND_LIMIT), '结账原因常量可读（探针不抄字面量）');
+
   console.log('\n[1] 注册新账号');
   const stamp = String(Date.now()).slice(-8);
   const account = 'hlset' + stamp;

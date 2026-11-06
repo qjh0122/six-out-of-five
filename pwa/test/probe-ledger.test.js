@@ -113,6 +113,14 @@ head('[2] 注入违规 —— 每一条规则都必须被抓到');
   ok(has(r9.errors, 'workflow 在跑它，台账里却没有'),
     '⑨ workflow 跑着一条台账里没有的探针 → 报出来', r9.errors.join(' / '));
 
+  /* ⑪ v130：manual 档必须有执行链，豁免必须显式 */
+  const r11 = L.check({ probes: [base({ run: 'manual' })], disk: ['probe-a.js'], wf: {}, wfManual: false });
+  ok(has(r11.errors, '没有夜间执行链'), '⑪ manual 档没有执行链、也没豁免 → 报错', r11.errors.join(' / '));
+  const r12 = L.check({ probes: [base({ run: 'manual', nightlyExempt: '只在真机上才能测安全区' })], disk: ['probe-a.js'], wf: {}, wfManual: false });
+  eq(r12.errors.length, 0, '⑫ 显式写了豁免理由 → 不报（例外必须显式，不能默认豁免）', r12.errors.join(' / '));
+  /* wfManual=undefined 表示调用方没告知，此时不该凭空报错（老调用点不炸） */
+  const r13 = L.check({ probes: [base({ run: 'manual' })], disk: ['probe-a.js'], wf: {} });
+  eq(r13.errors.length, 0, '⑬ 调用方未告知夜间链状态时跳过该规则', r13.errors.join(' / '));
   /* ⑩ 完全合规的一组必须零错误 —— 否则上面九条可能只是「什么都说错」 */
   const r10 = L.check({ probes: [base(), base({ file: 'probe-b.js', run: 'ci', why: '' })],
     disk: ['probe-a.js', 'probe-b.js'], wf: { 'probe-b.js': ['test.yml'] } });

@@ -1377,9 +1377,11 @@ class Hub {
     const meta = {
       playerCount: room.players.length,
       hasBot: hasBot,
-      endReason: (room.endReason === 'scoreZero' || room.endReason === 'someoneLeft'
-        || room.endReason === 'dissolve' || room.endReason === 'handLimit')
-        ? room.endReason : 'dissolve',
+      /* v130：白名单不再写字面量 —— 用状态机导出的值列表。
+       * 以前这里有四个字面量，状态机那边也有四个，改规则要改两处，
+       * 而且**两边不一致时没有任何断言会红**（只是记录里少了一句原因）。 */
+      endReason: SM.END_REASON_VALUES.indexOf(room.endReason) >= 0
+        ? room.endReason : SM.END_REASON.DISSOLVE,
       /* 成就增量：状态机每轮结算时按**玩家**分桶累加在 room.achRun 上
        * （见 SM.settleRound → Ach.accumulate）。它是整局累计，
        * 所以只能在这里一次性合并 —— 每把合并会让同一份桶被重复计入。

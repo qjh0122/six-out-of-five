@@ -34,6 +34,19 @@ const DIR = __dirname;
  * PROBE_TIMEOUT=600000 node scripts/run-probes.js ui-flow */
 const PER_PROBE_TIMEOUT_MS = Number(process.env.PROBE_TIMEOUT) || 240000;
 
+/* ★ v130：项数快照。台账里写了 expect 的探针，**项数不符也算红**。
+ * 为什么：'probe-tenhalf' 会随随机牌在 35/39 之间漂，'probe-records' 曾出现 0/0
+ * 还报「绿」——「少跑了一半断言」和「全跑过」在旧判据里长得一模一样。 */
+const EXPECT = {};
+const MANUAL_SET = new Set();
+try {
+  const mf = JSON.parse(fs.readFileSync(path.join(DIR, 'probes.json'), 'utf8'));
+  (mf.probes || []).forEach(function (x) {
+    if (x.expect) EXPECT[x.file] = x.expect;
+    if (x.run === 'manual') MANUAL_SET.add(x.file);
+  });
+} catch (e) { /* 台账坏了不该让跑批器挂掉，但下面的对照会因此不生效 */ }
+
 const args = process.argv.slice(2);
 const all = fs.readdirSync(DIR)
   .filter((f) => /^probe-.*\.js$/.test(f))
@@ -48,9 +61,13 @@ if (args[0] === '--list') {
   process.exit(0);
 }
 
-const picked = args.length
-  ? all.filter((f) => args.some((k) => f.indexOf(k) >= 0))
-  : all;
+/* ★ v130：--manual = 只跑台账里 run:'manual' 的那 17 条（夜间 workflow 用）。
+ * 它和「按名字筛」互斥：带了 --manual 就忽略名字参数。 */
+const onlyManual = args.indexOf('--manual') >= 0;
+const nameArgs = args.filter((a) => a.charAt(0) !== '-');
+const picked = onlyManual
+  ? all.filter((f) => MANUAL_SET.has(f))
+  : (nameArgs.length ? all.filter((f) => nameArgs.some((k) => f.indexOf(k) >= 0)) : all);
 
 if (!picked.length) {
   console.error('没有匹配的探针：' + args.join(' '));
@@ -84,6 +101,9 @@ function judge(out, status) {
      * （默认地址里带 sharecode，公开仓库里不能留）。它退出 2 是在告诉你怎么用，
      * 不是坏了 —— 单独归一类，别混进红里。 */
     if (/缺少线上地址|用法：node/.test(out)) return { kind: 'skip', stat: null };
+    /* 超时与崩溃分开：超时是「太慢」，崩溃是「炸了」，修法完全不同。
+     * spawnSync 超时被杀时 status=null 且 signal='SIGTERM'。 */
+    if (status === null) return { kind: 'timeout', stat: null };
     return { kind: 'crash', stat: null };
   }
   /* 没有汇总、没有 FAIL、退出码 0：跑通了，只是这个探针不打汇总。
@@ -106,12 +126,19 @@ picked.forEach((file, i) => {
   const out = (r.stdout || '') + (r.stderr || '');
   const secs = Math.round((Date.now() - started) / 1000);
   const verdict = judge(out, r.status);
-  const kind = verdict.kind;
+  let kind = verdict.kind;
   const stat = verdict.stat;
+  /* 项数对照：只在「本来算绿」时才比 —— 已经红了的不需要再报项数不符。 */
+  let expectMiss = null;
+  if (kind === 'ok' && EXPECT[file]) {
+    const got = stat ? stat.pass : null;
+    if (got !== EXPECT[file]) { kind = 'count'; expectMiss = EXPECT[file]; }
+  }
 
   rows.push({ label, kind, stat, secs, out });
   console.log(
     kind === 'ok' ? '✓ ' + (stat ? stat.pass + ' 项' : '跑通（无汇总）') + ' (' + secs + 's)'
+      : kind === 'count' ? '≠ 项数不符：' + (stat ? stat.pass : '无汇总') + ' / 期望 ' + expectMiss + ' (' + secs + 's)'
       : kind === 'fail' ? '✗ ' + (stat ? stat.pass + ' 通过 / ' + stat.fail + ' 失败' : '有 FAIL') + ' (' + secs + 's)'
         : kind === 'skip' ? '－ 跳过（需要参数） (' + secs + 's)'
           : '‼ 崩溃 (' + secs + 's) exit=' + r.status
@@ -119,12 +146,14 @@ picked.forEach((file, i) => {
 });
 
 const ok = rows.filter((r) => r.kind === 'ok');
-const bad = rows.filter((r) => r.kind === 'fail' || r.kind === 'crash');
+const bad = rows.filter((r) => r.kind === 'fail' || r.kind === 'crash' || r.kind === 'count' || r.kind === 'timeout');
 const skipped = rows.filter((r) => r.kind === 'skip');
 
 console.log('\n========================================');
 console.log('探针 ' + rows.length + ' 个：绿 ' + ok.length + ' / 红 ' + bad.length
-  + '（其中崩溃 ' + rows.filter((r) => r.kind === 'crash').length + '）'
+  + '（崩溃 ' + rows.filter((r) => r.kind === 'crash').length
+  + ' / 超时 ' + rows.filter((r) => r.kind === 'timeout').length
+  + ' / 项数不符 ' + rows.filter((r) => r.kind === 'count').length + '）'
   + (skipped.length ? ' / 跳过 ' + skipped.length : ''));
 console.log('断言 ' + ok.reduce((s, r) => s + (r.stat ? r.stat.pass : 0), 0) + ' 项（只统计全绿的那些）');
 console.log('耗时 ' + Math.round((Date.now() - t0) / 1000) + 's');
