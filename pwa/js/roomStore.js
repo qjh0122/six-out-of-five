@@ -45,6 +45,32 @@
 
   var MODE = detectMode();
 
+  /* 订阅者抛异常的统一出口（v127）。
+   *
+   * 这里的 catch **必须继续往下走**（一个订阅者挂了，不该让别的订阅者收不到广播），
+   * 但也**不能什么都不做**：v108 那个 `ReferenceError: state is not defined`
+   * 就是死在这几个空 catch 里（见 docs/REVIEW.md 的 v108 段），
+   * 表现是「界面从此再也不更新」，而控制台一片安静、服务端零记录 ——
+   * 一个「渲染函数写错了一个变量名」的问题，最后是靠人肉复现才找到的。
+   *
+   * 所以规矩改成：**吞掉可以，但必须留痕**（上报 + 控制台）。
+   * 「留痕」不是「重新抛」—— 重抛会把一次局部渲染失败升级成整条广播失败。
+   */
+  function reportSubscriber(where, e) {
+    var msg = (e && (e.message || String(e))) || 'unknown';
+    try {
+      if (typeof ErrorReport !== 'undefined' && ErrorReport && ErrorReport.capture) {
+        ErrorReport.capture('subscriber', '[' + where + '] ' + msg, {
+          source: 'roomStore.js',
+          stack: e && e.stack
+        });
+      }
+    } catch (_) { /* silence: 上报自身绝不能再抛 */ }
+    try {
+      if (typeof console !== 'undefined' && console.error) console.error('[lxw subscriber]', where, e);
+    } catch (_) { /* silence: 没有 console 的极老 WebView，本来就没地方打日志 */ }
+  }
+
   /* ============================ 本地实现（BroadcastChannel + localStorage） ============================ */
   function createLocalStore(StateMachine) {
     /* 物理键与降级逻辑都在 js/storage.js；这里只拿名字（下面有兜底常量，
@@ -77,10 +103,10 @@
     function touch(roomId, ts) { if (ST) ST.writeJson(LS_TOUCH, { roomId: roomId, ts: ts }); }
     function emit(roomId, room) {
       var list = subs[roomId] || [];
-      for (var i = 0; i < list.length; i++) { try { list[i](room); } catch (e) {} }
+      for (var i = 0; i < list.length; i++) { try { list[i](room); } catch (e) { reportSubscriber('emit', e); } }
     }
     function emitEmoji(ev) {
-      for (var i = 0; i < emojiCbs.length; i++) { try { emojiCbs[i](ev); } catch (e) {} }
+      for (var i = 0; i < emojiCbs.length; i++) { try { emojiCbs[i](ev); } catch (e) { reportSubscriber('emitEmoji', e); } }
     }
     function publish(roomId, room) {
       var map = loadRooms(); map[roomId] = room; saveRooms(map);
@@ -413,11 +439,11 @@
     reconnecting = false;
     if (socket) { try { socket.close(); } catch (e) {} socket = null; }
     // 彻底掉线：通知 UI 退回首页并提示（reason 可选，用于说明「本局已结束」这类非网络原因）
-    for (var i = 0; i < offlineCbs.length; i++) { try { offlineCbs[i](reason); } catch (e) {} }
+    for (var i = 0; i < offlineCbs.length; i++) { try { offlineCbs[i](reason); } catch (e) { reportSubscriber('offline', e); } }
   }
 
   function fireTransient() {
-    for (var i = 0; i < disconnectCbs.length; i++) { try { disconnectCbs[i](); } catch (e) {} }
+    for (var i = 0; i < disconnectCbs.length; i++) { try { disconnectCbs[i](); } catch (e) { reportSubscriber('disconnect', e); } }
   }
 
   /* ==================== 前后台切换时把连接「叫醒」（P4-1） ====================
@@ -572,14 +598,14 @@
         var roomId = data.payload && data.payload.roomId;
         if (room && roomId) {
           roomsCache[roomId] = room;
-          (subs[roomId] || []).forEach(function (cb) { try { cb(room); } catch (e) {} });
+          (subs[roomId] || []).forEach(function (cb) { try { cb(room); } catch (e) { reportSubscriber('subscribe:room', e); } });
         }
       } else if (data.type === 'roomDeleted') {
         var rid = data.payload && data.payload.roomId;
         /* 把 payload 一起交给订阅者：服务端现在用同一个事件表达两件事 ——
          * 房间真被回收，和「下一局开始了、你不在名单里」。文案完全不同，
          * 只传 null 的话前端只能猜。 */
-        if (rid) { delete roomsCache[rid]; (subs[rid] || []).forEach(function (cb) { try { cb(null, data.payload); } catch (e) {} }); }
+        if (rid) { delete roomsCache[rid]; (subs[rid] || []).forEach(function (cb) { try { cb(null, data.payload); } catch (e) { reportSubscriber('subscribe:deleted', e); } }); }
       } else if (data.type === 'ok') {
         var p = pending[data.reqId];
         if (p) { delete pending[data.reqId]; p.resolve(data.payload || {}); }
@@ -610,14 +636,14 @@
             try { clearTimeout(reconnectTimer); } catch (e) { /* 忽略 */ }
             try { if (s0) s0.close(); } catch (e) { /* 忽略 */ }
           }
-          fatalCbs.forEach(function (fn) { try { fn(fatalMsg); } catch (e) { /* 回调自己出错不影响别人 */ } });
+          fatalCbs.forEach(function (fn) { try { fn(fatalMsg); } catch (e) { reportSubscriber('fatal', e); } });
         }
       } else if (data.type === 'emoji') {
         /* 服务端旁路推来的表情/短语。**必须放在这里集中分支**：
          * 老客户端收到不认识的消息时不会崩（最后那个 else 什么都不做），
          * 但会因为「什么都没发生」而让用户以为对方没发 —— 所以新字段一律走显式分支。 */
         var ev = data.payload || {};
-        if (ev.id) emojiCbs.forEach(function (fn) { try { fn(ev); } catch (e) {} });
+        if (ev.id) emojiCbs.forEach(function (fn) { try { fn(ev); } catch (e) { reportSubscriber('emoji:push', e); } });
       } else if (data.type === 'pong') {
         missedPongs = 0;
         /* 回前台探活的那一枪有回音了，撤掉 2.5s 的判决定时器 */

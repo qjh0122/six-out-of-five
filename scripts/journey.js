@@ -2130,6 +2130,42 @@ async function main() {
     '当前页面没有被缩放（visualViewport.scale = 1）', String(zoomProbe && zoomProbe.vvScale));
 
   /* ---------------------------------------------------------------- */
+  /* ------------------------------------------------------------------ */
+  console.log('\n[9e] 上报通道是活的（v127：catch 里的证据真的发得出去）');
+
+  /* 为什么要在这里量一次：
+   * `no-silent-catch.test.js` 证明了「catch 会调 ErrorReport.capture」，
+   * 但那个测试是在 Node 里把函数抠出来跑的 —— 它证明不了**浏览器里 game.js
+   * 到底看不看得见 ErrorReport**。如果看不见，`typeof ErrorReport !== 'undefined'`
+   * 就恒为 false，所有上报静默失效，而那 46 项守卫会全绿。
+   * 这一条补的就是那道缝：在真页面上确认它是全局可达的、计数是活的。 */
+  const erProbe = await evaluate(`(function(){
+    var er = (typeof ErrorReport !== 'undefined') ? ErrorReport : null;
+    return {
+      exists: !!er,
+      canCapture: !!(er && typeof er.capture === 'function'),
+      stats: (er && typeof er._stats === 'function') ? er._stats() : null,
+      endpoint: (er && typeof er.endpoint === 'function') ? er.endpoint() : ''
+    };
+  })()`);
+  ok(!!erProbe && erProbe.exists, '★ ErrorReport 在页面里是全局可达的（game.js 的 catch 靠它）',
+    JSON.stringify(erProbe));
+  ok(!!erProbe && erProbe.canCapture, '★ capture 可调用');
+  ok(!!erProbe && !!erProbe.stats, '★ 计数表是活的（_stats 可读）',
+    JSON.stringify(erProbe && erProbe.stats));
+  /* 上报端点必须带 sharecode —— 网关对不带参数的 /api/* 一律 403，
+   * 那样「有上报」和「没上报」在服务端看起来一模一样。
+   *
+   * 但本地 journey 是直连 127.0.0.1 的裸服务端，URL 里本来就没有 sharecode。
+   * 所以判据写成**一致性**：页面带了 sharecode，端点就必须带；页面没带就都不带。
+   * 断言「端点必须带」会在本地稳定误报 —— 一条假红比没有断言更糟。 */
+  ok(!!erProbe && /\/api\/client-error/.test(erProbe.endpoint || ''),
+    '★ 上报端点指向 /api/client-error', String(erProbe && erProbe.endpoint));
+  const pageHasSc = await evaluate('!!new URLSearchParams(location.search||"").get("sharecode")');
+  ok(!!erProbe && /sharecode=/.test(erProbe.endpoint || '') === !!pageHasSc,
+    '★ 端点带不带 sharecode，与页面 URL 一致（带上时不能漏，否则线上 403 静默丢）',
+    'page=' + pageHasSc + ' endpoint=' + String(erProbe && erProbe.endpoint));
+
   console.log('\n[10] 收尾：真实档案未被污染');
 
   const realAfter = fs.existsSync(REAL_DATA)

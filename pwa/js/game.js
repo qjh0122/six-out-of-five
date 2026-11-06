@@ -339,6 +339,46 @@
     toastTimer = setTimeout(function () { t.classList.add('hidden'); }, tone ? 2600 : 1800);
   }
 
+  /* 本端异常的统一出口（v127）。
+   *
+   * ★ 为什么这里不该说「网络不太稳」：
+   *   RoomStore 的协议方法**已经**把 reject 转成 `{ok:false, error}` 了
+   *   （roomStore.js 里每个 ws.xxx 都带 `.catch`，唯一例外是 createRoom，
+   *   它有自己的「创建失败，检查一下网络」）。所以能落进 game.js 这些 catch 的，
+   *   不可能是「请求失败」，只可能是**本端把自己绊倒了**：方法根本不存在
+   *   （v121 的 `RoomStore.dropNext is not a function`）、解引用 undefined、
+   *   render() 抛异常、订阅回调里引用了不存在的变量。
+   *
+   * ★ 说「网络不太稳」有两个害处：
+   *   ① 诱导重复提交 —— 交牌时 render 抛了，牌其实已经交上去了；
+   *      他再交一次会撞「本轮已提交」，然后继续怀疑网络；
+   *   ② 异常被吃掉，线上零信号 —— errorReport 只收 unhandled，
+   *      被 catch 住的永远不上报，于是「点了没反应」永远查不出来。
+   *
+   * userMsg 允许按动作定制（交牌那句要说「可能已经提交」），
+   * 但**默认那句必须承认是本端的问题**，不能推给网络。
+   *
+   * ★ 传 `null` = **只上报、不提示**。给「本来就该安静」的场景用：
+   * 刷新后自动回座失败，用户可能只是新开了一个页面，弹提示反而是打扰 ——
+   * 但「回座这条路悄悄坏了」必须留下证据，否则一次发版就能让所有人的座位都回不去，
+   * 而服务端看不出任何异常。注意 `null` 与 `undefined` 不是一回事：
+   * 不传（undefined）走默认文案，传 null 才是安静上报。
+   */
+  function reportBug(where, e, userMsg, kind) {
+    var msg = (e && (e.message || String(e))) || 'unknown';
+    try {
+      if (typeof ErrorReport !== 'undefined' && ErrorReport && ErrorReport.capture) {
+        ErrorReport.capture(kind || 'catch', '[' + where + '] ' + msg, {
+          source: 'game.js',
+          stack: e && e.stack
+        });
+      }
+    } catch (_) { /* silence: 上报自身绝不能再抛 */ }
+    /* 控制台也留一份：本地复现时不用去翻服务端日志 */
+    try { if (typeof console !== 'undefined' && console.error) console.error('[lxw]', where, e); } catch (_) { /* silence: 没有 console 的环境（极老 WebView），本来就没地方打日志 */ }
+    if (userMsg !== null) flash(userMsg || '出了点问题，已经记下了');
+  }
+
   /* 收起还没到时间的 toast。目前只有一处用：爆点拦截框弹出来的时候。
    * 那张 toast 说的是同一件事（放牌那一刻已经说过一次），留着它会在横屏上
    * 贴在弹窗底部叠成一团 —— 弹窗已经把话说完了，不需要再来一条同义提示。 */
@@ -958,7 +998,7 @@
        * 手工再画一遍只会和广播抢，画出两份不一样的按钮状态。 */
       flash('下一局打 ' + n + ' 把');
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('setHandLimit', e);
     }
   }
 
@@ -2176,7 +2216,7 @@
         return;
       }
     } catch (e) {
-      flash('网络不太稳，稍后再试');
+      reportBug('beginRevise', e);
       Sfx.play('error');
       return;
     } finally {
@@ -2213,7 +2253,7 @@
         return;
       }
     } catch (e) {
-      flash('网络不太稳，稍后再试');
+      reportBug('cancelRevise', e);
       Sfx.play('error');
       return;
     } finally {
@@ -2796,7 +2836,9 @@
       // 状态经 subscribe 回调已更新，再渲染一次兜底
       render();
     } catch (e) {
-      flash('网络不太稳，再提交一次');
+      /* 交牌这一处最不能推给网络：牌很可能已经进服务端了（异常出在后面的 render），
+       * 说「再提交一次」会让他撞「本轮已提交」，然后一直怀疑网络。 */
+      reportBug('submitGroups', e, '交牌出了点问题，已经记下了');
       Sfx.play('error');
     } finally {
       /* 顺序不能反：pressBusy 的 restore() 会把 disabled 打回「点下去那一刻的值」。
@@ -3392,7 +3434,9 @@
       attachRoom(room.roomId, room);
       Sfx.play('submit');
     } catch (e) {
-      flash((e && e.message) || '创建失败，检查一下网络');
+      /* 建房是**唯一**会把网络失败原样抛上来的协议调用（ws.createRoom 没有 .catch），
+       * 所以这一句说「检查网络」是实话。但也要上报：建不起来时服务端毫无感知。 */
+      reportBug('createRoom', e, (e && e.message) || '创建失败，检查一下网络', 'net');
       Sfx.play('error');
     } finally {
       restore();
@@ -3413,7 +3457,9 @@
       if (!res.ok) { flashRoomError(res); return; }
       attachRoom(roomId, res.room);
     } catch (e) {
-      flash((e && e.message) || '进房失败，检查一下网络');
+      /* 进房相反：ws.joinRoom 已经把拒绝转成 {ok:false,error} 了，
+       * 能抛到这里的只有本端把自己绊倒 —— 别再说「检查网络」。 */
+      reportBug('joinRoom', e, '进房出了点问题，已经记下了');
       Sfx.play('error');
     } finally {
       restore();
@@ -3443,7 +3489,7 @@
         flash(res.error || '暂时进不去，稍后再试');
       }
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('wantNext', e);
     } finally {
       restore();
     }
@@ -3458,7 +3504,7 @@
       var res = await RoomStore.setReady(state.roomId, state.myId, !me.ready);
       if (res && !res.ok) flashRoomError(res);
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('setReady', e);
     } finally {
       restore();
     }
@@ -3479,7 +3525,7 @@
       }
       Sfx.play('select');
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('addBot', e);
     } finally {
       restore();
     }
@@ -3515,7 +3561,7 @@
       if (!res || !res.ok) { flash((res && res.error) || '操作失败'); return; }
       flash('这一把你不打。他们开了你在旁边看，随时点「开始下一局」回来');
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('dropNext', e);
     } finally {
       restore();
     }
@@ -3535,7 +3581,7 @@
       if (!res || !res.ok) { flash((res && res.error) || '操作失败'); return; }
       flash(on ? '已挂起：朋友进来之前不会开牌（最多等 3 分钟）' : '已放行，人齐就开牌');
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('holdNext', e);
     } finally {
       restore();
     }
@@ -3556,7 +3602,7 @@
         flash(res.error || '撤回不了，稍后再试');
       }
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('unWantNext', e);
     } finally {
       restore();
     }
@@ -3584,7 +3630,9 @@
         resolve(null);
       }, 2500);
       var p;
-      try { p = RoomStore.peekRoom(state.roomId); } catch (e) { p = null; }
+      /* 同步抛 = 本端 bug（ws.peekRoom 已经把拒绝转成 {ok:false} 了）。
+       * 用户侧由下面的 resolve(null) 兜底并说「没核对上」，所以这里只上报不提示。 */
+      try { p = RoomStore.peekRoom(state.roomId); } catch (e) { reportBug('peekRoom', e, null); p = null; }
       if (!p || typeof p.then !== 'function') {
         clearTimeout(timer);
         resolve(null);
@@ -3682,7 +3730,7 @@
       Sfx.play('submit');
       render(); // 经 subscribe 更新兜底
     } catch (e) {
-      flash('网络不太稳，再试一次');
+      reportBug('proposeDissolve', e);
     } finally {
       restore();
     }
@@ -5288,7 +5336,10 @@
     try {
       res = await RoomStore.resume(state.myId);
     } catch (e) {
-      return; // 回座只是尽力而为，失败不影响正常使用
+      /* 对用户安静，对我们不安静：回座失败不值得弹提示（可能只是新开了一个页面），
+       * 但这条路悄悄坏掉时，一次发版就能让所有人的座位都回不去。 */
+      reportBug('resume', e, null);
+      return;
     }
     if (!res || !res.ok || !res.room) return;
     attachRoom(res.roomId, res.room);

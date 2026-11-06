@@ -3080,3 +3080,121 @@ journey 现在直接量它的矩形：`top >= 0 && bottom <= innerHeight`（首�
 | 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本核对 = 本地 `20261102o`，SW 已接管） |
 | 公库 | `0eff8ac chore: 同步自私有仓库（08cfb6b）` |
 | 私库 | `08cfb6b`（`git ls-remote` 比对一致） |
+
+---
+
+## v127 · 别再把 bug 吞掉（版本 `20261102p` / sw `v127`，2026-11-06）
+
+评审收敛出的第三条。前两条修的是「会不会卡住」，这一条修的是**「卡住了你知不知道」**。
+
+### 一、一句话说清问题
+
+`RoomStore` 的协议方法**已经**把 reject 转成了 `{ok:false, error}`
+（`roomStore.js` 里 31 个 `ws.xxx` 全带 `.catch`，唯一例外是 `createRoom`）。
+所以能落进 `game.js` 那些 `catch` 的，**不可能是「请求失败」**，只可能是本端把自己绊倒了：
+方法不存在、解引用 `undefined`、`render()` 抛异常。
+
+而它们统一说了一句 `网络不太稳，再试一次`。两个害处：
+
+| 害处 | 具体 |
+|---|---|
+| 诱导重复提交 | 交牌时异常出在 `render()`，牌**已经交上去了**；玩家再交一次撞「本轮已提交」，然后继续怀疑网络 |
+| 线上零信号 | `errorReport` 只收未捕获异常，被 `catch` 住的上报不了 —— v121 的 `dropNext is not a function` 就是这么消失的 |
+
+### 二、改法：一个出口，承认是本端的问题
+
+`game.js` 新增 `reportBug(where, e, userMsg, kind)`：
+
+| 参数 | 作用 |
+|---|---|
+| `where` | 动作名（`submitGroups` / `wantNext` …），线上能直接看出是哪一步 |
+| `userMsg` | 覆盖文案；**传 `null` = 只上报不提示**（回座 / 快照核对这种本来就该安静的） |
+| `kind` | 默认 `catch`；建房用 `net`（它是唯一真会把网络失败抛上来的） |
+
+默认文案是 `出了点问题，已经记下了` —— 不提网络，并且是**实话**（真的上报了）。
+
+改到的 13 处：`setHandLimit` / `beginRevise` / `cancelRevise` / `submitGroups` /
+`wantNext` / `setReady` / `addBot` / `dropNext` / `holdNext` / `unWantNext` /
+`proposeDissolve` / `createRoom` / `joinRoom`，外加两处原来**连提示都没有**的：
+
+- `tryResumeRoom`：`catch (e) { return; }` —— 刷新后自动回座失败，一条记录都不留。
+  这条路悄悄坏掉时，一次发版能让所有人的座位都回不去，而服务端看不出异常。
+- `fetchRoomSnapshot`：`catch (e) { p = null; }` —— 用户侧有「没核对上」的兜底文案，
+  缺的只是"我们这边知道"。
+
+### 三、订阅者：吞掉可以，但不能不留痕
+
+`roomStore.js` 里 8 处 `try { cb(...) } catch (e) {}` 全部改成 `reportSubscriber(where, e)`。
+**不重抛** —— 重抛会把一次局部渲染失败升级成整条广播失败，别的订阅者就都收不到了。
+
+v108 的 `ReferenceError: state is not defined` 就是死在这里：界面从此不再更新，
+控制台没声音，服务端零记录，最后靠人肉复现才找到。
+
+### 四、守卫：守「说谎的那一类」，不是「所有空 catch」
+
+`pwa/test/no-silent-catch.test.js`（47 项）+ journey `[9e]`（5 项）。
+
+**为什么不一刀切要求"空 catch 必须写日志"**：`pwa/js` 下有 150 多处 catch 围着
+`focus()` / `history.replaceState` / `AudioContext` / `socket.close`，
+它们抛出来没有任何补救动作，全加日志只会把真问题淹掉。
+一刀切的规矩没人守得住，守得住的是这一条：
+
+> **catch 里只要给了用户提示（flash），就必须同时上报。**
+
+三条具体判据：
+
+| 判据 | 拦的是什么 |
+|---|---|
+| 全 UI 层 31 个模块、156 处 catch：给提示必须上报 | v121 那种「说网络不太稳」 |
+| 协议调用的 catch 不许只有 `return` | 回座那条静默路径 |
+| 订阅者的 catch 不许空着 | v108 那种「界面再也不更新」 |
+| 代码里 `网络不太稳` 必须为 0 | 同一句话不许再出现 |
+
+**守卫自己踩了两次坑，都记在文件注释里**：
+
+1. 第一版把「订阅者」的判据写在 catch 体里找 `list[i](room)` —— 那句话在 `try` 里，
+   结果匹配到 **0 处**，断言却"通过"了。守错误报比没守卫更糟。
+2. 第一版按 `\{([^{}]*)\}` 取 catch 块体，被一条**注释里的 `{ok:false}`**
+   提前收尾，于是 `reportBug` 那行被判成"块外"。改成把注释抹成等长空格再解析。
+
+两次都是「守卫因为自己的实现而失明」，所以两条修正都写成了注释留在代码里。
+
+### 五、journey 补一件真事：上报通道在浏览器里是活的
+
+单测是在 Node 里把 `reportBug` / `reportSubscriber` 抠出来跑的 ——
+它证明不了**浏览器里 `game.js` 到底看不看得见 `ErrorReport`**。
+如果看不见，`typeof ErrorReport !== 'undefined'` 恒为 false，上报全部静默失效，
+而那 47 项守卫会全绿。`[9e]` 在真页面上量：全局可达、`capture` 可调、
+`_stats` 是活的、端点指向 `/api/client-error`、sharecode 与页面 URL 一致。
+
+### 验收
+
+| 项 | 结果 |
+|---|---|
+| `npm test` | **142 文件 / 5540 条断言 / 0 失败**（v126 是 141 / 5494） |
+| 新增 `pwa/test/no-silent-catch.test.js` | **47 项**：全 UI 层扫描 + 协议调用 + 订阅者 + 行为断言（capture 被调用 / 不重抛 / null 不提示） |
+| 变异自证：`addBot` 改回 `flash('网络不太稳')` | **4 条立刻红**，已还原 |
+| 变异自证：`emit` 的 catch 改回空 | **3 条立刻红**，已还原 |
+| 变异自证：`resume` 改回裸 `return` | **2 条立刻红**，已还原 |
+| `npm run journey` | **156 项 / 0 失败**（v126 是 151） |
+| `probe-ui-flow` iOS 竖 / 横 | 各 13 屏 **ALL PASS** |
+
+### 没做到 / 没验证到
+
+- **没有端到端证明"一次真实异常真的写进了服务端日志"**。`[9e]` 证明的是通道可达，
+  服务端收不收由 `server/test/client-error.test.js` 覆盖；中间那一跳（浏览器 → 本机 server）
+  只在本轮手工观察过，没有断言。
+- **上报是尽力而为**：`errorReport` 每会话最多 10 条、同 message 只报一次、不做重试。
+  一个渲染循环里的异常刷屏不会打满服务端，但也意味着"第一条最重要"。
+- **journey 出现了一次已知偶发红**（`第 1 轮十点半没爆` → 后续 8 条连锁红，耗时 25.8 秒），
+  重跑即 156/0。这是 `BACKLOG` B-L5 记了两轮的老问题，本轮**没有修**，
+  但第二次撞上说明它不是"一次性抖动"。
+
+### 发布结果（v127）
+
+| 项 | 结果 |
+|---|---|
+| 部署 | `https://your-app.app.workbuddy.host/?sharecode=REDACTED`（同一个应用，链接不变） |
+| 线上冒烟 `probe-online-smoke` | 待填 |
+| 公库 | 待填 |
+| 私库 | 待填 |
