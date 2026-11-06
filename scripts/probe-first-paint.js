@@ -247,7 +247,23 @@ async function main() {
   console.log('    截图：' + await shot('with-session'));
 
   /* ================================================================
-   * C. 兜底：存储不可用时必须按「已登录」处理，不能白屏
+   * C. 兜底：存储不可用时不能白屏
+   *
+   * ★ v129 修正了这里的口径。
+   *
+   * 原来的断言是「读失败不挂 .no-session（按已登录兜底）」。那是 v111 之前的事实：
+   * 当时 head 里直接 `localStorage.getItem`，抛异常会走 catch，于是"不动 class"= 首页。
+   *
+   * v111 把 16 个物理键收口进 `Store`，而 `Store.read` **永不抛**（隐私模式 / 配额满
+   * 一律返回 null）。于是「读失败」与「没有会话」在 head 里不可区分，两者都落到
+   * `s = null` 那条路 —— 挂 .no-session，显示登录页。
+   *
+   * 这个新行为**不比原来差**：storage 读不出来的人本来也拿不到 session，
+   * 让他直接看登录页比"先闪一下首页再被 boot 切走"更对。真正要守的从来不是
+   * "按已登录处理"，而是**不白屏**（下面那条断言，从始到终都在）。
+   *
+   * 但注释当时没跟着改，于是这条探针成了唯一还记着旧口径的地方 —— 它红了两年没人看，
+   * 正是因为没人跑它。所以这里改的是**探针与注释**，不是产品行为。
    * ============================================================== */
   console.log('\n[C] localStorage 抛异常时的兜底');
   {
@@ -277,10 +293,13 @@ async function main() {
     console.log('    html.className = ' + JSON.stringify(broken.htmlClass)
       + '  home=' + broken.home + '  auth=' + broken.auth);
 
-    ok(String(broken.htmlClass).indexOf('no-session') < 0,
-      '★ 读存储抛异常时不挂 .no-session（按已登录兜底）', broken.htmlClass);
+    /* 断言「明确落到登录页」，而不是含糊的「有一个可见」。
+     * 含糊的判据在这里是最坏的选择：白屏、闪错屏、停在 loading 都能通过。 */
+    ok(String(broken.htmlClass).indexOf('no-session') >= 0 && broken.auth !== 'none' && broken.home === 'none',
+      '★ 读存储抛异常 → 当作未登录，首帧直接是登录页（Store.read 永不抛，与「没有会话」同一条路）',
+      'class=' + JSON.stringify(broken.htmlClass) + ' home=' + broken.home + ' auth=' + broken.auth);
     ok(broken.home !== 'none' || broken.auth !== 'none',
-      '★ 不会出现两个页面都不可见（不会白屏）',
+      '★ 不会出现两个页面都不可见（不会白屏）—— 这才是原来的真实意图',
       'home=' + broken.home + ' auth=' + broken.auth);
 
     await cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier });

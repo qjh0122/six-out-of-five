@@ -11,6 +11,9 @@
     "probe:devices": "node scripts/probe-devices.js --assert",
     "probe:flow": "node scripts/probe-ui-flow.js",
     "probe:seatinfo": "node scripts/probe-seat-info.js",
+    "probes": "node scripts/probes.js",
+    "probes:check": "node scripts/probes.js --check",
+    "probes:doc": "node scripts/probes.js --write",
     "backup": "node scripts/backup-leaderboard.js",
     "audit:comments": "node scripts/audit-comments.js"
   },
