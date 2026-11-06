@@ -31,7 +31,7 @@
 
 **当前线上：`20261102r` / sw `v129`（v129）** —— 这一轮**没有新功能**，只有工具与文档；
 唯一进入 `pwa/` 的改动是 `index.html` 里一段注释（首屏降级口径，原来是错的）。
-线上冒烟 **__/15**（浏览器实测版本号 `20261102r`、直抓 `sw.js` 确认 `CACHE_NAME = 'weile-liuxuanwu-v129'`）。
+线上冒烟 **15/15**（浏览器实测版本号 `20261102r`、直抓 `sw.js` 确认 `CACHE_NAME = 'weile-liuxuanwu-v129'`）。
 全量 `npm test` **145 文件 / 5630 条断言**；`journey` **158 项**；`probe-ui-flow` 竖/横各 1 视口 × 13 屏 ALL PASS。
 探针全量实跑（37 条串行 931 秒）：**绿 28 / 红 7 / 超时 1**，红的那 7 条逐条归因见 [`PROBES.md`](./PROBES.md)。
 
@@ -3504,7 +3504,7 @@ N4 从 v81 之前一直开着：「首页安装引导在横屏最小一档只有
 | 项 | 结果 |
 |---|---|
 | 部署 | `https://liuxuanwu.app.workbuddy.host/?sharecode=Q2JYFWXOP3`（同一个应用，链接不变） |
-| 线上冒烟 `probe-online-smoke` | **__ / 15**（版本核对 = 本地 `20261102r`，SW 已接管） |
+| 线上冒烟 `probe-online-smoke` | **15 / 15**（版本核对 = 本地 `20261102r`，SW 已接管；直抓线上 `sw.js` 确认 `CACHE_NAME = v129`） |
 | 全量 `npm test` | **145 文件 / 5630 条断言 / 0 失败**（新增 `probe-ledger.test.js` 30 项） |
 | `journey` | **158 项 / 0 失败**（v128 是 156；新增 [9e] 两条） |
 | `probe-ui-flow` | 竖 390×844 + 横 844×390，**2 视口 × 13 屏 ALL PASS** |
