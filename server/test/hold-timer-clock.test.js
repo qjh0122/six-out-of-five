@@ -24,7 +24,10 @@
 
 /* 三个时长在 hub 加载时读取 —— 必须在 require 之前设好。
  * 250ms 是「短到能真等」，又「长到不会因为一次 GC 抖动误判」。 */
-process.env.HOLD_TTL_MS = '250';
+/* ★ v128：250ms → 1200ms。原来「120ms 时还没到期」只留了 130ms 余量，
+ * CI 上（同一台机器并发跑 5 个 job）这个余量会被吃掉，见 BACKLOG C13。
+ * 放大的是窗口，不是判据。 */
+process.env.HOLD_TTL_MS = '1200';
 process.env.GRACE_MS = '250';
 
 const fs = require('fs');
@@ -57,7 +60,7 @@ function mkRoom(roomId) {
 
 (async function main() {
   console.log('\n[0] TTL 真的被环境变量接住了（否则下面的等待全部失真）');
-  eq(SM.HOLD_TTL_MS, 250, '★ stateMachine 读到了 HOLD_TTL_MS=250');
+  eq(SM.HOLD_TTL_MS, 1200, '★ stateMachine 读到了 HOLD_TTL_MS=1200');
 
   console.log('\n[1] 同一次挂起：定时器到期时刻 === 数据到期时刻');
   {
@@ -135,10 +138,10 @@ function mkRoom(roomId) {
     eq(SM.canStartNext(room), false, '挂起期间开不了（这是挂起的全部作用）');
 
     hub._armHoldTimer('800003');
-    await sleep(120);
+    await sleep(200);
     ok(!!SM.holdNextOf(room), '120ms 时还没到期（这个时长是真的在等）');
 
-    await sleep(260);   // 累计 ~380ms > 250ms
+    await sleep(1200);   // 累计 ~1400ms > 1200ms
     eq(SM.holdNextOf(room), null, '★★ 到点后 holdNextOf 返回 null（数据侧放行）');
     eq(room.phase, 'ROUND1_SPLIT', '★★ 到点触发自动开局 —— 这就是到期回调体第一次被执行到');
     eq(SM.playingPlayers(room).length, 2, '两个人都在打，没人被挂起带走');

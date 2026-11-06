@@ -18,8 +18,10 @@
  */
 'use strict';
 
-process.env.GRACE_MS = '250';
-process.env.ROOM_IDLE_MS = '250';
+/* ★ v128：250ms → 1200ms。原来「120ms 时还没到点」只留 130ms 余量，
+ * CI 上会被并发吃掉（BACKLOG C13）。放大窗口不改变判据。 */
+process.env.GRACE_MS = '1200';
+process.env.ROOM_IDLE_MS = '1200';
 
 const fs = require('fs');
 const os = require('os');
@@ -71,10 +73,10 @@ function disarmRecycle(hub, roomId) {
     ok(!pb.left, '★ 此刻还没判离开（宽限就是给他回来用的）');
     ok(hub.graceTimers.has('920001#pb'), '宽限计时器挂上了');
 
-    await sleep(120);
-    ok(!pb.left, '120ms 时仍然没判（250ms 的宽限是真的在等）');
+    await sleep(200);
+    ok(!pb.left, '200ms 时仍然没判（1200ms 的宽限是真的在等）');
 
-    await sleep(260);   // 累计 ~380ms
+    await sleep(1200);   // 累计 ~1400ms
     ok(pb.left === true, '★★ 到点判了离开 —— 这个回调体第一次被执行到');
     ok(!hub.graceTimers.has('920001#pb'), '计时器自己清掉了（不会重复触发）');
   }
@@ -95,7 +97,7 @@ function disarmRecycle(hub, roomId) {
     /* 模拟重连：清掉宽限（hub 在 resume 时就是这么做的），再等过宽限时长 */
     hub._clearGrace('920002', 'pb');
     ok(SM.reconnect(room, 'pb').ok === true, '走真实的重连路径');
-    await sleep(320);
+    await sleep(1400);
     ok(pb.left !== true, '★★ 人是回来了，宽限到点也不许判离开');
     eq(pb.connected, true, '仍在线');
   }
@@ -108,10 +110,10 @@ function disarmRecycle(hub, roomId) {
     hub._armRoomRecycle('920003');
     ok(hub.rooms.has('920003'), '开始时房间在');
 
-    await sleep(120);
-    ok(hub.rooms.has('920003'), '120ms 时还在（250ms 的回收是真的在等）');
+    await sleep(200);
+    ok(hub.rooms.has('920003'), '200ms 时还在（1200ms 的回收是真的在等）');
 
-    await sleep(260);
+    await sleep(1200);
     ok(!hub.rooms.has('920003'), '★★ 到点房间被回收 —— 这个回调体第一次被执行到');
     ok(!hub.roomTimers.has('920003'), '回收计时器已清');
   }
@@ -125,7 +127,7 @@ function disarmRecycle(hub, roomId) {
     const keep = {};
     hub.conns.set(keep, { roomId: '920004', playerId: 'pa' });
     hub._armRoomRecycle('920004');
-    await sleep(320);
+    await sleep(1400);   // 必须有活连接也不回收，但要等过回收时长
     ok(hub.rooms.has('920004'), '★★ 有人连着就不回收（这是 _anyLiveConn 的唯一作用）');
     eq(hub.roomTimers.has('920004'), false, '但计时器本身已经消耗掉了');
   }
