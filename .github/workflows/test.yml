@@ -61,7 +61,7 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────────────────
-  # 浏览器巡检（v110 加的）
+  # 浏览器巡检（v110 加的，v128 补全 12 档）
   #
   # 为什么单独一个 job：45 个探针**一个都没在 CI 里**，全靠人记着跑。
   # 后果不是理论上的 —— v108 那次 4463 条断言全绿、CI 也全绿，
@@ -71,14 +71,37 @@ jobs:
   # 放到 Linux runner 上必然全红。现在由 scripts/probe-ci.js 在进程级
   # 把 spawn 重定向到探测到的浏览器，脚本一行没改。
   #
-  # 只跑「一条主路径 + 一个横屏」，不是全部 45 个探针：
-  #   · 全量要 14 分钟以上，而且大半探针查的是具体视觉细节，
-  #     更适合发版前人工跑一次（见 docs/PLAN.md 的发布检查单）；
-  #   · 这里要守的是「**接没接上**」这一层，那是单测永远看不到的。
+  # ★ v128：从「2 档」扩到「12 档」，并分 3 片并行。
+  #
+  #   为什么必须补：12 档里长期只跑 390×844 / 844×390，而**已知最容易断行的
+  #   恰恰是更窄的 360×640** —— 历史上第一次出现「补 AI 队友」断行就是在 390。
+  #   补跑的第一天就发现：360×640 上有 6 条「遮挡」，其中一条还是 v123
+  #   刚加的「等人」按钮。查下来那 6 条是探针自己的假红（见下），
+  #   但**这正是跑它才有机会分清真假**。
+  #
+  #   为什么不一次跑完：12 档约 13 分钟，反馈太慢，而且一个档位红了会把
+  #   其余 11 档的结果一起埋掉。分 3 片 ≈ 每片 5 分钟，哪一族坏了标题上就能看到。
+  #
+  #   分片是「按族切」而不是按数量平均：
+  #     iOS / 安卓 / 电脑 三族的失效方式不一样（安全区 vs 窄屏断行 vs 大留白），
+  #     混在一起切，一片里三族各坏一条反而看不出规律。
   # ────────────────────────────────────────────────────────────────────
   ui-probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: iOS 四档
+            only: '390x844,844x390,430x932,932x430'
+          - name: 安卓四档
+            only: '360x640,360x800,800x360,915x412'
+          - name: 电脑四档
+            only: '1280x720,1920x947,960x1040,728x348'
+
+    name: 浏览器巡检 · ${{ matrix.name }}
 
     steps:
       - uses: actions/checkout@v4
@@ -106,42 +129,66 @@ jobs:
             || { echo "::error::找不到可用浏览器，巡检无法进行"; exit 1; }
           fc-list :lang=zh | head -3 || echo "::warning::没有装到中文字体" 
 
-      - name: 全流程巡检 · 竖屏主路径（13 屏 + 全部弹窗）
+      - name: 全流程巡检 · ${{ matrix.name }}（13 屏 + 全部弹窗）
         env:
-          ONLY: '390x844'
+          ONLY: ${{ matrix.only }}
         run: |
           set +e
           node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui.log 2>&1
           code=$?
           cat /tmp/ui.log
+          # 分片自检：这一片必须真的跑了 4 档。
+          # 用 node 解析而不是 grep —— runner 的 C locale 下 grep 匹配不到多字节字符，
+          # 上一轮就因此只看到一句「exit code 2」，日志里到底红在哪一句完全看不到。
+          node -e "
+            const t = require('fs').readFileSync('/tmp/ui.log', 'utf8');
+            const m = t.match(/本轮视口 (\d+) 个/);
+            const n = m ? Number(m[1]) : -1;
+            if (n !== 4) {
+              console.error('::error::分片应跑 4 档，实际 ' + (n < 0 ? '日志里没有「本轮视口」' : n) + ' —— ONLY=' + process.env.ONLY);
+              process.exit(3);
+            }
+          "
+          self=$?
+          if [ $self -ne 0 ]; then exit $self; fi
           # 把硬问题提成 annotation：不开日志（或者没有仓库 admin 读日志）时，
           # 也能从 check-run 的 annotations 里直接看到是哪几条红了。
-          # 不靠 grep 筛：✗ 是多字节，runner 的 C locale 下 grep 匹配不到，
-          # 上一轮就因此只看到一句「exit code 2」。直接吐最后几行。
           if [ $code -ne 0 ]; then
-            tail -8 /tmp/ui.log | while IFS= read -r line; do
+            tail -12 /tmp/ui.log | while IFS= read -r line; do
               [ -n "$line" ] && echo "::error::$line"
             done
           fi
           exit $code
 
-      - name: 全流程巡检 · 横屏（历史上问题最多的一档）
-        env:
-          ONLY: '844x390'
-          # 换一组端口：上一步刚退出时 3042 还在 TIME_WAIT，直接复用会 EADDRINUSE，
-          # 而那个报错看起来像「巡检卡住了」（本地实测踩过）。
-          PROBE_PORT: '3052'
+  # ────────────────────────────────────────────────────────────────────
+  # 端到端旅途（v110 加的，v128 从 ui-probe 里拆出来）
+  #
+  # 拆出来的理由：巡检分成 3 片之后，journey 挂在其中一片上会变成
+  # 「只有那一族的片子挂了才跑」；挂 3 份又是白跑两遍。
+  # 它本来就只需要一个浏览器，和分片无关。
+  # ────────────────────────────────────────────────────────────────────
+  journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 准备浏览器与字体
         run: |
-          set +e
-          node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui2.log 2>&1
-          code=$?
-          cat /tmp/ui2.log
-          if [ $code -ne 0 ]; then
-            tail -8 /tmp/ui2.log | while IFS= read -r line; do
-              [ -n "$line" ] && echo "::error::$line"
-            done
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-color-emoji || true
+          if ! node -e "require('./scripts/lib/browser.js').findBrowser()" 2>/dev/null; then
+            sudo apt-get install -y -qq chromium-browser || sudo apt-get install -y -qq chromium || true
           fi
-          exit $code
+          node -e "console.log('浏览器：' + require('./scripts/lib/browser.js').findBrowser())" \
+            || { echo "::error::找不到可用浏览器，旅途无法进行"; exit 1; }
+          fc-list :lang=zh | head -3 || echo "::warning::没有装到中文字体"
 
       - name: 端到端旅途（注册 → 建房 → 打完一局 → 结算）
         run: |

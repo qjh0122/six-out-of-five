@@ -411,6 +411,53 @@ const AUDIT = `(function(){
     }
     return false;
   }
+  /* 元素「实际会被画出来」的矩形（v128）。
+   *
+   * ★ 为什么必须算这个：getBoundingClientRect 给的是**布局位置**，
+   *   而滚动容器里被滚出去的内容**仍然有布局位置** —— 它只是被裁掉、没画在那儿。
+   *
+   *   360×640 的结算页就是这么被误判的：把数那一行在 .settle-body（overflow-y:auto）
+   *   里滚到折线以下，布局位置正好压在「开始下一局」上，于是报 6 条 cover（占小者 37~42%）；
+   *   可截图上那块区域什么都没画 —— 玩家既看不见，也点不到。
+   *
+   * ■ 假红的代价：一条稳定误报会训练所有人忽略红点，比没有断言更糟。
+   *   所以先算「画在哪儿」，再判重叠。
+   *
+   * 注意：position:fixed 的后代不受祖先裁剪影响。本项目弹窗都在 #stage 里，
+   * 没有这种结构；真要出现，这里会**多报**（保守方向），不会漏报。
+   */
+  function paintedRect(el) {
+    var r = el.getBoundingClientRect();
+    var box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    var n = el.parentElement;
+    while (n && n !== document.documentElement) {
+      var cs = getComputedStyle(n);
+      var clipX = /auto|scroll|hidden|clip/.test(cs.overflowX);
+      var clipY = /auto|scroll|hidden|clip/.test(cs.overflowY);
+      if (clipX || clipY) {
+        var pr = n.getBoundingClientRect();
+        var bl = parseFloat(cs.borderLeftWidth) || 0;
+        var br = parseFloat(cs.borderRightWidth) || 0;
+        var bt = parseFloat(cs.borderTopWidth) || 0;
+        var bb = parseFloat(cs.borderBottomWidth) || 0;
+        /* overflow 裁的是 **padding box**，所以边界要扣掉 border 宽度 */
+        if (clipX) {
+          box.left = Math.max(box.left, pr.left + bl);
+          box.right = Math.min(box.right, pr.right - br);
+        }
+        if (clipY) {
+          box.top = Math.max(box.top, pr.top + bt);
+          box.bottom = Math.min(box.bottom, pr.bottom - bb);
+        }
+      }
+      n = n.parentElement;
+    }
+    if (box.right <= box.left || box.bottom <= box.top) return null;   // 整个被裁光
+    return {
+      left: box.left, top: box.top, right: box.right, bottom: box.bottom,
+      width: box.right - box.left, height: box.bottom - box.top
+    };
+  }
   function m(sel, el) { try { return el.matches(sel); } catch (e) { return false; } }
   function name(el) {
     var id = el.id ? '#' + el.id : '';
@@ -577,7 +624,9 @@ const AUDIT = `(function(){
   roots.forEach(function (root) {
     [].slice.call(root.querySelectorAll(SEL.block)).forEach(function (el) {
       if (!visible(el) || m(SEL.allow, el)) return;
-      var r = el.getBoundingClientRect();
+      /* ★ 用「画出来的矩形」而不是布局矩形：滚动容器里被裁掉的那部分不算遮挡。 */
+      var r = paintedRect(el);
+      if (!r) return;
       if (r.width * r.height < 200) return;
       blocks.push({ el: el, r: r });
     });
@@ -939,8 +988,19 @@ async function main() {
    *
    * 现在把两边的 × 都归一成半角 x 再比，CI 里写 390x844 就行。 */
   const norm = (t) => String(t || '').toLowerCase().replace(/×/g, 'x').replace(/\s+/g, '');
-  const onlyN = norm(ONLY);
-  const list = VIEWPORTS.filter((v) => !onlyN || norm(v.g + v.m).indexOf(onlyN) >= 0);
+  /* ONLY 支持逗号分隔的多个片段（v128）：
+   *   ONLY='安卓竖360×640'            → 只跑那一档（人工排查时用）
+   *   ONLY='390x844,844x390,430x932'  → 跑这三档（CI 分片用）
+   *
+   * 为什么要能一次跑多档：一档约 2 分钟，12 档就是一整轮 CI。
+   * 分片是为了并行，但**同一分片内必须共用一个进程** —— 每次启动都要开浏览器、
+   * 起静态服务、等字体就绪，那个固定开销比跑一档本身还大。 */
+  const onlyParts = ONLY.split(',').map(norm).filter(Boolean);
+  const list = VIEWPORTS.filter((v) => {
+    if (!onlyParts.length) return true;
+    const key = norm(v.g + v.m);
+    return onlyParts.some((p) => key.indexOf(p) >= 0);
+  });
   /* 筛选结果为空必须是**硬错误**，不能安静地跑 0 个视口然后「通过」。
    * 典型踩法：ONLY 里写了半角 x（390x844）而视口名是全角 ×（390×844），
    * 或者 CI 的 env 编码把 × 改坏了 —— 那样巡检会「零问题通过」，

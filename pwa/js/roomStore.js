@@ -732,9 +732,23 @@
           .catch(function (e) { return { ok: false, error: e.message }; });
       },
       leaveRoom: function () {
+        /* ★ v128 修：以前这里是 `return r`（服务端回的空对象），于是
+         *   **成功时返回 `{}`、失败时返回 `{ok:true}`** —— 一个方法两种形状，
+         *   而且"成功"那个反而没有 ok。
+         *
+         *   一直没出事，只是因为唯一的调用方（game.js 的退出房间）不看返回值。
+         *   下一个人照其他请求的惯例写一句 `if (!res.ok) flash('离开失败')`，
+         *   就会在**成功退出之后**弹错误 —— 这正是"接起来才坏"的那类缝。
+         *
+         *   统一成 `{ok:true}`，并且**失败也报成功**：退房是尽力而为，
+         *   连接已经断了也算退出（房间有断线宽限和回收兜底）。
+         *   让用户在断网时卡在房间里，比"偷偷少发一条 leaveRoom"更糟。 */
         return request({ type: 'leaveRoom' })
-          .catch(function () { return { ok: true }; })
-          .then(function (r) { clearResume(currentRoomId, currentPlayerId); return r; });
+          .catch(function () { return null; })
+          .then(function () {
+            clearResume(currentRoomId, currentPlayerId);
+            return { ok: true };
+          });
       },
       setReady: function (roomId, playerId, ready) {
         return request({ type: 'ready', payload: { ready: !!ready } })
