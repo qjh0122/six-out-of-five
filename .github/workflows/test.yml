@@ -60,6 +60,12 @@ jobs:
               const lines = fs.readFileSync('/tmp/t.log', 'utf8').split('\n');
               const bad = lines.filter((l) => /^\s+✗/.test(l));
               for (const l of bad) console.log('::error::' + l.trim());
+              /* ★ 光有文件名还是得去翻日志 —— 把具体的 FAIL 断言也提出来（每个文件最多 4 条） */
+              let n = 0;
+              for (const l of lines) {
+                if (/^\s*FAIL\b/.test(l)) { console.log('::error::  ' + l.trim()); n++; }
+                if (n >= 4) break;
+              }
               console.log('::error::失败 ' + bad.length + ' 个测试文件（详情见日志末尾「失败详情」段）');
             "
           fi

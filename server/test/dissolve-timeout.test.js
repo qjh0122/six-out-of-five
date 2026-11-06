@@ -128,16 +128,19 @@ async function run() {
   await b.request('joinRoom', { roomId: roomId, playerId: b.playerId, nickname: b.nickname });
   await a.request('ready', { ready: true });
   await b.request('ready', { ready: true });
-  // 全员准备即开局（「开始游戏」按钮已删），不再需要手动 start
-  await wait(80);
-  let room = a.lastRoom();
+  /* 全员准备即开局（「开始游戏」按钮已删），不再需要手动 start。
+   * ★ v128：这里原来是 `await wait(80)` 再断言 —— 赌「两次 ready + 自动开局广播」
+   *   能在 80ms 内走完。本机空载成立，CI 上（同机 5 个 job）不成立。
+   *   要等的是**状态变化**，不是固定时长，所以改成轮询。 */
+  let room = await waitForRoom(a, (r) => r.phase === SM.PHASE.ROUND1_SPLIT, 3000);
   eq(room.phase, SM.PHASE.ROUND1_SPLIT, '进入第一轮分牌');
 
   /* ---------------------------------------------------------------- */
   console.log('\n[发起解散 → 乙不表态 → 超时自动作废]');
   await a.request('proposeDissolve');
-  await wait(80);
-  room = a.lastRoom();
+  /* 同上：等「投票真的开起来」，不等 80ms。轮询窗口 1s 远小于 1200ms 的超时，
+   * 所以不会把它等成「已经过期」。 */
+  room = await waitForRoom(a, (r) => !!(r.dissolve && r.dissolve.active === true), 1000);
   eq(room.dissolve.active, true, '投票已开始');
   eq(room.dissolve.initiatorId, a.playerId, '发起人是甲');
 
