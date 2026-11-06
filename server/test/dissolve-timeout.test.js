@@ -16,7 +16,17 @@
 
 process.env.PROFILE_FILE = require('path').join(require('os').tmpdir(), 'lxw-dt-profiles-' + Date.now() + '.json');
 process.env.SEED_FILE = require('path').join(require('os').tmpdir(), 'lxw-dt-seed-' + Date.now() + '.json');
-process.env.DISSOLVE_TIMEOUT_MS = process.env.DISSOLVE_TIMEOUT_MS || '300';
+/* ★ v128：300ms → 1200ms。
+ *
+ * 这个测试断言「发起解散后 80ms，投票还在进行中」—— 也就是给"发出请求 + 收广播 +
+ * 读快照"这一串留了 220ms 的余量。**本机空载够用，CI 上不够**：
+ * 公库的 `test` job 在 v125/v126/v127 三次「回填文档」提交上连续红，
+ * 定位到就是这一条（见 BACKLOG C13）。
+ *
+ * 为什么是"放大窗口"而不是"改成轮询"：要验的是**状态机在超时后翻面**，
+ * 不是"它恰好在 300ms 翻面"。窗口越窄，测的就越是机器速度而不是规则。
+ * 1200ms 让判定留出 12 倍余量，代价是这个文件多跑约 2 秒。 */
+process.env.DISSOLVE_TIMEOUT_MS = process.env.DISSOLVE_TIMEOUT_MS || '1200';
 process.env.PORT = process.env.PORT || '3201';
 const PORT = Number(process.env.PORT);
 

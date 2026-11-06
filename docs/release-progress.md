@@ -3326,11 +3326,34 @@ v108 的 `ReferenceError: state is not defined` 就是死在这里：界面从�
   这是 B-L7 那笔老账，本轮没有改布局。
 - 探针只覆盖"一条主路径 × 13 屏"。另外 40 多个探针仍然不在 CI 里 —— 不在本轮范围。
 
+### 六、顺手把「CI 红了但没人知道红在哪」修掉，并因此定位了一个真问题
+
+推上去之后翻公库 Actions，发现 v125/v126/v127 的三次「回填文档」提交
+`test` job 全是红的 —— **而且红得毫无信息**：check-run 上只有一句
+「Process completed with exit code 1」，job 日志要 admin 权限才下得下来。
+
+先把这件事本身修掉：`全量测试` 步骤改成失败时用 node 解析日志，
+把每个失败的测试文件 `::error::` 输出成 annotation。下一次 push 之后，
+annotation 直接写着：
+
+```
+✗ [107/144] server/test/dissolve-timeout.test.js  (exit 1)
+```
+
+根因不是逻辑，是**时间窗太窄**：那个测试把解散超时设成 300ms，
+却断言「发起后 80ms 投票还在进行中」——给"发请求 + 收广播 + 读快照"
+只留了 220ms。本机空载够用，CI 上同时跑 5 个 job 就不够。
+
+同一个病在 v125 写的两个定时器测试里也有（250ms 窗口只留 130ms）。
+三处一起放大到 1200ms，判定点留 6~12 倍余量，代价是合计多跑约 6 秒。
+**没变松**：把 `GRACE_MS` 设成 99999（回调永不触发）→ 2 条断言立刻红。
+
 ### 发布结果（v128）
 
 | 项 | 结果 |
 |---|---|
 | 部署 | `https://liuxuanwu.app.workbuddy.host/?sharecode=Q2JYFWXOP3`（同一个应用，链接不变） |
-| 线上冒烟 `probe-online-smoke` | 待填 |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本核对 = 本地 `20261102q`，SW 已接管） |
+| 公库 Actions | workflow 结构验证通过：5 个 job 正确创建（test + 3 个巡检分片 + journey），`journey` 1 分 01 秒通过；`test` 的红已定位并修复 |
 | 公库 | 待填 |
 | 私库 | 待填 |
