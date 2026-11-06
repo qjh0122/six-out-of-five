@@ -170,6 +170,25 @@ eq(byHandId[5].no, 2, '★ hid=5 的显示序号是 2（不是 5）');
 eq(byHandId[4].g, 1, 'hid=4 属于第 2 局（g=1）');
 eq(byHandId[5].g, 1, 'hid=5 属于第 2 局（g=1）');
 
+head('[2a] sameGameOnly：点开哪一局就只看那一局（v131 修 · 用户实测）');
+/* 这个函数以前在 recordsView 里（DOM 模块），只能靠肉眼验 —— 而肉眼已经漏过一次：
+ * 连开 4 局后点第 3 局的回放，弹窗里是 4 局 12 把。 */
+var pickG2 = HK.sameGameOnly(allPacks, 4);
+eq(pickG2.length, 2, '★ 点第 2 局第 1 把 → 只剩第 2 局的 2 把', '长度 ' + pickG2.length);
+ok(pickG2.every(function (p) { return p.g === 1; }), '★ 剩下的全属第 2 局（g=1）', JSON.stringify(pickG2.map(function (p) { return p.g; })));
+/* 目标取「第一个还在库里的把」—— 不能写死 hid=1：history 有上限，第 1 把可能已被裁掉，
+ * 那时 sameGameOnly 按设计退到「最后一局」，断言就会误报。 */
+var g1Target = allPacks[0].hands;
+var pickG1 = HK.sameGameOnly(allPacks, g1Target);
+/* 不写死把数：history 有上限（按 handLimit），第 1 局可能只剩尾部几把。
+ * 要钉的是「收窄到了第 1 局」，不是「还剩 3 把」。 */
+ok(pickG1.length >= 1 && pickG1.length < allPacks.length, '点第 1 局的把 → 只剩第 1 局的那几把', '长度 ' + pickG1.length + ' / 全部 ' + allPacks.length);
+ok(pickG1.every(function (p) { return p.g === allPacks[0].g; }), '★ 收窄没串局（全属同一个 g）', JSON.stringify(pickG1.map(function (p) { return p.g; })));
+var noTarget = HK.sameGameOnly(allPacks, 0);
+ok(noTarget.every(function (p) { return p.g === noTarget[0].g; }), '★ 没给目标 → 只留最后一局');
+eq(HK.sameGameOnly(allPacks.slice(0, 2), 0).length, 2, '只有一局时原样返回（不误删）');
+eq(HK.sameGameOnly([], 3).length, 0, '空数组不抛');
+
 head('[2b] 排序与身份键不受 no 影响');
 var ids = packs.map(function (p) { return p.hands; });
 var sortedIds = ids.slice().sort(function (a, b) { return a - b; });

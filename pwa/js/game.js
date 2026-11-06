@@ -2901,7 +2901,7 @@
     flash: flash
   });
   var endedAtOf = History.endedAtOf, endReasonOf = History.endReasonOf;
-  var slimRound = History.slimRound, packHistory = History.packHistory;
+  var slimRound = History.slimRound, packHistory = History.packHistory, sameGameOnly = History.sameGameOnly;
   var absorbHistory = History.absorbHistory, slimReplay = History.slimReplay;
   var roomHasBot = History.roomHasBot, recordSettled = History.recordSettled;
   var noticeRecordsWrite = History.noticeRecordsWrite;
@@ -3102,7 +3102,7 @@
     state: state,
     avatarInner: avatarInner, findPlayer: findPlayer,
     render: render, getMe: getMe, flash: flash, showScreen: showScreen,
-    packHistory: packHistory,
+    packHistory: packHistory, sameGameOnly: sameGameOnly,
     showModalEl: showModalEl, hideModalEl: hideModalEl,
     isShown: isShown, pushModalState: pushModalState
   });

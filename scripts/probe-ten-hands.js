@@ -509,6 +509,28 @@ async function main() {
   ok(!!recheck, '★ 对局结束后出现整场复盘行', String(recheck));
   ok(recheck ? recheck.indexOf('整场') >= 0 : false, '★ 复盘说的是「整场」，不是「这一把」', String(recheck));
 
+  /* ★ v131 修（用户实测 bug 2）：复盘里的「你拿了」必须等于这一行的净胜。
+   * 实测现场：净胜 +10、复盘说「你拿了 -3」—— 差的那 13 分是前面几局被一起加进来了。
+   * 这两个数**不同源**（净胜来自分数，复盘来自逐组 deltas 累加），对得上才说明没有串局。 */
+  /* 取「我这一行」的净胜：复盘行就挂在我那一行里，所以从它的父节点往下找。
+   * 直接用 document.querySelector('.settle-net') 会拿到**第一名**的净胜 —— 第一次写就是这里错了，
+   * 报出「复盘=-21 净胜=21」，看起来像符号反了，其实是拿错了行。 */
+  const nums = await evaluate('(function(){ var box = document.querySelector(".settle-recheck");'
+    + ' var row = box ? box.parentNode : null;'
+    + ' var m = row ? row.querySelector(".settle-net") : null;'
+    + ' return { recheck: box ? box.textContent : "", net: m ? m.textContent : "" }; })()');
+  const num = function (t) {
+    const m = /[-+]?[0-9]+/.exec(String(t || ''));
+    return m ? Number(m[0]) : null;
+  };
+  const rkText = String((nums && nums.recheck) || '');
+  const at = rkText.indexOf('你拿了');
+  const gotActual = at < 0 ? null : num(rkText.slice(at + 3));
+  const rowNet = num(nums && nums.net);
+  ok(gotActual !== null && rowNet !== null, '★ 复盘与净胜两个数都读得到', JSON.stringify(nums));
+  ok(gotActual === rowNet, '★★ 复盘里的「你拿了」== 这一行的净胜（跨局串味的直接症状）',
+    '复盘=' + gotActual + ' 净胜=' + rowNet + ' 原文=' + rkText.slice(0, 60));
+
   const btns = (sign && sign.btns) || [];
   ok(btns.length >= 5, '结算按钮还是五颗', JSON.stringify(btns.map((b) => b.id)));
   ok(btns.every((b) => b.inView), '★ 按钮全在视口内', JSON.stringify(btns.filter((b) => !b.inView)));

@@ -80,6 +80,30 @@
      *   房间打两局时 hid 连续递增（第一局 1~3、第二局 4~6），于是第二局的
      *   回放标题写着「第 4 把 / 第 5 把」—— 数字越往后越大，跟屏幕上这一局的
      *   实际把数完全对不上。身份可以连续，序号不能。 */
+    /**
+     * 只留「你点的那一把」所在的那一局（v131 修 · 用户实测 bug 1）。
+     *
+     * 为什么需要：一场档案（房号 + 建房时间）横跨同房间的多局 —— 点「开始下一局」
+     * 不换房间。以前弹窗把所有局一起渲染，点第 3 局看到的是 4 局 12 把。
+     *
+     * 为什么放在这个文件里：它是**纯函数**（只碰 packs 数组），放这里才能被单测钉住；
+     * 留在 recordsView 里就只能靠肉眼验 —— 而肉眼已经漏过一次了。
+     *
+     * @param {Array} packs  packHistory 的产物（每项有 hands / g）
+     * @param {number} target 你点的那一把的身份号（hid）；0/缺省 = 取最后一局
+     */
+    function sameGameOnly(packs, target) {
+      var list = packs || [];
+      if (list.length < 2) return list;
+      var gameOf = function (p) { return Math.max(0, Math.round(Number(p && p.g) || 0)); };
+      var g = null;
+      for (var i = 0; i < list.length; i++) {
+        if (target && list[i].hands === target) { g = gameOf(list[i]); break; }
+      }
+      if (g === null) g = gameOf(list[list.length - 1]);
+      return list.filter(function (p) { return gameOf(p) === g; });
+    }
+
     function packHistory(hist) {
       var byHand = {};
       var order = [];
@@ -239,6 +263,7 @@
   api.endReasonOf = endReasonOf;
   api.slimRound = slimRound;
   api.packHistory = packHistory;
+  api.sameGameOnly = sameGameOnly;
   api.absorbHistory = absorbHistory;
   api.slimReplay = slimReplay;
   api.roomHasBot = roomHasBot;

@@ -760,7 +760,7 @@
     if (!body) return;
     if (packs === undefined) packs = packHistory((state.room && state.room.history) || []);
     /* 安全网：不管哪个入口进来，只渲染「你点的那一把」所在的那一局 */
-    packs = sameGameOnly(packs, (opts && opts.targetHand) || 0);
+    packs = useSameGame(packs, (opts && opts.targetHand) || 0);
     var views = replayViews(packs);
     if (!views.length) {
       body.innerHTML = '<p class="replay-empty">这一局没有留下过程记录。</p>';
@@ -904,24 +904,11 @@
     return packs[packs.length - 1].hands || 0;
   }
 
-  /* ★ v131 修（用户实测）：**点开哪一局就只看那一局**。
-   *
-   * 以前的形状：一场档案（房号 + 建房时间）横跨同房间的多局，「开始下一局」不换房间，
-   * 于是档案里同时装着第 1–4 局；弹窗把它们全渲染出来，还加「第 N 局」分隔。
-   * 结果点第 3 局的回放，看到的是 4 局 12 把 —— 用户原话：「点开那局回放就查那局」。
-   *
-   * 判据：你点的那一把属于哪一局，就只留那一局；没给目标时取最后一局
-   * （用户从结算页/战绩最近一条点进来，想看的都是刚打完的那一局）。
-   */
-  function sameGameOnly(packs, target) {
-    var list = packs || [];
-    if (list.length < 2) return list;
-    var g = null;
-    for (var i = 0; i < list.length; i++) {
-      if (target && list[i].hands === target) { g = Math.max(0, Math.round(Number(list[i].g) || 0)); break; }
-    }
-    if (g === null) g = Math.max(0, Math.round(Number(list[list.length - 1].g) || 0));
-    return list.filter(function (p) { return Math.max(0, Math.round(Number(p.g) || 0)) === g; });
+  /* 按局收窄由 historyKit.sameGameOnly 提供（纯函数，可单测） */
+  var sameGameOnly = deps.sameGameOnly;
+  /* 老缓存里可能还没这个函数（两侧同一次发布，只有混装才会）：退回原样，绝不让弹窗崩。 */
+  function useSameGame(packs, target) {
+    return typeof sameGameOnly === 'function' ? sameGameOnly(packs, target) : (packs || []);
   }
 
   /* 房间内打开：优先用本机场次档案（整场），没有就退回服务端那份滚动窗口。
@@ -934,7 +921,7 @@
     var packs = replayPacksOf(room);
     var target = replayTargetOf(packs, (opts && opts.targetHand) || 0);
     /* 先按局收窄，再算标题 —— 否则标题还是「4 局 · 12 把」，正文却只剩一局 */
-    packs = sameGameOnly(packs, target);
+    packs = useSameGame(packs, target);
     var t = $('#replay-title');
     if (t) t.textContent = isPrev ? '上一局' : '这一局';
     setReplaySub(replaySubText(packs));
