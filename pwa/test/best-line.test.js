@@ -264,6 +264,16 @@ eq(m.best, recP1.best * 2, '整场理论最高 = 每把之和');
 eq(m.actual, recP1.actual * 2, '整场实得 = 每把之和');
 eq(m.diff, m.best - m.actual, 'diff 是差的求和');
 eq(m.partial, 2, '★ 两把都只打了一轮 → partial=2（页面必须说出来）');
+/* ★ v131 修：跨局不能累加 —— 上一局的记录不参与这一局的复盘。
+ * 实测现场：连开 4 局后，结算页显示「整场理论最高 +13 · 你拿了 -3」，
+ * 而同屏净胜是 +10 —— 差的那 13 分正是前面几局加进来的。 */
+var hNext = JSON.parse(JSON.stringify(rounds[0]));
+hNext.hid = 100; hNext.seq = 1;
+var m2 = BL.ofMatch([rounds[0], hNext], 'p1');
+eq(m2.hands, 1, '★ 只算最后那一局（seq 不同的一律不参与）');
+eq(m2.actual, recP1.actual, '实得 = 最后一局的实得，不是跨局累加');
+eq(m2.best, recP1.best, '理论最高同理');
+
 eq(BL.ofMatch([], 'p1'), null, '空 history → null');
 eq(BL.ofMatch([rounds[0]], ''), null, '没有玩家 id → null');
 
