@@ -760,7 +760,19 @@
     if (!body) return;
     if (packs === undefined) packs = packHistory((state.room && state.room.history) || []);
     /* 安全网：不管哪个入口进来，只渲染「你点的那一把」所在的那一局 */
+    /* ★ v132 修：**标题必须和正文同源**。
+     *
+     * 上一版我在 openReplay 里"先收窄再算标题"，但战绩页那条入口不经过 openReplay ——
+     * 它自己 setReplaySub(replaySubText(packs)) 之后才调 renderReplay，
+     * 于是出现了「正文 3 把、右上角写 2 局 · 6 把」（用户截图实测）。
+     *
+     * 只在**真的收窄了**的时候重算：没收窄就保留调用方写的那句
+     * （战绩页在老记录上写的是「只留下最后一把」，那是信息，不能被覆盖掉）。 */
+    var lenBefore = packs.length;
     packs = useSameGame(packs, (opts && opts.targetHand) || 0);
+    if (packs.length !== lenBefore && typeof setReplaySub === 'function' && typeof replaySubText === 'function') {
+      setReplaySub(replaySubText(packs));
+    }
     var views = replayViews(packs);
     if (!views.length) {
       body.innerHTML = '<p class="replay-empty">这一局没有留下过程记录。</p>';

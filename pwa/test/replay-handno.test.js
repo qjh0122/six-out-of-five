@@ -259,6 +259,15 @@ ok(!/replay-pack-no">第 ' \+ v\.hands \+ ' 把/.test(rv),
 ok(/data-hand="' \+ v\.hands \+ '"/.test(rv),
   '★ 定位属性仍用 v.hands（改了会把「你点的这把」指错）');
 ok(/replay-game-title/.test(rv), '多局时有局分隔');
+/* ★ v132 修（用户截图）：正文只留一局时，右上角那行小字也得跟着收窄 ——
+ * 否则会出现「正文 3 把、右上角写 2 局 · 6 把」。
+ * 这条钉的是**顺序**：先收窄，再按收窄后的 packs 重算副标题。 */
+/* 用 lastIndexOf：注释里也写着这行代码（解释上一版为什么分叉），
+ * indexOf 找到的是注释里那次，会比 lenBefore 更靠前而误判。 */
+ok(rv.indexOf('var lenBefore') >= 0
+  && rv.lastIndexOf('setReplaySub(replaySubText(packs))') > rv.indexOf('var lenBefore'),
+  '★★ 副标题在收窄之后重算（两者同源，不会再分叉）');
+ok(/packs.length !== lenBefore/.test(rv), '★ 只在真的收窄了才重算（不覆盖「只留下最后一把」那句）');
 ok(/replaySubText/.test(rv) && /局 · /.test(rv), '跨局副标题写「N 局 · M 把」，不冒充「整场」');
 
 console.log('\n========================================');
