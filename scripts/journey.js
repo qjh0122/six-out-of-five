@@ -2166,6 +2166,38 @@ async function main() {
     '★ 端点带不带 sharecode，与页面 URL 一致（带上时不能漏，否则线上 403 静默丢）',
     'page=' + pageHasSc + ' endpoint=' + String(erProbe && erProbe.endpoint));
 
+  /* ★ 中间那一跳（v129，BACKLOG C11）
+   *
+   * 上面四条各自证明了两端：「catch 会调 capture」「capture 可调用」「端点指对了」
+   * 「服务端收到 POST 会写一行日志」。但**没有一条证明发出去的东西真的到了日志里**。
+   * 这正是 v121 那个 bug 的形状 —— 每一段单看都对，拼起来不工作，而"不工作"
+   * 的表现恰好是安静。安静的东西没有断言就永远不会有人发现。
+   *
+   * 做法：在真页面里 capture 一次带唯一标记的异常，然后去服务端 stdout 里捞那一行。
+   * 标记串带时间戳，所以「捞到了」只可能来自这一次 —— 不需要清空日志、也不怕残留。
+   */
+  const mark = 'journey-c11-' + Date.now().toString(36);
+  const capRet = await evaluate(`(function(){
+    try { return ErrorReport.capture('probe', ${JSON.stringify(mark)}, { stack: 'c11-hop' }); }
+    catch (e) { return 'throw:' + (e && e.message); }
+  })()`);
+  /* 返回 false 的含义是「被上限 / 去重 / 空消息拦掉了，根本没发」——
+   * 如果这一条不单独断言，下面捞不到日志时会误判成"通道断了"，
+   * 而真实原因是"这条被自己的节流丢了"。归因错了会修错地方。 */
+  ok(capRet === true, '★ capture 返回 true（说明真的发出去了，没被会话上限/去重拦掉）',
+    String(capRet));
+
+  /* 轮询而不是固定 sleep：sendBeacon 是异步投递，慢机器上 200ms 可能还没到。
+   * 固定等待在这里只会有两种结局 —— 平时假绿（等够了）、CI 上假红（没等够）。 */
+  let hop = null;
+  for (let i = 0; i < 50; i++) {
+    const m = new RegExp('\\[client-error\\] probe ' + mark).exec(serverLog);
+    if (m) { hop = m[0]; break; }
+    await sleep(100);
+  }
+  ok(!!hop, '★ 页面 capture 一次 → 服务端日志里多出「[client-error] probe ' + mark + '」这一行',
+    hop || ('等了 5 秒没等到。服务端最近输出：' + serverLog.trim().split('\n').slice(-4).join(' | ')));
+
   console.log('\n[10] 收尾：真实档案未被污染');
 
   const realAfter = fs.existsSync(REAL_DATA)

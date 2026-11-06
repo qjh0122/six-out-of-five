@@ -37,6 +37,10 @@ const PER_PROBE_TIMEOUT_MS = Number(process.env.PROBE_TIMEOUT) || 240000;
 const args = process.argv.slice(2);
 const all = fs.readdirSync(DIR)
   .filter((f) => /^probe-.*\.js$/.test(f))
+  /* ★ v129：probe-ci.js 是启动器，不是探针 —— 它自己需要参数，批量跑必然"跳过"。
+   * 以前它被算进总数，于是清单永远显示 38 个，而真正能跑的是 37 个；
+   * 台账（scripts/probes.json）也是 37。两个数字对不上，读的人会以为漏了一个。 */
+  .filter((f) => f !== 'probe-ci.js')
   .sort();
 
 if (args[0] === '--list') {

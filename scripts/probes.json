@@ -1,0 +1,265 @@
+{
+  "note": "探针台账（v129）。每个 scripts/probe-*.js 必须在这里有一条，否则 pwa/test/probe-ledger.test.js 会红。run 只有三档：ci（每次 push 都跑）/ manual（发版前跑一次）/ oneshot（一次性诊断，保留作复现脚本，不排期）。为什么要有这份清单见 docs/PROBES.md。",
+  "version": "v129",
+  "probes": [
+    {
+      "file": "probe-ui-flow.js",
+      "what": "13 屏 × 12 档全流程巡检：遮挡 / 热区尺寸 / 溢出 / 弹窗",
+      "run": "ci",
+      "why": "唯一能发现「真浏览器里布局已经坏了」的机制。v108 实证：4463 条单测全绿 + CI 全绿，真机所有弹窗是哑的。v128 起 3 片并行跑满 12 档",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-avatar.js",
+      "what": "换头像：选图 → 裁剪 → 落库 → 全房广播",
+      "run": "manual",
+      "why": "要用真实的文件选择器与图片解码，无头浏览器里塞假文件会让「裁剪」这一步被跳过，测了等于没测",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-big-fx.js",
+      "what": "牌型特写动画在大牌型下不重叠、不挡结算行",
+      "run": "manual",
+      "why": "表现的是动画时序与叠放，无头环境里的帧率不可信；靠人眼在真机上看一眼更快",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-create-modal.js",
+      "what": "建房「本局打几把」两步弹窗：默认档位 / 记忆档位 / 确认才开房",
+      "run": "oneshot",
+      "why": "v103 把建房改成两步时的一次性诊断。同一条路径现在由 journey 的建房段每次都走，留着是为了能单独复现那次的现场",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-delete-purge.js",
+      "what": "删号后的身份抹除：打开战绩页时 A 的 id / 昵称 / 回放组头必须被自己清掉，牌与分数留着",
+      "run": "manual",
+      "why": "守的是合规底线，但链路是「localStorage 注入 → 刷新 → 点进战绩页 → 等 purge 跑完」，需要多账号与真实存储；服务端两段各 33 / 40 条单测已覆盖模块层，这层只能发版前手跑一次",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-dev-panel.js",
+      "what": "?dev=1 调试侧栏：改分数 / 造断线 / 强制结算",
+      "run": "oneshot",
+      "why": "调试面板不在玩家路径上，坏了也不影响线上；它的价值是排障时能改状态，脚本化没有收益",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-devices.js",
+      "what": "机型矩阵：各档视口下的整体布局与字号",
+      "run": "oneshot",
+      "why": "12 档现在由 probe-ui-flow 在 CI 里全跑，这条是它之前的矩阵诊断。重复执行没有新信息",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-emoji.js",
+      "what": "表情 / 短语：选择 → 发送 → 座位气泡 → 记录里留痕",
+      "run": "manual",
+      "why": "表情走独立的 emoji / sfx 模块，probe-ui-flow 不点表情；但需要两个真账号互相看得见，构成多进程时序",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-error-report.js",
+      "what": "上报链路（R6 灰度）：页面异常 → POST /api/client-error → 服务端日志",
+      "run": "oneshot",
+      "why": "v129 起 journey [9e] 已经在真浏览器里把这条链整段跑通并断言（capture → 服务端日志出现标记行），这条退化成它的复现脚本",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-first-paint.js",
+      "what": "首屏第一帧：登录态未定时不许闪出错误的那一屏",
+      "run": "manual",
+      "why": "要抓的是 CSS 应用后、JS 判定登录态前的那一帧，需要真实的网络节流窗口；CI 里的机器快慢会让「那一帧」时有时无",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-flex-gap.js",
+      "what": "flex gap 兼容层在旧内核上的降级（margin 替身）",
+      "run": "manual",
+      "why": "失效的只可能是特定旧内核，而本地 Windows 与 CI 的 Linux 都跑不到那个内核；验它得专门找一台老设备",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-guide.js",
+      "what": "新手引导：步骤推进、跳过、重看",
+      "run": "oneshot",
+      "why": "v89 的一次性诊断脚本。引导步骤在 journey 的开局段会被连续点过，留着是为了单独复现",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-handlimit-settle.js",
+      "what": "「打满把数结束」与「分数见底结束」是同一套结算界面",
+      "run": "manual",
+      "why": "必须真的打完一整局（10 把）才能触发打满分支，单次分钟级；改成快进要动被测代码",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-install.js",
+      "what": "安装引导条 / 忘记密码说明的渲染",
+      "run": "oneshot",
+      "why": "一次性诊断。安装引导的版式现在由 probe-ui-flow 首页那一屏量（含横屏最小档的字号下限）",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-landscape-screens.js",
+      "what": "横屏「未专门适配的屏」的字号与留白",
+      "run": "oneshot",
+      "why": "四个横屏档（844×390 / 932×430 / 800×360 / 915×412）已由 probe-ui-flow 在 CI 里全跑，诊断结论也已经落成字号下限规则",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-landscape.js",
+      "what": "横竖屏字号物理尺寸（CSS px → 实际视觉大小）",
+      "run": "oneshot",
+      "why": "同上，四个横屏档的尺寸已经在 CI 里被逐屏量过；这条是得出「字号下限」之前的推导脚本",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-leave.js",
+      "what": "离开房间 / 弃局离开的确认框：文案、按钮、取消后状态",
+      "run": "oneshot",
+      "why": "确认框已由 probe-ui-flow 的「全部弹窗」段逐个强制显示并量过；这条的增量是走完整流程，一次性的",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-manifest.js",
+      "what": "manifest / 图标在「每个请求都要带 sharecode」的网关下能不能装",
+      "run": "manual",
+      "why": "验的是浏览器安装流程本身（拉 manifest、取图标、判定可安装），只能在真的可安装环境里看，且必须打线上地址",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-modals-landscape.js",
+      "what": "15 个弹窗横屏逐个强制显示：卡片不超视口、主按钮在屏内",
+      "run": "oneshot",
+      "why": "弹窗清单与 CI 的横屏档已经覆盖主要几个；这条是 v91 那轮「一次性把 15 个全量一遍」的脚本，弹窗又加新的时应改它重跑，而不是让它常驻",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-multi-tab.js",
+      "what": "同设备多标签、多账号同时在线会发生什么（登录态互踩 / 令牌覆盖）",
+      "run": "oneshot",
+      "why": "诊断脚本，结论已经写进 BACKLOG（同设备多账号是已知限制）。再做一次结论相同，除非改登录态存储",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-online-smoke.js",
+      "what": "线上地址冒烟：真浏览器打开已部署的站，收 console 与网络错误",
+      "run": "manual",
+      "why": "它是发版流程的固定第 5 步（15 项），跑的是线上而不是本地 —— 放进 CI 会在每次 push 时去打生产环境，不合适",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-prev-result.js",
+      "what": "「上一局结算」胶囊 + 只读弹窗的真实布局",
+      "run": "oneshot",
+      "why": "临时探针，当年的版式问题已定稿；胶囊这一屏由 probe-ui-flow 每次量",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-ready-button.js",
+      "what": "「准备」按钮会不会被按死（重复点 / 断线重连后 / 状态回退）",
+      "run": "manual",
+      "why": "要点死按钮就得两个人在不同时间点各点几次，靠多进程时序而不是像素；单进程探针只能近似",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-records-cloud.js",
+      "what": "战绩页的云端数据源：登录后读到的是服务端档案，不是本机兜底",
+      "run": "oneshot",
+      "why": "一次性诊断。这条链现在由 journey 的战绩段 + server 端 profile 测试共同守着",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-records.js",
+      "what": "战绩页回放入口与展开",
+      "run": "oneshot",
+      "why": "一次性诊断；回放的数据口径由 pwa/test 里的 historyKit / replay 系列单测钉住",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-result-seq.js",
+      "what": "逐组结算的显示顺序与累加",
+      "run": "oneshot",
+      "why": "一次性诊断。结算顺序与净分由 engine / settleView 的单测覆盖，这条是当时为了看真机顺序写的",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-rollback.js",
+      "what": "灰度开关回滚演练：把新功能关掉后界面能不能退回旧行为",
+      "run": "oneshot",
+      "why": "演练类脚本，做一次就够了；每次都跑等于每次都做一遍演练，没有新信息",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-room-actions.js",
+      "what": "房间页底排按钮的文字断行",
+      "run": "oneshot",
+      "why": "断行是 12 档里最容易红的东西，而 probe-ui-flow 已经在 12 档上逐屏量了 —— 这条的结论已被它吸收",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-safearea.js",
+      "what": "底部安全区：动作条不被 home indicator 盖住",
+      "run": "manual",
+      "why": "env(safe-area-inset-bottom) 在桌面浏览器恒为 0，只有真机 / 带安全区的模拟环境才量得出差别",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-seat-info.js",
+      "what": "座位面板「信息档」的尺寸与信息密度",
+      "run": "manual",
+      "why": "有独立的 npm script（npm run probe:seatinfo），改座位面板时按需跑；尺寸类断言在 CI 的中文字体环境下容易偏",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-slot-type.js",
+      "what": "组槽实时牌型：每个槽位显示的牌型与手牌一致",
+      "run": "manual",
+      "why": "要撞出特定手牌才看得到特定牌型，靠随机发牌；撞不到时它会跳段，放进 CI 会变成「有时跑 29 项有时跑 34 项」",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-table-ready.js",
+      "what": "准备态长在牌桌上（v82 §3）：准备按钮 / 倒计时 / 名单同步",
+      "run": "manual",
+      "why": "要多账号在准备态互相等，属多进程时序；单测里状态机已有覆盖，这条守的是「界面上真的出现在牌桌上」",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-table.js",
+      "what": "牌桌布局：座位环、槽位、底排按钮的相对位置",
+      "run": "oneshot",
+      "why": "布局类，已由 probe-ui-flow 的牌桌屏在 12 档上覆盖",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-ten-hands.js",
+      "what": "默认 10 把 + 负分继续打",
+      "run": "manual",
+      "why": "要打满一整局才触发，单次分钟级；快进要改被测代码，代价高于收益",
+      "lastVerified": ""
+    },
+    {
+      "file": "probe-tenhalf.js",
+      "what": "十点半爆点拦截：提交被拦 → 改成不爆 → 复检放行",
+      "run": "manual",
+      "why": "要撞出「会爆的手牌」才有得测，撞不到时断言项数会变（35 / 39）；连跑时还出现过一次 35 项 4 红的不可复现情况，稳定之前不进 CI",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-type-scale.js",
+      "what": "字号阶梯：每个字号档在所有屏上的实际尺寸",
+      "run": "oneshot",
+      "why": "推导字号下限时的一次性量测，结论已经变成 ui-flow 里的字号断言",
+      "lastVerified": "v129"
+    },
+    {
+      "file": "probe-viewport-fit.js",
+      "what": "舞台底边必须等于视口底边（竖屏 / 横屏 / PWA 全屏）",
+      "run": "manual",
+      "why": "「PWA 全屏」这一档在普通标签页里复现不出来，要真的以 standalone 打开",
+      "lastVerified": "v129"
+    }
+  ]
+}
