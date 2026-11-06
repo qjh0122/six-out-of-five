@@ -180,7 +180,17 @@
       if (groups.length) rounds.push({ r: Math.max(1, Math.round(num(rd.r, 1)) || 1), groups: groups });
     }
     if (!rounds.length) return null;
-    return { hands: Math.max(1, Math.round(num(r.hands, 1)) || 1), rounds: rounds };
+    var hands = Math.max(1, Math.round(num(r.hands, 1)) || 1);
+    /* no / g 必须一起留下：这是**单把副本**，老记录只有它。
+     * 丢了 no，回放标题就只能用 hands（hid，跨局连续），
+     * 第二局的那把会显示成「第 4 把」—— 正是 v124 修的那个 bug。
+     * 老记录没有这两个字段，退回 hands / 0（显示不变，不会更差）。 */
+    return {
+      hands: hands,
+      no: Math.max(1, Math.round(num(r.no, hands)) || 1),
+      g: Math.max(0, Math.round(num(r.g, 0)) || 0),
+      rounds: rounds
+    };
   }
 
   /* 只保留最近 REPLAY_KEEP 条的回放。list 必须是 endedAt 倒序。
