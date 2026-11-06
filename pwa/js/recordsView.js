@@ -1028,6 +1028,9 @@
         flash('已开始下载，请查看浏览器下载记录');
         return;
       } catch (e) {
+        /* 平台不支持 a.download 时会抛（部分旧版安卓 WebView）。
+         * 用户侧已经有准确的降级指引，所以这里只上报、不换文案。 */
+        reportQuietly('shareSave', e);
         flash('下载失败，长按图片保存');
         return;
       }
@@ -1080,6 +1083,23 @@
   /* 网关要求所有请求都带 sharecode：不带参数的 /api/* 一律 403（连 /api/health 都是）。
    * 页面是用 ?sharecode=xxx 打开的，所以同源的 fetch 必须把这个参数带过去，
    * 否则排行榜永远「加载失败」——这个坑很隐蔽，用 curl 手动带参数测是测不出来的。 */
+  /* 只上报、不额外弹错的小出口（v127）。
+   *
+   * 为什么不复用 game.js 的 reportBug：那是 game.js 闭包里的函数，两个模块互不可见。
+   * 这里也**不需要**提示，因为调用点自己已经给了用户一句准确的话
+   *（如「下载失败，长按图片保存」）—— 缺的只是"我们这边知道"。
+   */
+  function reportQuietly(where, e) {
+    try {
+      if (typeof ErrorReport !== 'undefined' && ErrorReport && ErrorReport.capture) {
+        ErrorReport.capture('catch', '[' + where + '] ' + ((e && (e.message || String(e))) || 'unknown'), {
+          source: 'recordsView.js',
+          stack: e && e.stack
+        });
+      }
+    } catch (_) { /* silence: 上报自身绝不能再抛 */ }
+  }
+
   function apiQuery(extra) {
     var parts = [];
     try {
