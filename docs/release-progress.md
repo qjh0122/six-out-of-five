@@ -3195,6 +3195,6 @@ v108 的 `ReferenceError: state is not defined` 就是死在这里：界面从�
 | 项 | 结果 |
 |---|---|
 | 部署 | `https://liuxuanwu.app.workbuddy.host/?sharecode=Q2JYFWXOP3`（同一个应用，链接不变） |
-| 线上冒烟 `probe-online-smoke` | 待填 |
-| 公库 | 待填 |
-| 私库 | 待填 |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本核对 = 本地 `20261102p`，SW 已接管） |
+| 公库 | `baedd46 chore: 同步自私有仓库（304953e）` |
+| 私库 | `304953e`（`git ls-remote` 比对一致） |
