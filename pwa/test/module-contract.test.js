@@ -98,7 +98,7 @@ const DEPS = ['errorReport.js', 'engine.js', 'card.js', 'config.js', 'emoji.js',
   'avatar.js', 'ringGate.js', 'seatRing.js'];
 
 /* 8 个被拆出来的模块。前两个 / 三个是立即执行（挂到 window.LXW），其余是工厂。 */
-const MODULES = ['gameUtils.js', 'modalKit.js', 'cardView.js', 'historyKit.js',
+const MODULES = ['gameUtils.js', 'modalKit.js', 'cardView.js', 'historyKit.js', 'nextRoundHints.js',
   'accountView.js', 'settleView.js', 'seatSheetView.js', 'recordsView.js', 'achievementsView.js'];
 
 /* game.js 里指向模块的命名空间变量名 → 模块键名。
@@ -113,6 +113,7 @@ const NAMESPACES = {
   Seat: 'seatSheetView',
   Records: 'recordsView',
   AV: 'achievementsView',   // v109 成就页（对象，不是工厂——见下面对 RESOLVED 的初始化）
+  Hints: 'nextRoundHints',  // v126 原因码文案表（对象，不是工厂）
 };
 
 const host = makeHost();
@@ -137,7 +138,7 @@ console.log('\n[2] 工厂能创建，导出不是空对象');
 /* ★ 查契约必须查**创建出来的实例**，不是工厂函数本身：
  *   工厂是个函数，它身上本来就没有 HAND_CARD_W 之类的属性，
  *   拿它当命名空间查会把「接得上」全部判成「接不上」。 */
-const RESOLVED = { utils: host.LXW.utils, modalKit: host.LXW.modalKit, achievementsView: host.LXW.achievementsView };
+const RESOLVED = { utils: host.LXW.utils, modalKit: host.LXW.modalKit, achievementsView: host.LXW.achievementsView, nextRoundHints: host.LXW.nextRoundHints };
 {
   const deps = {
     cardView: { stageScale: () => 1, onHandCardTap: noop },

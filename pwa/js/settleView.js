@@ -31,6 +31,9 @@
     deps = deps || {};
     var U = global.LXW.utils;
     var $ = U.$, el = U.el, esc = U.esc;
+    /* 「下一局为什么开不了」的文案表（v126）。与 game.js 用的是同一张表 ——
+     * 两屏各拼一套话，迟早出现「结算页说在等人、就位态说人不够」。 */
+    var Hints = global.LXW.nextRoundHints;
     var netText = U.netText, netCls = U.netCls, pad2 = U.pad2, fmtTime = U.fmtTime;
     var cardText = U.cardText, short = U.short, colorFor = U.colorFor;
 
@@ -947,19 +950,48 @@
     /* 「等个人」优先于「还差谁」：房主挂起时，就算所有人都点完了也不能开，
      * 这时候还写「还在等你」等于把责任推给一个什么都没做错的人。 */
     var holdNow = StateMachine.holdNextOf ? StateMachine.holdNextOf(room) : null;
+
+    /* ★ v126：原因由状态机给（`nextRoundGate`），这里只负责怎么说。
+     *
+     * 旧写法在这屏自己数了 joined / pending，然后拼一句话 ——
+     * 于是「为什么开不了」有两份实现：这里一份、就位态一份。
+     * 2 人房对手掉线时两屏说法不一致，而且都说错了方向
+     * （「在等 X」—— X 已经掉线，永远不会点）。
+     *
+     * 现在 code 只有一个来源，两屏共用 nextRoundHints 那张表。
+     * 只有「已经有 N 人进入下一把」这句留在这里 —— 它是结算页特有的进度信息，
+     * 不属于「为什么开不了」。 */
+    var gate = StateMachine.nextRoundGate
+      ? StateMachine.nextRoundGate(room)
+      : { code: holdNow ? 'HOLD' : 'WAITING_OTHERS', joined: joined, pending: pending };
+    var CODES = StateMachine.GATE_CODES || {
+      OK: 'OK', HOLD: 'HOLD', NEED_PLAYERS: 'NEED_PLAYERS',
+      WAITING_OTHERS: 'WAITING_OTHERS', WAITING_OFFLINE: 'WAITING_OFFLINE'
+    };
+    var iAmOwner = !!(state && state.myId && room.ownerId === state.myId);
+    function gateText(ctx) {
+      return (Hints && Hints.hintFor) ? Hints.hintFor(gate.code, ctx) : '';
+    }
+
     var waitTxt = '';
-    if (holdNow) {
+    if (gate.code === CODES.HOLD) {
       waitTxt = '房间已挂起，等朋友进来' + (joined ? '（' + joined + ' 人已进入下一把）' : '');
+    } else if (gate.code === CODES.NEED_PLAYERS || gate.code === CODES.WAITING_OFFLINE) {
+      /* 这两条以前在结算页是**空白或误导**的：
+       *   · 一个人都没上场时 waitTxt 是空串，房主却看到「还有朋友要来？点等人」；
+       *   · 有人掉线时写「等 X 点开始下一局」，在等一个不会动的人。 */
+      waitTxt = gateText({
+        stage: 'settle', isOwner: iAmOwner, myId: state && state.myId,
+        joined: gate.joined, need: gate.need, offline: gate.offline || [], pending: pending
+      });
     } else if (joined > 0) {
       waitTxt = '已经有 ' + joined + ' 人进入下一把';
-      if (pending.length) {
-        var mine = pending.some(function (p) { return p.id === state.myId; });
-        var others = pending.filter(function (p) { return p.id !== state.myId; });
-        var names = others.map(function (p) { return short(p.nickname || '他'); });
-        var who = names.length === 0 ? '' : names.slice(0, 2).join('、');
-        if (mine) waitTxt += ' · 还在等' + (who ? '你和 ' + who : '你');
-        else if (who) waitTxt += ' · 还在等 ' + who;
-      }
+      var extra = gateText({
+        stage: 'settle', isOwner: iAmOwner, myId: state && state.myId,
+        joined: joined, need: gate.need, pending: pending, offline: gate.offline || []
+      });
+      /* 只拼「在等谁」那半句；`OK` 时 gateText 是过渡语，不该出现在这里。 */
+      if (extra && gate.code === CODES.WAITING_OTHERS) waitTxt += ' · ' + extra;
     }
     renderWaitRow(room, waitTxt, holdNow);
   }

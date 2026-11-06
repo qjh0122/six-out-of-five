@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v125';
+const CACHE_NAME = 'weile-liuxuanwu-v126';
 
 /* network-first 的超时上限。
  *
@@ -137,6 +137,7 @@ const PRECACHE = [
   '/js/gameUtils.js',
   '/js/cardView.js',
   '/js/modalKit.js',
+  '/js/nextRoundHints.js',
   '/js/historyKit.js',
   '/js/accountView.js',
   '/js/settleView.js',
