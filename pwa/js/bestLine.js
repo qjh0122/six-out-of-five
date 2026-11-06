@@ -358,8 +358,31 @@
    *          免得玩家以为整场都算全了
    */
   function ofMatch(hist, pid) {
-    var list = Array.isArray(hist) ? hist : [];
-    if (!list.length || !pid) return null;
+    var all = Array.isArray(hist) ? hist : [];
+    if (!all.length || !pid) return null;
+
+    /* ★ v131 修：只算**刚刚结束的这一局**（同一个 seq），不跨局累加。
+     *
+     * 踩过的：v131 把 history 上限从「最近 2 把」提到「整场」之后，这里的遍历
+     * 从「两把」悄悄变成了「这一整个房间的所有局」—— 结算页于是显示
+     * 「整场理论最高 +13 · 你拿了 -3」，而同屏的净胜是 +10。
+     * 玩家一眼就能看出对不上（截图实测）。
+     *
+     * seq 是「本房间第几场」，同一局的条目共用一个值（结算前 push，handSeq 才 +1）。
+     * 用它当分界，比按 hid 猜稳。 */
+    var lastSeq = null;
+    for (var z = all.length - 1; z >= 0; z--) {
+      var hz = all[z];
+      if (hz && hz.groups && hz.groups.length) { lastSeq = Number(hz.seq) || 0; break; }
+    }
+    var list = [];
+    for (var q = 0; q < all.length; q++) {
+      var hq = all[q];
+      if (!hq || !hq.groups || !hq.groups.length) continue;
+      if ((Number(hq.seq) || 0) !== lastSeq) continue;   // 上一局的记录不参与这一局的复盘
+      list.push(hq);
+    }
+    if (!list.length) return null;
 
     /* 按 hid 分组，保持出现顺序（history 是 append-only 的，顺序就是时间顺序） */
     var order = [];
