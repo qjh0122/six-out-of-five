@@ -739,7 +739,16 @@
           })
         });
       }
-      views.push({ hands: pack.hands || 1, rounds: roundViews, myNet: myNet, hasMe: hasMe });
+      views.push({
+        hands: pack.hands || 1,
+        /* no = 本局第几把（显示用），g = 局号。缺了就走回退：
+         * no 没有就沿用身份号（老数据只能这样），g 没有就归 0（不分局）。 */
+        no: Math.max(1, Math.round(Number(pack.no) || Number(pack.hands) || 1)),
+        g: Math.max(0, Math.round(Number(pack.g) || 0)),
+        rounds: roundViews,
+        myNet: myNet,
+        hasMe: hasMe
+      });
     }
     return views;
   }
@@ -756,17 +765,33 @@
       return;
     }
     var target = (opts && opts.targetHand) || 0;
+    /* 整场档案会把同一个房间的前后**两局**装在一起（场次 key 是房号+建房时间，
+     * 点「开始下一局」不会换房间）。这时候必须把局分开：不然第二局的「第 1 把」
+     * 会跟第一局的「第 1 把」并排出现，读的人以为是重复数据。
+     * 只有一局（或老数据没有 g）时不出这个标题 —— 多一行没有信息量的字，
+     * 只是把本来就紧的弹窗再挤一点。 */
+    var multiGame = false;
+    for (var gi = 1; gi < views.length; gi++) {
+      if (views[gi].g !== views[0].g) { multiGame = true; break; }
+    }
+    var lastG = null;
     var html = '';
     for (var i = 0; i < views.length; i++) {
       var v = views[i];
+      if (multiGame && v.g !== lastG) {
+        lastG = v.g;
+        html += '<div class="replay-game-title">第 ' + (v.g + 1) + ' 局</div>';
+      }
       var isTarget = !!target && v.hands === target;
       html += '<section class="replay-pack' + (isTarget ? ' is-target' : '') + '" data-hand="' + v.hands + '">';
       /* 每把右上角给出「我这把赢/输多少」：原来只有「第 8 把」三个字，
        * 读的人得把下面每一组的 +2/-1 自己加起来才知道这把自己是赚是亏。 */
       var netTxt = '';
       if (v.hasMe) netTxt = '我 ' + (v.myNet > 0 ? '+' : '') + v.myNet;
+      /* ★ 显示用 no（本局第几把），**不是** hands。
+       * hands 是 hid，跨局连续；拿它当标题就是「第二局从第 4 把开始」。 */
       html += '<header class="replay-pack-head">'
-        + '<span class="replay-pack-no">第 ' + v.hands + ' 把</span>'
+        + '<span class="replay-pack-no">第 ' + v.no + ' 把</span>'
         + (isTarget ? '<span class="replay-pack-flag">你点的这把</span>' : '')
         + (netTxt ? '<span class="replay-pack-net ' + (v.myNet > 0 ? 'up' : (v.myNet < 0 ? 'down' : 'flat')) + '">' + netTxt + '</span>' : '')
         + '</header>';
@@ -808,6 +833,22 @@
     body.scrollTop = 0;
   }
   var replayTargetHand = 0;
+
+  /* 回放副标题：这份过程里到底有什么。
+   *
+   * 一场档案（房号 + 建房时间）会横跨同一个房间里的多局 —— 点「开始下一局」
+   * 不换房间，所以「整场 6 把」在跨局时是真的，但读的人会把它理解成
+   * 「这一局我打了 6 把」。跨局就明写「2 局 · 6 把」，不跨局维持原话。 */
+  function replaySubText(packs) {
+    if (!packs || !packs.length) return '';
+    var seen = {};
+    var games = 0;
+    for (var i = 0; i < packs.length; i++) {
+      var g = Math.max(0, Math.round(Number(packs[i].g) || 0));
+      if (!seen[g]) { seen[g] = true; games++; }
+    }
+    return games > 1 ? (games + ' 局 · ' + packs.length + ' 把') : ('整场 ' + packs.length + ' 把');
+  }
 
   /* 弹窗显示之后再定位。roll 到「你点的那把」顶上，
    * 而不是滚到底 —— 人想看的是自己刚打完那一把的开头。 */
@@ -872,7 +913,7 @@
     var target = replayTargetOf(packs, (opts && opts.targetHand) || 0);
     var t = $('#replay-title');
     if (t) t.textContent = isPrev ? '上一局' : '这一局';
-    setReplaySub(packs.length ? '整场 ' + packs.length + ' 把' : '');
+    setReplaySub(replaySubText(packs));
     renderReplay(packs, { targetHand: target });
     showModalEl('replay-modal');
     scrollReplayToTarget();   // 没给 targetHand 时目标为 0，不滚（行为和以前一致）
@@ -923,7 +964,7 @@
     if (t) t.textContent = fmtTime(rec.endedAt) + ' 这一局';
     /* 副标题只说**有什么**，不说「这一把的过程」这种等于没说的话。
      * 走单把兜底时必须讲清原因（老记录没存整场），否则用户会以为整场丢了。 */
-    setReplaySub(sess ? '整场 ' + packs.length + ' 把' : '只留下最后一把');
+    setReplaySub(sess ? replaySubText(packs) : '只留下最后一把');
     renderReplay(packs, { targetHand: rec.handId || 0 });
     showModalEl('replay-modal');
     scrollReplayToTarget();

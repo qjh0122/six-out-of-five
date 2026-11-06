@@ -1508,7 +1508,13 @@ async function main() {
         sub: sub ? sub.textContent : '',
         packs: document.querySelectorAll('.replay-pack').length,
         rounds: document.querySelectorAll('.replay-round-title').length,
-        target: document.querySelectorAll('.replay-pack.is-target').length
+        target: document.querySelectorAll('.replay-pack.is-target').length,
+        packInfo: Array.prototype.map.call(document.querySelectorAll('.replay-pack'), function (el) {
+          return { hand: el.getAttribute('data-hand'), no: (el.querySelector('.replay-pack-no') || {}).textContent || '' };
+        }),
+        gameTitles: Array.prototype.map.call(document.querySelectorAll('.replay-game-title'), function (el) {
+          return el.textContent;
+        })
       };
     })()`);
     console.log('    真实数据回放：' + JSON.stringify(rv));
@@ -1518,8 +1524,43 @@ async function main() {
      * 写成数字只会在场景一变时假红，然后被人把数字改大，守的东西一点没变。 */
     ok(rv.packs >= 2, '★ 回放里是整场（不是单把兜底）', JSON.stringify(rv));
     ok(/这一局/.test(rv.title), '★ 标题写「这一局」（走的是整场档案，不是单把兜底）', JSON.stringify(rv.title));
-    ok(new RegExp('整场 ' + rv.packs + ' 把').test(rv.sub),
-      '★ 副标题的「整场 N 把」与实际把数一致', JSON.stringify(rv.sub) + ' / packs=' + rv.packs);
+    /* 副标题有两种合法形态（v124）：
+     *   「整场 N 把」—— 这份档案只有一局；
+     *   「N 局 · M 把」—— 同一个房间里打完一局又点了「开始下一局」。
+     * 档案是按**房间**攒的（房号 + 建房时间），续局不换房间，所以跨局是正常的。
+     * 这里守「数字与实际把数一致」，不守某一种措辞 —— 写死措辞只会在场景一变时假红。 */
+    const subNums = String(rv.sub).match(/\d+/g) || [];
+    const subPacks = subNums.length ? Number(subNums[subNums.length - 1]) : -1;
+    ok(/^(整场 \d+ 把|\d+ 局 · \d+ 把)$/.test(String(rv.sub)) && subPacks === rv.packs,
+      '★ 副标题里的把数与实际把数一致', JSON.stringify(rv.sub) + ' / packs=' + rv.packs);
+
+    /* ★ 「第 N 把」的数字不能是跨局连续的身份号。
+     *
+     * 用户报的 bug：房间打完一局再点「开始下一局」，第二局的详情显示
+     * 「第 4 把 / 第 5 把」—— 因为标题借用了 handId（dealAll 里递增、永不重置），
+     * 而 handId 是**身份**，不是序号。
+     *
+     * 判据用「序号 ≤ 这份档案的总把数」：
+     *   · 序号来自 handCount，它每局归 1，所以任何一局里最大也只到该局把数，
+     *     而该局把数 ≤ 总把数 —— 超过总把数就一定不是局内序号。
+     *   · 身份号来自 handId，跨局一直涨，第 4 局第 3 把会变成「第 7 把」，
+     *     7 > 4 直接命中。
+     *
+     * 为什么不断言「每局从 1 连续」：这台 ci 机器上 AI 快进，SessionLog 偶尔
+     * 收不全（history 只留 2 把，吸收跟不上就会漏前面的把），缺口会让
+     * 「从 1 开始」变成假红。纯数据层的连续性由 replay-handno.test.js 守，
+     * 那里是可控的真对局，能做到每把都收全。 */
+    const noNums = (rv.packInfo || []).map(function (p) {
+      var parts = String(p.no || '').split(' ');
+      return Number(parts[1]);
+    });
+    ok(noNums.length === rv.packs && noNums.every(function (n) {
+      return isFinite(n) && n >= 1 && n <= rv.packs;
+    }), '★★ 「第 N 把」是局内序号（不大于总把数），不是跨局累加的身份号',
+      JSON.stringify(rv.packInfo));
+    const gt = rv.gameTitles || [];
+    ok(gt.length === 0 || gt.length >= 2,
+      '局分隔要么不出现（单局），要么每局一个 —— 不会只冒出孤零零一个', JSON.stringify(gt));
     ok(rv.target === 1, '★ 我点的那把被标出来（不是一把都不标）', JSON.stringify(rv.target));
     if (SHOTS) console.log('    截图：' + (await shot('replay')));
 

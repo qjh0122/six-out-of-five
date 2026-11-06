@@ -277,6 +277,65 @@ v104 判断「注释改了要重跑全量」的代价已经不值一提（本来
 
 ## 3. D 档：需要产品决策或外部条件
 
+### C9 重启后 grace / dissolve 定时器不恢复 —— **待做（v124）**
+<!-- STATUS: planned | v124 -->
+
+**这是唯一「一次重启就会静默改变对局规则」的地方。**
+
+`_restoreRooms` 只重挂 `_armRoomRecycle`，再靠一次广播把分牌计时器装回去 ——
+`graceTimers`（断线宽限）与 `dissolveTimers`（解散投票）**一条都没恢复**。
+而恢复时会把所有人标成 `connected = false`，分牌超时回调里又明确
+`connected === false → return`（`hub.js:1348`）。两边一合：
+
+> 一桌人打到一半、有人断线 → 进程重启 → 断线者永远等不到 `finalizeLeave`（不会被判离开），
+> 别人的分牌超时又全部跳过“断线者” → **全桌永远不结算**。
+> 唯一出路是有人重连后自己交牌，或凑齐解散票（`dissolveVoters` 会滤掉断线者，票能凑齐）。
+
+每次发布都会触发一次，只在恰好有进行中对局时撞上。`roomsState.js:12` 的注释
+写「计时器（重启后重新装配）」，实际只装配了两类 —— 注释与实现不符，这才是根因。
+
+**修法（三处，不需要新字段）**：
+1. `_startGrace(roomId, playerId, delayMs)` 加一个可传时长参数（默认原值）
+2. `_restoreRooms` 里按 `p.disconnectedAt` 的**剩余**时间补挂；已超时的立刻 `finalizeLeave`
+3. 补一句 `_syncDissolveTimer(roomId)`，把进行中的投票按 `dissolve.startedAt` 补挂
+
+**硬边界**：**不要 bump `roomsState.VERSION`** —— `load` 是 `!== VERSION → null`，
+bump 等于上线那一刻把全部在飞房间丢掉。新增字段走增量。
+
+**验收（可复跑）**：
+- 三个到期回调体（`_startGrace` 90s / `_armHoldTimer` 180s / `_armRoomRecycle` 30min）
+  **第一次真的被执行到**：把三个时长改成 `Number(process.env.X) || 默认`（照
+  `SPLIT_TIMEOUT_MS` 的现成范式），用 300~800ms 真等待跑完。不引入假时钟。
+- 杀掉进程再起 → 牌局按时间线正确收口（不是“停在原地”）。
+
+### C8 结算期「有否决条件、没有出口语义」 —— **待做（v125）**
+<!-- STATUS: planned | v125 -->
+
+**症状**：界面显示正常、所有人都“准备好了”、牌就是不发，而且**没有任何东西告诉你会一直不开**。
+2026-11-06 的三份评审里，四条独立成因落在同一个结构问题上：
+
+| 成因 | 触发 | 谁能救 | 出处 |
+|---|---|---|---|
+| 2 人房有人请假 | 点「这把不打」 | 改主意 / 补 AI | `dropFromNext` 无下限检查 |
+| 2 人房对手掉线 | **谁都没做错事** | 补 AI | `pendingNextPlayers` 不过滤 `connected`；`SETTLED` 禁解散 |
+| 等人定时器双时钟 | 房主重复点「等人」 | 等 3 分钟 / 有人动作 | `hub._armHoldTimer` 按 `now+TTL`，数据按 `at+TTL` |
+| 重启丢 grace | **每次发布** | 无 | `_restoreRooms` 只重挂 split / recycle |
+
+前两条归 v125，后两条归 v124。
+
+**修法（已定稿，不再讨论方案）**：
+1. `dropFromNext` 在 `target ≠ self` 时加人数下限守卫，直接拒绝并说明（**不给 `pendingNextPlayers` 加 `connected` 过滤**——那是静默落下，正是 v121 反对的，改为让“他掉线了”可见）
+2. `canStartNext` 升级为 `SM.nextRoundGate(room)` 返回 reason code（`HOLD` / `NEED_PLAYERS` / `WAITING_OTHERS` / `WAITING_OFFLINE` / `OK`），`canStartNext` 保留为 `.ok` 布尔转发（4 个生产调用点 + 42 处提及不受影响）
+3. 视图按 code 渲染，收口到 `hintForRoom(code, ctx)` 一个函数；守卫只解析这一个函数，并断言 **gate 侧 `GATE_CODES` 枚举 ↔ 视图分支枚举等值**
+4. `NEED_PLAYERS` 给出真实出口：`joined >= 1` 时同一槽位出现「补 AI」；`joined === 0` 不给（要补 2 只，会造出 0 真人 + 2 AI 的空转局，路径是“按开始下一局 → 变 joined=1 → 再补”）
+
+**验收（可复跑的判据，不是文案）**：
+> `canStartNext(room) === false` 时，界面给出的理由必须为真：
+> · `pending > 0` → 可以说“在等 X”
+> · `pending === 0` → **不许**说“等其他人”，必须说“人不够”，并给出「补 AI」或「你可以回来」
+
+原式写作 `pending > 0 || holdNextOf` 会误报：任何在场真人（含已请假的）都能点「开始下一局」回来（`wantNext` 清 `outNext`），所以 `joined=0 且 pending=0` 是合法状态。判据必须把“可点控件”算作出口。
+
 ### D4 密码下限 6 位偏软 —— **v79 已修（分层生效）**
 <!-- STATUS: closed | v79 -->
 

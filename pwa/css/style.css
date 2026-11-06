@@ -5102,6 +5102,16 @@ a:focus-visible {
   margin-bottom: 20px;
 }
 .replay-pack:last-child { margin-bottom: 0; }
+/* 局分隔（v124）：一场档案会横跨同一个房间的多局。
+   只在真的有多局时出现，字体压得比把次小一档 —— 它是分隔，不是标题。 */
+.replay-game-title {
+  margin: 4px 0 12px;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--gray-aux);
+  letter-spacing: 1px;
+}
+.replay-game-title:not(:first-child) { margin-top: 28px; }
 /* 「你点的这把」：整场回放会从第一把开始，必须让人一眼看到自己是从哪把点进来的 */
 .replay-pack.is-target {
   border-color: rgba(176, 132, 32, 0.6);

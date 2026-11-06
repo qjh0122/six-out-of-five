@@ -67,16 +67,36 @@
       };
     };
 
-    /* history → 按把分组的 packs：[{hands, rounds:[...]}]，按把次升序。
-     * hands 用的是 **hid（handId）**，不是 handCount —— 后者在「开下一把」时归 1，
-     * 重启后的第 3 把会和第 1 把撞成同一组，回放里出现两个「第 1 把 · 第 1 轮」。 */
+    /* history → 按把分组的 packs：[{hands, no, g, rounds:[...]}]，按把次升序。
+     *
+     * 三个字段各管一件事，谁也不能替代谁：
+     *   · hands —— **身份**。用 hid（handId），它在 dealAll 里递增、永不重置，
+     *     所以「开下一把」后 restart 也不会把它撞回 1（handCount 会）。
+     *     回放定位（targetHand）、本地存档去重、pack 合并全按它。
+     *   · no —— **显示序号**。用 handCount，它每局归 1，也就是「本局第几把」。
+     *   · g —— **局号**。用 handSeq，用来把同一个房间里前后两局分开。
+     *
+     * ★ v124 修的 bug：`hands` 被同时当成显示序号用了。
+     *   房间打两局时 hid 连续递增（第一局 1~3、第二局 4~6），于是第二局的
+     *   回放标题写着「第 4 把 / 第 5 把」—— 数字越往后越大，跟屏幕上这一局的
+     *   实际把数完全对不上。身份可以连续，序号不能。 */
     function packHistory(hist) {
       var byHand = {};
       var order = [];
       for (var i = 0; i < (hist || []).length; i++) {
         var h = hist[i];
         var hn = h.hid || h.hand || 1;
-        if (!byHand[hn]) { byHand[hn] = { hands: hn, rounds: [] }; order.push(hn); }
+        if (!byHand[hn]) {
+          byHand[hn] = {
+            hands: hn,
+            /* 老数据没有 seq：一律归到第 0 局（等于「不分局」），
+             * 显示上退回原来的样子，不会比修之前更差。 */
+            no: Math.max(1, Math.round(Number(h.hand) || 1)),
+            g: Math.max(0, Math.round(Number(h.seq) || 0)),
+            rounds: []
+          };
+          order.push(hn);
+        }
         byHand[hn].rounds.push(slimRound(h));
       }
       order.sort(function (a, b) { return a - b; });

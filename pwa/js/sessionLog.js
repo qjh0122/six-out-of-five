@@ -143,6 +143,14 @@
     return { r: Math.max(1, Math.round(num(r.r, 1)) || 1), groups: groups };
   }
 
+  /* 一把的存档形态：{ hands, no, g, rounds }。
+   *
+   * hands 是身份（hid），no 是本局第几把（显示用），g 是局号 —— 三者含义不同，
+   * 上一版只留了 hands 一个，于是「显示序号」只能借用身份号，房间打第二局时
+   * 回放标题从「第 4 把」开始。这里若只留一个字段，那个 bug 会从 localStorage
+   * 这一层重新长回来（内存里修好、刷新一次就复发）。
+   *
+   * 老存档没有 no / g：no 退回 hands（保持原样），g 归 0（不分局）。 */
   function sanePack(p) {
     if (!p || typeof p !== 'object') return null;
     var rounds = [];
@@ -152,7 +160,13 @@
       if (rd) rounds.push(rd);
     }
     if (!rounds.length) return null;
-    return { hands: Math.max(1, Math.round(num(p.hands, 1)) || 1), rounds: rounds };
+    var hands = Math.max(1, Math.round(num(p.hands, 1)) || 1);
+    return {
+      hands: hands,
+      no: Math.max(1, Math.round(num(p.no, hands)) || 1),
+      g: Math.max(0, Math.round(num(p.g, 0)) || 0),
+      rounds: rounds
+    };
   }
 
   function sortedPacks(packs) {
@@ -198,8 +212,14 @@
         if (Number(target.packs[n].hands) === pack.hands) { hit = target.packs[n]; break; }
       }
       if (!hit) {
-        hit = { hands: pack.hands, rounds: [] };
+        hit = { hands: pack.hands, no: pack.no, g: pack.g, rounds: [] };
         target.packs.push(hit);
+      } else {
+        /* 老存档里可能缺 no/g（或者是先被老版本写进去的）。新数据到了就补上，
+         * 不用整场清空重来 —— 清空等于把玩家已经攒下的过程丢掉。
+         * 判据用 typeof 而不是真值：g = 0 是合法的「第 1 局」，`!0` 会把它当缺失。 */
+        if (typeof hit.no !== 'number' && typeof pack.no === 'number') hit.no = pack.no;
+        if (typeof hit.g !== 'number' && typeof pack.g === 'number') hit.g = pack.g;
       }
       for (var q = 0; q < pack.rounds.length; q++) {
         var rd = pack.rounds[q];
