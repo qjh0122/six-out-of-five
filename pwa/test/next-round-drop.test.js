@@ -131,7 +131,10 @@ console.log('\n[5] 确认框退场：现在没有任何人被挤出去（v121）
   /* 反过来：挤不出去之后，「有人一直在结算页」这件事必须有可见的出口。
    * 这就是「不等他」，它现在挂在还没表态的人身上（不是「报名没准备的人」）。 */
   ok(/StateMachine\.pendingNextPlayers/.test(game), '★「不等他」的候选来自 pendingNextPlayers');
-  const hint = game.slice(game.indexOf('function renderRoom'), game.indexOf('function renderRoom') + 6000);
+  /* 窗口给到 9000：renderRoom 在 v125 多了几行（挂起倒计时的 span 与 syncHoldTick），
+   * 6000 的窗口会把「等 X 点开始下一局」那句挤出切片 —— 那时的红是窗口太窄，
+   * 不是文案没了。 */
+  const hint = game.slice(game.indexOf('function renderRoom'), game.indexOf('function renderRoom') + 9000);
   ok(/等 ' \+ whoText\(pending\) \+ ' 点「开始下一局」/.test(hint),
     '★ 等待文案点名「在等谁」（只说「等其他人」等于没说）');
 

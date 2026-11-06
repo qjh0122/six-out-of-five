@@ -25,9 +25,15 @@ const CONFIG = require(path.join(__dirname, '..', 'pwa', 'js', 'config.js'));
  * 少了这一条，加一张新表情就会变成「前端能点、服务端静默丢弃」。 */
 const Emoji = require(path.join(__dirname, '..', 'pwa', 'js', 'emoji.js'));
 
-const GRACE_MS = 90000;        // 断线宽限：90 秒。20 秒对移动网络太苛刻——切 WiFi/4G、
-                               // 进电梯、地铁过隧道都很容易超过，人被踢出这局就白打了。
-                               // 判弃后手牌仍保留，宽限内或本局未翻轮前都能回桌。
+/* 断线宽限：90 秒。20 秒对移动网络太苛刻——切 WiFi/4G、
+ * 进电梯、地铁过隧道都很容易超过，人被踢出这局就白打了。
+ * 判弃后手牌仍保留，宽限内或本局未翻轮前都能回桌。
+ *
+ * ★ 可被环境变量覆写（v125）：这三个时长原本是硬编码常量，
+ *   于是 **没有任何测试能让它们的到期回调跑一次** —— 90 秒 / 30 分钟
+ *   在 CI 里等于永不发生。改短的唯一目的是让测试真的等到那一刻，
+ *   不是给运维调参用的。范式和 SPLIT_TIMEOUT_MS 一致。 */
+const GRACE_MS = Number(process.env.GRACE_MS) || 90000;
 const AUTH_TIMEOUT_MS = Number(process.env.WS_AUTH_TIMEOUT_MS) || 30000; // 连上来却不鉴权的连接，30 秒后关掉。没有这条，
                                // 一个脚本可以开几万个空连接（不鉴权就不进房间，也不占内存上限之外的任何配额）。
 const SPLIT_TIMEOUT_MS = Number(process.env.SPLIT_TIMEOUT_MS) || 60000;
@@ -67,7 +73,8 @@ const MIN_RECONNECT_SPLIT_MS = Number(process.env.MIN_RECONNECT_SPLIT_MS) || 150
 const HEARTBEAT_MS = Number(process.env.WS_HEARTBEAT_MS) || 30000;
 const HEARTBEAT_MAX_MISS = 2;
 
-const ROOM_IDLE_MS = 30 * 60 * 1000; // 空房间回收
+/* 空房间回收：30 分钟。同样可被环境变量覆写，理由见 GRACE_MS 上方。 */
+const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS) || 30 * 60 * 1000;
 /* 解散投票超时：与 stateMachine 里的 DISSOLVE_TIMEOUT_MS 对齐，测试可用环境变量改短。
  * 超时不代表「解散成功」，只是把投票作废 —— 房间回到正常对局，谁也没被扣分。 */
 const DISSOLVE_TIMEOUT_MS = Number(process.env.DISSOLVE_TIMEOUT_MS) || SM.DISSOLVE_TIMEOUT_MS;
@@ -187,6 +194,12 @@ class Hub {
         room.updatedAt = room.updatedAt || Date.now();
         this.rooms.set(room.roomId, room);
         this._armRoomRecycle(room.roomId);
+        /* ★ 时间线要先补，再广播：
+         * 广播会把分牌计时器装回去，而分牌回调会跳过 connected === false 的人
+         * （见 _armOneSplitTimer）。如果先广播、后判宽限，就会有一段
+         * 「没有任何人会超时、也没有任何人会被判离开」的窗口 —— 全桌停住。 */
+        this._restoreTimersOf(room);
+        if (!this.rooms.has(room.roomId)) return;   // 宽限已过期，整房被回收
         /* 广播一次把分牌计时器装回去（_armSplitTimers 是幂等的，且挂在 _broadcast 里）。
          * 此刻没有任何连接，这次广播只会落到 0 个客户端 —— 不会泄露手牌。 */
         this._broadcast(room.roomId);
@@ -201,6 +214,59 @@ class Hub {
     });
     if (n) this.log('rooms restored', n, 'tokens', snap.tokens.length);
     return n;
+  }
+
+  /**
+   * 重启后把「时间线」补回来 —— 断线宽限与解散投票。
+   *
+   * ── 为什么必须有这一步（v125 之前这里是空的）
+   * 房间对象能落盘、能恢复，但**定时器不能**：它们活在 Map 里的 setTimeout 上，
+   * 进程一走就全没了。而恢复时所有玩家又被置成 `connected = false`，
+   * 分牌超时的回调里明确写着「断线的人跳过」——
+   *
+   *   > 一桌人打到一半、有人断线 → 进程重启 →
+   *   > 断线者永远等不到 finalizeLeave（不会被判离开），
+   *   > 别人的分牌超时又全部跳过断线者 → **全桌永远不结算**。
+   *
+   * 唯一出路是有人重连后自己交牌，或凑齐解散票。每次发布都会撞上一次概率，
+   * 只是恰好有进行中的对局才会真的发生。
+   *
+   * ── 原则：按**剩余**时间补，不重新给满
+   * `disconnectedAt` 早就随房间对象落盘了（stateMachine.js 里断线那一刻写），
+   * 所以剩余时间算得出来，不需要新字段。
+   *   · 已经超时的 → 立刻判离开（重启不该让一个断了 10 分钟的人继续占座）；
+   *   · 还没到的 → 按剩余秒数挂（重启不该让一个刚断的人多赚 90 秒）。
+   * 两个方向都不能偏：偏哪边都会让「时间」在重启前后不是同一个东西。
+   *
+   * 老快照没有 disconnectedAt（v113 之前写的）时按「刚断」处理，
+   * 也就是重新给满 —— 不知道断了多久，宁可多给时间，也不能凭 undefined 判人离开。
+   */
+  _restoreTimersOf(room) {
+    if (!room || !room.roomId) return;
+    const roomId = room.roomId;
+    const now = Date.now();
+    (room.players || []).slice().forEach((p) => {
+      if (!p || !p.id || p.isBot || p.left) return;
+      if (p.connected) return;                 // 防御：正常恢复路径一律是 false
+      const since = Number(p.disconnectedAt) > 0 ? Number(p.disconnectedAt) : now;
+      const left = GRACE_MS - (now - since);
+      if (left <= 0) {
+        const res = SM.finalizeLeave(room, p.id);
+        if (res && res.deleted) { this._deleteRoom(roomId); return; }
+        this.log('grace expired while down', roomId, p.id);
+        return;
+      }
+      this._startGrace(roomId, p.id, left);
+    });
+    /* 解散投票有自己的 30 秒；_syncDissolveTimer 已经按 startedAt 算剩余，
+     * 这里只需要调一次把它装回去 —— 之前重启后投票永远超不了时，
+     * 全桌会一直停在「正在等大家表态」，连发起人都取消不了。 */
+    if (this.rooms.has(roomId)) this._syncDissolveTimer(roomId);
+    /* 「等个人」同理。数据侧能自愈（holdNextOf 按 at + TTL 判过期，
+     * 重启后到点自然失效），但**没有定时器就没有人到点那一天**：
+     * 该自动放行的不会放行，该广播的不会广播，房间停在「已挂起」直到有人碰它。
+     * 这里补挂一个，剩余时间由 holdNextLeftMs 算 —— 同基准，不重新给满。 */
+    if (this.rooms.has(roomId) && SM.holdNextOf(room)) this._armHoldTimer(roomId);
   }
 
   /** 落盘（去抖）。高频调用只保留最后一次 —— 一局里每次提交都会广播。 */
@@ -643,19 +709,44 @@ class Hub {
 
   /* 「等个人」到点自动放行。
    * 到点这一刻 holdNextOf 已经返回 null（它按 at + TTL 判定），
-   * 所以这里只需要再判一次开局、再广播一次，让所有人看到「等待结束」。 */
+   * 所以这里只需要再判一次开局、再广播一次，让所有人看到「等待结束」。
+   *
+   * ★ v125 修的是**时间基准**：这里原先写死 `SM.HOLD_TTL_MS`，
+   *   而数据侧（holdNextOf）按 `holdNext.at + HOLD_TTL_MS` 过期。
+   *   两者在「第一次挂起」时一致，但 `setHoldNext` 是幂等的（重复点不重置 at），
+   *   而这里每次都会重挂 —— 于是房主在第 100 秒又点一次「等人」，
+   *   数据在第 180 秒过期、定时器却要等到第 280 秒才醒。
+   *   中间那 100 秒里：挂起已经不挡开局了，但没有任何广播，
+   *   所有人看到的是「都就位了，就是不开」。单跑每条测试都是绿的。
+   *
+   *   现在只认一个真相：剩余时间从数据算（holdNextLeftMs），定时器跟着它走。
+   *   重复点「等人」不再延长任何东西，因为它本来也不该延长。 */
   _armHoldTimer(roomId) {
     this._clearHoldTimer(roomId);
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const left = SM.holdNextLeftMs(room);
+    if (!(left > 0)) return 0;  // 已经不处于挂起（过期 / 被放行 / 房主换人）
+    /* 挂定时器用的时长，和下面返回值用的是**同一个变量** ——
+     * 这不是整洁癖：两者分开写的话，「返回值与数据同基准」这条断言就永远绿，
+     * 因为它算的是 left，而真正决定几秒后触发的是 setTimeout 的参数。
+     * 断言必须与被测使用同一份输入，否则测的是另一段代码。 */
+    const wait = Math.max(0, Math.round(left));
+    const armedAt = Date.now();
     const timer = setTimeout(() => {
       this.holdTimers.delete(roomId);
-      const room = this.rooms.get(roomId);
-      if (!room) return;
+      const cur = this.rooms.get(roomId);
+      if (!cur) return;
       this.log('hold expired', roomId);
       this._maybeAutoStart(roomId);
       this._broadcast(roomId);
-    }, SM.HOLD_TTL_MS);
+    }, wait);
     if (timer.unref) timer.unref();
     this.holdTimers.set(roomId, timer);
+    /* 返回**到期时刻**（服务端时间轴）。这是 v125 加的，只为一件事：
+     * 让「定时器与数据是不是同一个基准」变成可断言的事实，
+     * 而不是靠读代码相信。行为一点没变 —— 有地方依赖返回值才是改坏了。 */
+    return armedAt + wait;
   }
 
   _clearHoldTimer(roomId) {
@@ -1140,6 +1231,25 @@ class Hub {
         view.now = Date.now();
       }
     }
+
+    /* 「等个人」的到期时刻：与分牌倒计时同一口径（绝对时刻 + 服务端 now）。
+     *
+     * 以前只下发 `leftMs`（相对秒数），而它是**在协议响应里**给的 ——
+     * 广播的房间快照里根本没有它。于是「倒计时还剩多久」这个信息
+     * 对每一次重绘都是空的：房主挂起后，所有人只看到一句「房间已挂起」，
+     * 没有任何人知道它什么时候会自己放开。
+     *
+     * 为什么给绝对时刻而不是相对秒数：客户端用本地 `Date.now()` 减，
+     * 设备时间不准就会整体偏掉（正是 splitEndsAt 当初改成绝对时刻的原因）。
+     * holdNext.at 本来就在每次广播的房间对象里，不需要新协议字段。
+     *
+     * 放在 viewerId 分支**之外**：等不等是整桌的事，不是「只有房主需要知道」。
+     * 它不含任何人的手牌信息，只是一个到期时间戳。 */
+    const holdNow = SM.holdNextOf(room);
+    if (holdNow) {
+      view.holdNextEndsAt = holdNow.at + SM.HOLD_TTL_MS;
+      view.now = Date.now();
+    }
     return view;
   }
 
@@ -1423,9 +1533,17 @@ class Hub {
     this.splitStartedAt.delete(key);
   }
 
-  _startGrace(roomId, playerId) {
+  /* 断线宽限到期 → 判离开。
+   *
+   * @param {number} [delayMs] 等多久。缺省 = GRACE_MS（正常断线）。
+   *   传入更短的值只有一种情况：**重启后按剩余时间补挂**（见 _restoreTimersOf）。
+   *   这个参数是 v125 加的 —— 加之前 restore 只能重新给满 90 秒，
+   *   而「重新给满」本身就是错的方向：一个已经断了 89 秒的人，
+   *   重启不该让他多赚 90 秒；一个断了 10 分钟的人，更不该永远等不到判离开。 */
+  _startGrace(roomId, playerId, delayMs) {
     const key = roomId + '#' + playerId;
     this._clearGrace(roomId, playerId);
+    const wait = Number.isFinite(delayMs) ? Math.max(0, Math.round(delayMs)) : GRACE_MS;
     const timer = setTimeout(() => {
       this.graceTimers.delete(key);
       const room = this.rooms.get(roomId);
@@ -1435,7 +1553,7 @@ class Hub {
       const res = SM.finalizeLeave(room, playerId);
       if (res && res.deleted) { this._deleteRoom(roomId); return; }
       this._broadcast(roomId);
-    }, GRACE_MS);
+    }, wait);
     if (timer.unref) timer.unref();
     this.graceTimers.set(key, timer);
   }

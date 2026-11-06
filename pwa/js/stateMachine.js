@@ -1215,7 +1215,12 @@
    *
    * 它挡住的只是「自动开牌」；报名照常进行，大家该点还能点。
    */
-  var HOLD_TTL_MS = 3 * 60 * 1000;
+  /* ★ 可被 HOLD_TTL_MS 环境变量覆写（v125）：这个值原本是硬编码，
+   *   于是**到期那一刻从来没有被任何测试执行过**，而 hub 里还按它另挂了一个
+   *   setTimeout（两边一度不同基准）。改短的唯一目的是让测试真的等到它。
+   *   浏览器里没有 process，`typeof` 判断走短路，值仍是 3 分钟。 */
+  var HOLD_TTL_MS = (typeof process !== 'undefined' && process.env
+    && Number(process.env.HOLD_TTL_MS)) || 3 * 60 * 1000;
 
   /* 当前生效的等待（没有 / 已过期 / 房主换人 → null）。
    * 判据集中在这一个函数里：canStartNext、前端提示、剩余时间都读它，

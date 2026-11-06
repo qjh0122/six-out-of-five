@@ -1306,6 +1306,16 @@ async function main() {
   ok(held, '★ 点一下变成「人齐了，开牌」（服务端收下并广播回来了，不是前端自己翻转的）');
   const heldTxt = await evaluate('(document.getElementById("settle-wait").textContent||"").trim()');
   ok(/挂起/.test(heldTxt || ''), '★ 结算页说明「房间已挂起」', JSON.stringify(heldTxt));
+  /* 倒计时（v125）：3 分钟后会自动放行这件事，以前界面一个字都不说 ——
+   * 到点牌突然开了反而像 bug。这里守两件事：有这么一句，且它是从服务端下发的
+   * 绝对到期时刻算出来的（本地凭 3 分钟算不出来「2 分 59 秒」这种值）。 */
+  const holdLeft = await evaluate(`(function(){
+    var n = document.querySelector('#settle-wait .hold-left');
+    return { text: n ? n.textContent : '', exists: !!n };
+  })()`);
+  ok(holdLeft && holdLeft.exists, '★★ 挂起时显示「还剩多久」', JSON.stringify(holdLeft));
+  ok(holdLeft && /还剩|即将放行/.test(holdLeft.text || ''),
+    '★ 文案是倒计时（说明真的读到了服务端下发的到期时刻）', JSON.stringify(holdLeft));
 
   /* 报名：AI 早就报了，我再点一下就齐了 —— 但挂起挡着，不许开。
    * 判据不能用 IN_TABLE：就位态里 #slots 只是被加了 hidden，上一把的 slot 节点还在 DOM 里，
