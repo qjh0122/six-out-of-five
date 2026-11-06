@@ -118,6 +118,17 @@ function check(input) {
     if (p.run !== 'ci' && !String(p.why || '').trim()) {
       errors.push(f + '：' + p.run + ' 必须写 why（半年后要能回答「这个为什么还留着」）');
     }
+    /* ★ v130：manual 档必须有执行链。
+     * 以前它只要求写 why —— 也就是说 17 条探针的唯一保障是「发版前记得跑」。
+     * 本轮已实证那条链会腐坏（3 条红的原因写错、1 条「绿」其实是崩的）。
+     * 豁免必须**显式**写：默认豁免等于没有规则。
+     * `wfManual` 为 undefined 表示「调用方没告诉我」，此时跳过这条（老调用点不炸）。 */
+    if (p.run === 'manual' && input.wfManual === false && !String(p.nightlyExempt || '').trim()) {
+      errors.push(f + '：manual 档没有夜间执行链，也没写 nightlyExempt 理由');
+    }
+    if (p.run === 'manual' && String(p.nightlyExempt || '').length > 120) {
+      warnings.push(f + '：nightlyExempt 理由超过 120 字');
+    }
     if (p.run !== 'ci' && String(p.why || '').length > 120) {
       warnings.push(f + '：why 有 ' + String(p.why).length + ' 字，超过 120 —— 说明理由里塞了别的信息');
     }
@@ -228,12 +239,34 @@ function oneLine(s) {
   return String(s == null ? '' : s).replace(/\|/g, '／').replace(/\r?\n/g, ' ');
 }
 
+/** 夜间 workflow 是否存在且真的跑 `--manual`（只看非注释行） */
+function manualWorkflowOk() {
+  let files = [];
+  try { files = fs.readdirSync(WF_DIR).filter((f) => /\.ya?ml$/.test(f)); } catch (e) { return false; }
+  let ok = false;
+  for (const f of files) {
+    const text = fs.readFileSync(path.join(WF_DIR, f), 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      if (/^\s*#/.test(line)) continue;
+      if (/run-probes\.js\s+--manual/.test(line)) ok = true;
+    }
+  }
+  return ok;
+}
+
 function main() {
   const args = process.argv.slice(2);
   const manifest = loadManifest();
   const disk = diskProbes();
   const wf = workflowProbes();
-  const res = check({ probes: manifest.probes, disk, wf });
+  const wfManual = manualWorkflowOk();
+  /* 传 wfManual 让「manual 有没有执行链」这条生效；传不到就等于没这条规则 */
+  const res = check({ probes: manifest.probes, disk, wf, wfManual });
+
+  if (args.indexOf('--list-manual') >= 0) {
+    manifest.probes.filter((x) => x.run === 'manual').forEach((x) => console.log(x.file));
+    return;
+  }
 
   if (args.indexOf('--write') >= 0) {
     const extra = { run: readRunNote() };
@@ -249,7 +282,8 @@ function main() {
       process.exit(1);
     }
     console.log('台账校验通过：' + manifest.probes.length + ' 条，磁盘 ' + disk.length
-      + ' 个探针，CI 里跑 ' + Object.keys(wf).length + ' 个');
+      + ' 个探针，CI 里跑 ' + Object.keys(wf).length + ' 个'
+      + '，夜间跑 manual ' + (wfManual ? '是' : '否'));
     return;
   }
 
@@ -258,6 +292,7 @@ function main() {
   console.log('探针台账 ' + manifest.probes.length + ' 条');
   Object.keys(RUN_KINDS).forEach((k) => console.log('  ' + (k + '     ').slice(0, 8) + counts[k] + ' 条  ' + RUN_KINDS[k]));
   console.log('\nCI 里真的在跑的：' + (Object.keys(wf).join(', ') || '（无）'));
+  console.log('夜间 manual 执行链：' + (manualWorkflowOk() ? '有' : '没有'));
   res.errors.forEach((e) => console.error('  ✗ ' + e));
   res.warnings.forEach((w) => console.warn('  ! ' + w));
   if (res.errors.length) process.exit(1);

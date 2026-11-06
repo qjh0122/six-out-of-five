@@ -153,9 +153,13 @@ eq(h5 && h5.seq, 1, 'hid=5 同属第 2 局');
 /* ================================================================
  * 2. packHistory：三个字段各管一件事
  * ================================================================ */
-head('[2] packHistory 的 no / g / hands（只看第二局，history 窗口只留最近 2 把）');
-var packs = HK.packHistory(hist);
-eq(packs.length, 2, '打包出第二局的 2 把', 'packs=' + packs.length);
+head('[2] packHistory 的 no / g / hands（v131 起 history 保留整场，两局都在）');
+var allPacks = HK.packHistory(hist);
+/* ★ v131：history 上限从「最近 4 轮（2 把）」改成「按 handLimit 保留整场」，
+ * 所以打包结果里第 1 局和第 2 局的把都在。这条测的是**字段口径**，只看第 2 局。 */
+ok(allPacks.length >= 2, '打包出跨局的把（' + allPacks.length + ' 把）', 'packs=' + allPacks.length);
+var packs = allPacks.filter(function (p) { return p.g === 1; });
+eq(packs.length, 2, '第二局打包出 2 把', 'packs=' + packs.length + ' 全部=' + allPacks.map(function (p) { return p.g + '/' + p.no; }).join(' '));
 
 var byHandId = {};
 packs.forEach(function (p) { byHandId[p.hands] = p; });

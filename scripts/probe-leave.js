@@ -316,7 +316,7 @@ async function main() {
 
   /* 收尾：真的离开，并把探针账号删掉，别在种子文件里留垃圾 */
   await evaluate(`(async function(){
-    var t = localStorage.getItem('weile_session_v1') || '';
+    var t = Store.read(Store.KEYS.SESSION) || '';
     var tok = '';
     try { tok = (JSON.parse(t) || {}).token || ''; } catch(e) {}
     await fetch('/api/auth/delete', {

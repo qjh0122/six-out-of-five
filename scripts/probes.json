@@ -1,6 +1,6 @@
 {
   "note": "探针台账（v129）。每个 scripts/probe-*.js 必须在这里有一条，否则 pwa/test/probe-ledger.test.js 会红。run 只有三档：ci（每次 push 都跑）/ manual（发版前跑一次）/ oneshot（一次性诊断，保留作复现脚本，不排期）。为什么要有这份清单见 docs/PROBES.md。",
-  "version": "v129",
+  "version": "v130-review",
   "probes": [
     {
       "file": "probe-ui-flow.js",
@@ -55,8 +55,9 @@
       "file": "probe-emoji.js",
       "what": "表情 / 短语：选择 → 发送 → 座位气泡 → 记录里留痕",
       "run": "manual",
-      "why": "表情走独立的 emoji / sfx 模块，probe-ui-flow 不点表情；但需要两个真账号互相看得见，构成多进程时序",
-      "lastVerified": ""
+      "why": "v130 更正：脚本过期，但根因不是建房两步（脚本 :162 早就点了确认）——是 :169/:181/:372 直读 localStorage 老键 weile_rooms，而 v111 收口后是 lxw_rooms_v1，房间表永远读空",
+      "lastVerified": "v130",
+      "expect": 44
     },
     {
       "file": "probe-error-report.js",
@@ -70,7 +71,8 @@
       "what": "首屏第一帧：登录态未定时不许闪出错误的那一屏",
       "run": "manual",
       "why": "要抓的是 CSS 应用后、JS 判定登录态前的那一帧，需要真实的网络节流窗口；CI 里的机器快慢会让「那一帧」时有时无",
-      "lastVerified": ""
+      "lastVerified": "v130",
+      "expect": 12
     },
     {
       "file": "probe-flex-gap.js",
@@ -90,7 +92,7 @@
       "file": "probe-handlimit-settle.js",
       "what": "「打满把数结束」与「分数见底结束」是同一套结算界面",
       "run": "manual",
-      "why": "必须真的打完一整局（10 把）才能触发打满分支，单次分钟级；改成快进要动被测代码",
+      "why": "v130 更正：未单独复现。按 ten-hands 的形状，4 条红里至少 2 条是流程口径（v116）而非文案，修之前必须先跑一遍定性",
       "lastVerified": ""
     },
     {
@@ -119,7 +121,8 @@
       "what": "离开房间 / 弃局离开的确认框：文案、按钮、取消后状态",
       "run": "oneshot",
       "why": "确认框已由 probe-ui-flow 的「全部弹窗」段逐个强制显示并量过；这条的增量是走完整流程，一次性的",
-      "lastVerified": "v129"
+      "lastVerified": "v130",
+      "expect": 19
     },
     {
       "file": "probe-manifest.js",
@@ -167,15 +170,16 @@
       "file": "probe-records-cloud.js",
       "what": "战绩页的云端数据源：登录后读到的是服务端档案，不是本机兜底",
       "run": "oneshot",
-      "why": "一次性诊断。这条链现在由 journey 的战绩段 + server 端 profile 测试共同守着",
+      "why": "v130 更正：不是「假红」，是竞态型不稳定 —— QA 实测 52/0 全绿，我这一轮是 51/1。卡在收编三条件的第 2 条（稳定），进 CI 会制造偶发红",
       "lastVerified": ""
     },
     {
       "file": "probe-records.js",
       "what": "战绩页回放入口与展开",
       "run": "oneshot",
-      "why": "一次性诊断；回放的数据口径由 pwa/test 里的 historyKit / replay 系列单测钉住",
-      "lastVerified": ""
+      "why": "v130 更正：:205 读 sessionStorage 老键 weile_myid（现为 lxw_myid_v1）→ myId 为空 → 注入数据里没有「我」→ 断言分母 0。注意 0/0 判红是对的，别改成「分母 0 就跳过」",
+      "lastVerified": "v130",
+      "expect": 20
     },
     {
       "file": "probe-result-seq.js",
@@ -188,8 +192,9 @@
       "file": "probe-rollback.js",
       "what": "灰度开关回滚演练：把新功能关掉后界面能不能退回旧行为",
       "run": "oneshot",
-      "why": "演练类脚本，做一次就够了；每次都跑等于每次都做一遍演练，没有新信息",
-      "lastVerified": ""
+      "why": "v130 更正：同根因（:147 removeItem + :173 读 weile_rooms），未单独复现；「建出房间 → null」就是这个症状",
+      "lastVerified": "v130",
+      "expect": 22
     },
     {
       "file": "probe-room-actions.js",
@@ -223,8 +228,8 @@
       "file": "probe-table-ready.js",
       "what": "准备态长在牌桌上（v82 §3）：准备按钮 / 倒计时 / 名单同步",
       "run": "manual",
-      "why": "要多账号在准备态互相等，属多进程时序；单测里状态机已有覆盖，这条守的是「界面上真的出现在牌桌上」",
-      "lastVerified": "v129"
+      "why": "每次都会跑：多账号准备态时序，单测覆盖状态机、这条守「界面上真的出现在牌桌上」",
+      "lastVerified": ""
     },
     {
       "file": "probe-table.js",
@@ -237,8 +242,9 @@
       "file": "probe-ten-hands.js",
       "what": "默认 10 把 + 负分继续打",
       "run": "manual",
-      "why": "要打满一整局才触发，单次分钟级；快进要改被测代码，代价高于收益",
-      "lastVerified": ""
+      "why": "v130 更正：3 条红不是一类。①「打满 10 局」应是「10 把」= 文案口径 ②③ 是流程口径：v116「报名即准备」后点一下就直开第 1 把，不再经过准备态（失败时顶栏已是「第 1/10 把」，说明动作成功）",
+      "lastVerified": "v131",
+      "expect": 26
     },
     {
       "file": "probe-tenhalf.js",

@@ -144,7 +144,7 @@ async function shot(name) {
 
 /** 打开一个带开关参数的页面（每次都清掉上一轮的房间，保证各阶段互不影响） */
 async function boot(query) {
-  await evaluate('(function(){ try { localStorage.removeItem("weile_rooms"); } catch(e){} return 1; })()');
+  await evaluate('(function(){ try { Store.remove(Store.KEYS.ROOMS); } catch(e){} return 1; })()');
   const url = 'http://127.0.0.1:' + PORT + '/?mode=local' + query;
   await cdp.send('Page.navigate', { url: url });
   await sleep(1500);
@@ -170,7 +170,7 @@ async function createRoom() {
   await sleep(500);
   await sleep(1000);
   return evaluate(`(function(){
-    var rooms = JSON.parse(localStorage.getItem('weile_rooms') || '{}');
+    var rooms = JSON.parse(Store.read(Store.KEYS.ROOMS) || '{}');
     var id = Object.keys(rooms)[0] || null;
     window.__roomId = id;
     return id;

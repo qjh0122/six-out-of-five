@@ -202,7 +202,7 @@ async function main() {
    * 回放里的「我」是按 id 认的，没有 id 就验不了高亮。 */
   await cdp.send('Page.navigate', { url: 'http://127.0.0.1:' + STATIC_PORT + '/?mode=local' });
   await sleep(1800);
-  const myId = await evaluate(`sessionStorage.getItem('weile_myid') || ''`);
+  const myId = await evaluate(`Store.read(Store.KEYS.MY_ID, null, 'session') || ''`);
 
   const seed = buildSeed(myId);
   await evaluate(`localStorage.setItem('lxw_records_v1', ${JSON.stringify(JSON.stringify(seed.records))});
