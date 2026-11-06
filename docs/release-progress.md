@@ -3077,6 +3077,6 @@ journey 现在直接量它的矩形：`top >= 0 && bottom <= innerHeight`（首�
 | 项 | 结果 |
 |---|---|
 | 部署 | `https://your-app.app.workbuddy.host/?sharecode=REDACTED`（同一个应用，链接不变） |
-| 线上冒烟 `probe-online-smoke` | 待填 |
-| 公库 | 待填 |
-| 私库 | 待填 |
+| 线上冒烟 `probe-online-smoke` | **15 / 15 通过**（版本核对 = 本地 `20261102o`，SW 已接管） |
+| 公库 | `0eff8ac chore: 同步自私有仓库（08cfb6b）` |
+| 私库 | `08cfb6b`（`git ls-remote` 比对一致） |
