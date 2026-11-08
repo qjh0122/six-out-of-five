@@ -227,3 +227,102 @@ jobs:
             done
           fi
           exit $code
+
+      # ── 动效与焦点（v135）────────────────────────────────────────────
+      # 挂在 journey 这个 job 上而不是巡检的 3 个分片里，有两个理由：
+      #   1) 它只跑一个视口（1280×720），扔进分片会被三个分片各跑一遍；
+      #   2) 它量的全是 computed style（transition-duration / outline /
+      #      prefers-reduced-motion 的兜底），和"布局有没有坏"是两件事，
+      #      红的时候不该跟巡检的结论混在一起。
+      # 这里已经装好浏览器和中文字体，加一步几乎不增加耗时。
+      - name: 动效与焦点（令牌解析 / 焦点环 / 按压回执 / 减少动效）
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-motion.js > /tmp/m.log 2>&1
+          code=$?
+          cat /tmp/m.log
+          if [ $code -ne 0 ]; then
+            tail -8 /tmp/m.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      # ── 撤销条（v136）────────────────────────────────────────────────
+      # 它验的是「破坏性动作之前的 5 秒里，数据到底还在不在」——
+      # 这件事没有任何静态断言能证明：单测只能说"到点会调回调"，
+      # 说不了"第 3 秒时记录还在屏幕上"。真浏览器里插一刀才有意义。
+      - name: 撤销条（5 秒窗口内数据仍在 / 撤销还原 / 到点真清）
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-undo.js > /tmp/u.log 2>&1
+          code=$?
+          cat /tmp/u.log
+          if [ $code -ne 0 ]; then
+            tail -8 /tmp/u.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      # ── 战绩页四态 + 错误三级（v137 build-states v1）─────────────────
+      # 为什么必须真浏览器：这一批的主判据全是"看得见吗 / 点得到吗 / 发了几次请求"。
+      #   ① 四态互斥（同时可见 ≤1）只有 checkVisibility + getBoundingClientRect 能答；
+      #   ② 加载态"零按钮"要数容器里真实的 button；
+      #   ③ 重试"只发一次"数的是 CDP 网络层的 requestWillBeSent，不数被测代码里的计数器；
+      #   ④ 离线"不发请求"的增量必须是 0，这只能从网络层看；
+      #   ⑤ 静默类"页面一个像素都不动"要逐字比较 innerText。
+      # 两档都跑：390×844（竖屏主档）+ 800×360（横屏最小档，断行最容易红的地方）。
+      - name: 战绩页四态 · 390×844
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-states.js 390 844 > /tmp/s1.log 2>&1
+          code=$?
+          cat /tmp/s1.log
+          if [ $code -ne 0 ]; then
+            tail -10 /tmp/s1.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      - name: 战绩页四态 · 800×360（横屏最小档）
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-states.js 800 360 > /tmp/s2.log 2>&1
+          code=$?
+          cat /tmp/s2.log
+          if [ $code -ne 0 ]; then
+            tail -10 /tmp/s2.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      # 数字阶梯（v138）：两档都要跑 —— 竖屏 390 会命中 max-width:420 的媒体查询，
+      # 横屏 800×360 会命中 #stage.ls 那一整套覆盖。只跑一档等于只验了一半的覆盖。
+      - name: 数字阶梯 · 390×844
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-numbers.js 390 844 > /tmp/n1.log 2>&1
+          code=$?
+          cat /tmp/n1.log
+          if [ $code -ne 0 ]; then
+            tail -10 /tmp/n1.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      - name: 数字阶梯 · 800×360
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-numbers.js 800 360 > /tmp/n2.log 2>&1
+          code=$?
+          cat /tmp/n2.log
+          if [ $code -ne 0 ]; then
+            tail -10 /tmp/n2.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code

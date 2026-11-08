@@ -95,13 +95,18 @@
 
 ### 哪些文档会因为什么变
 
+> **一条总口径（2026-11-08 校准）**：**只改唯一事实源，其余文档一律回指，不复述数值**。
+> 把「一次发布要同步 N 份文档」写成流程，等于把漂移制度化 —— v138 之前
+> `release-progress.md` 顶部自称「当前线上」却停在 v133，就是这么来的（QA 审计 §③）。
+> 版本现状只有一个出口：`release-progress.md` 顶部「当前状态」卡片 + 文件最后一段。
+
 | 改了什么 | 必须检查的文档 |
 |---|---|
-| 任何发布 | `docs/release-progress.md`（加一节 + 顶部「当前线上」）、`pwa/index.html` 版本号、`pwa/sw.js` 的 `CACHE_NAME` |
+| 任何发布 | `pwa/index.html` 版本号、`pwa/sw.js` 的 `CACHE_NAME`；文档侧只改 `docs/release-progress.md`（**加一节 + 更新顶部「当前状态」卡片**）。`node scripts/check-docs.js` 会核卡片版本 == 代码 |
 | 玩法 / 规则 / 数值 | `README.md`（怎么玩、容易算错的地方）、`docs/HISTORY.md`（为什么这么定） |
 | 成就 / 战绩 / 统计口径 | `docs/achievements-plan.md`（唯一规格）、`README.md` 成就一节、`docs/review/*` 只在结论被推翻时才动 |
 | 结构债 / 架构 | `docs/PLAN.md`（状态）、`docs/BACKLOG.md`（STATUS 行）、`docs/REVIEW.md`（评分表 + 变化列） |
-| 测试规模变化 | `README.md` 的数字、`docs/REVIEW.md` 的「可测试性」「回归防护力」 |
+| 测试规模变化 | `README.md` 的数字、`docs/REVIEW.md` 的「可测试性」「回归防护力」；两处必须与「当前状态」卡片一致（`check-docs.js [3b]` 会拦） |
 | 新文档 / 新评审 | `docs/INDEX.md`、`docs/REVIEW.md` §五档案表 |
 
 **跳过也是结论，不是遗漏**：文档没变要在提交说明里写一句「文档无需改，原因是什么」，

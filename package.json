@@ -14,6 +14,7 @@
     "probes": "node scripts/probes.js",
     "probes:check": "node scripts/probes.js --check",
     "probes:doc": "node scripts/probes.js --write",
+    "docs:check": "node scripts/check-docs.js",
     "backup": "node scripts/backup-leaderboard.js",
     "audit:comments": "node scripts/audit-comments.js"
   },

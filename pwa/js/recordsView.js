@@ -45,6 +45,11 @@
     var packHistory = deps.packHistory;
     var showModalEl = deps.showModalEl, hideModalEl = deps.hideModalEl;
     var isShown = deps.isShown, pushModalState = deps.pushModalState;
+    /* 「5 秒内可以反悔」条（v136）。可以没有 —— 单测/旧缓存里拿不到就是 null，
+     * 那种情况下退回"立刻清除"，行为与 v135 一致，不会静默不删。 */
+    var undoBar = deps.undoBar || null;
+    /* 打开清除确认框时记下的场次数，给「将清除 N 场」用（v136）。 */
+    var clearCount = 0;
 
   /* 结束原因的玩家侧措辞。三条必须在同一层级上，别一条一个说法：
    *   · 打满把数 / 有人离开 —— 打出来的结果
@@ -157,6 +162,248 @@
     bestNet: 0, longestStreak: 0, longestLoseStreak: 0, aiGames: 0, recent: []
   };
 
+  /* ---------------------------- 四态的状态机（build-states v1） ----------------------------
+   * 唯一真源：`#screen-records[data-rstate]`，值域 {offline, fail, loading, empty, data}。
+   * 唯一执行者：`setRecordsState(name)`。
+   *
+   * 为什么必须"只留一个执行者"：以前四处 `classList.toggle('hidden', …)` 散在
+   * renderRecords() 里（#records-scroll / #records-data / #records-empty / #records-foot）。
+   * 散着写不会立刻出错，但**加第四个态那天必定漏一处**，漏一处的表现就是两个态同屏叠着 ——
+   * 而那正是这一轮要消灭的东西。所以显隐只从这里出去，别的函数一律不碰 classList。
+   *
+   * 互斥组（同一时刻只许一个载体可见）：loading | fail | empty | data。
+   * 非互斥项：offline。它允许叠加在 data/empty 之上（is-strip 横条，内容照常显示），
+   * 只有"本机 0 局且登录中"或正在 loading/fail 被它抢占时才独占（is-panel）。
+   * 把离线塞进互斥组，等于"离线 + 有本机数据"时整页空 —— 玩家明明能看自己的战绩，
+   * 却被告知没网。这是全站唯一的双显豁免，别处不得再开口子。
+   */
+  var RS = deps.recordsState || (global.LXW && global.LXW.recordsState) || null;
+  var cloudRecordsErrKey = '';   // 失败原因对应的 ERR 表键（比一句中文可判、可分级）
+  var cloudStatus = 0;           // 最近一次失败的服务端状态码（429 要单独一句话）
+  var recordsHasData = false;    // 上次渲染时"确实有内容"（降级重试与上报口径都要它）
+  var loadingSince = 0;          // 本轮加载开始的时刻（250ms 门槛 / 1s 慢文案的基准）
+  var recordsEnterAt = 0;        // 进入战绩页的时刻（门槛从"进门"算，不从"渲染"算）
+  var recordsStateNow = '';      // 最近一次落下的态（慢文案回调要判它有没有过时）
+  var gateTimer = null;          // 250ms 门槛的定时器
+  var slowTimer = null;          // 1s 慢文案的定时器
+
+  /* 五个载体 id。data 态的载体是 #records-scroll + #records-data 两块，
+   * 但**视为同一个载体只数一次**（现状两者同时可见是对的）。 */
+  var CARRIERS = ['records-loading', 'records-fail', 'records-empty', 'records-scroll', 'records-offline'];
+
+  function isOfflineNow() {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  }
+
+  function recordsAvailable() {
+    return (typeof Records !== 'undefined') && !!Records.available();
+  }
+
+  function clearStateTimers() {
+    if (gateTimer) { clearTimeout(gateTimer); gateTimer = null; }
+    if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+  }
+
+  /* 纯函数的兜底包装：旧缓存里没有 recordsState.js 时退回两态（有数据 / 没有）。
+   * 这是兜底不是方案 —— 探针与单测都按四态验，缺模块会立刻红。 */
+  function stateOf(input) {
+    if (RS && RS.recordsStateOf) return RS.recordsStateOf(input);
+    if (input.online === false) return 'offline';
+    return input.hasData ? 'data' : 'empty';
+  }
+
+  function errKeyOfResult(res) {
+    if (RS && RS.errKeyOf) return RS.errKeyOf(res);
+    return 'err.net.timeout';
+  }
+
+  function errText(key) {
+    var e = (RS && RS.ERR && RS.ERR[key]) || null;
+    return e || { level: 'fatal', title: '', sub: '', actions: [] };
+  }
+
+  /* 上报**唯一入口**（ErrorReport.capture 自带 seenKeys 去重与 MAX_PER_SESSION，
+   * 所以静默类这里不写节流 —— 写新节流就是重复造）。 */
+  function reportErr(key, extra) {
+    var e = errText(key);
+    if (!e.report) return;
+    try {
+      if (typeof ErrorReport !== 'undefined' && ErrorReport && ErrorReport.capture) {
+        var payload = { source: e.report.source };
+        if (extra) {
+          for (var k in extra) {
+            if (Object.prototype.hasOwnProperty.call(extra, k) && extra[k] !== undefined) payload[k] = extra[k];
+          }
+        }
+        ErrorReport.capture(e.report.kind || 'net', e.report.message || key, payload);
+      }
+    } catch (_) { /* silence: 上报自身绝不能再抛 */ }
+  }
+
+  function setStateText(box, title, sub) {
+    if (!box) return;
+    var t = box.querySelector('[data-rstate-title]');
+    var s = box.querySelector('[data-rstate-sub]');
+    if (t) t.textContent = title || '';
+    if (s) s.textContent = sub || '';
+  }
+
+  function showOnlyCarriers(ids) {
+    for (var i = 0; i < CARRIERS.length; i++) {
+      var box = $('#' + CARRIERS[i]);
+      if (!box) continue;
+      box.classList.toggle('hidden', ids.indexOf(CARRIERS[i]) < 0);
+    }
+    /* #records-data 是 #records-scroll 里的同一载体，跟着一起切 */
+    var data = $('#records-data');
+    if (data) data.classList.toggle('hidden', ids.indexOf('records-scroll') < 0);
+    /* 页脚跟着"有没有内容"走：空态、加载态、满屏失败态都不显示它。
+     * 失败降级时内容在，页脚就在 —— 那句降级说明本身也是内容的一部分。 */
+    var foot = $('#records-foot');
+    if (foot) foot.classList.toggle('hidden', ids.indexOf('records-scroll') < 0);
+  }
+
+  /* 失败态的按钮是**签名**（design §①-b）：可重试类两个、不可恢复类一条出路、
+   * malformed 一个都不给。所以按钮文案不写死在 HTML 里，由 ERR[key].actions 决定 ——
+   * 写死在标签上等于把"哪一类错误"钉死，一改就漂。 */
+  function renderFailActions(box, actions) {
+    var primary = $('#btn-records-retry');
+    var secondary = $('#btn-records-fail-create');
+    var wrap = box ? box.querySelector('.rp-state__actions') : null;
+    var a0 = actions[0], a1 = actions[1];
+    if (primary) {
+      primary.classList.toggle('hidden', !a0);
+      if (a0) { primary.textContent = a0.label; primary.setAttribute('data-act', a0.act); }
+    }
+    /* 次要按钮只在真有第二条路时出现。只有一条出路时它就长成"主 + 次"的样子会
+     * 暗示"还有另一条路"，而不可恢复类的全部意思就是"没有另一条路"。 */
+    if (secondary) {
+      secondary.classList.toggle('hidden', !a1);
+      if (a1) { secondary.textContent = a1.label; secondary.setAttribute('data-act', a1.act); }
+    }
+    if (wrap) wrap.classList.toggle('hidden', !actions.length);
+  }
+
+  /**
+   * 唯一的切态执行者。
+   * @param {string} name 'offline'|'fail'|'loading'|'empty'|'data'
+   * @param {object} [opt] errKey（fail 用）／form + base（offline 用）／status（429 换副文案）
+   */
+  function setRecordsState(name, opt) {
+    opt = opt || {};
+    var scr = $('#screen-records');
+    if (!scr) return;
+    var text = (RS && RS.STATE_TEXT) || {};
+
+    if (name === 'loading') {
+      /* 250ms 门槛：进屏后的这段时间**一个载体都不显示**（只有屏背景）。
+       * 本地读常 200ms 内完成，先闪一下空态再切有数据是**最坏的闪** —— 它闪的是错的结论。
+       * data-rstate 仍然写 loading：它是唯一真源，先说实话；显示可以晚 250ms。 */
+      var gate = RS ? RS.STATE_DELAY_MS : 250;
+      if (recordsEnterAt && (Date.now() - recordsEnterAt) < gate) {
+        scr.setAttribute('data-rstate', 'loading');
+        recordsStateNow = 'loading';
+        showOnlyCarriers([]);
+        if (gateTimer) clearTimeout(gateTimer);
+        gateTimer = setTimeout(function () {
+          gateTimer = null;
+          setRecordsState('loading', opt);
+        }, Math.max(0, gate - (Date.now() - recordsEnterAt)));
+        return;
+      }
+    }
+    if (gateTimer) { clearTimeout(gateTimer); gateTimer = null; }
+
+    scr.setAttribute('data-rstate', name);
+    recordsStateNow = name;
+
+    if (name === 'loading') {
+      var lg = text.loading || {};
+      var box = $('#records-loading');
+      showOnlyCarriers(['records-loading']);
+      /* 慢文案只换副文案：标题不动、按钮不加、进度条不做（design §④-4）。
+       * 没有可信的总量，编一个百分比等于撒谎；"87% 卡住"比"一直转"更让人焦虑。 */
+      var since = loadingSince || (loadingSince = Date.now());
+      var remain = (RS ? RS.STATE_SLOW_MS : 1000) - (Date.now() - since);
+      if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      if (remain <= 0) {
+        setStateText(box, lg.title, lg.slow);
+      } else {
+        setStateText(box, lg.title, lg.sub);
+        slowTimer = setTimeout(function () {
+          slowTimer = null;
+          /* 状态已经换走了就别再改文案，否则"比平时慢一点"会落到成功态上 */
+          if (recordsStateNow !== 'loading') return;
+          setStateText($('#records-loading'), lg.title, lg.slow);
+        }, remain);
+      }
+      return;
+    }
+    /* 离开加载态：两个计时器都必须清掉，否则旧 timer 会在两秒后把文案写进别的态 */
+    clearStateTimers();
+
+    if (name === 'fail') {
+      var key = opt.errKey || 'err.net.timeout';
+      var e = errText(key);
+      var failBox = $('#records-fail');
+      showOnlyCarriers(['records-fail']);
+      /* 429 单独一句副文案：和 5xx 混在一档会让"服务器炸了"和"人太多"共用一句话 */
+      var sub = (key === 'err.net.server' && Number(opt.status) === 429 && e.sub429) ? e.sub429 : e.sub;
+      setStateText(failBox, e.title, sub);
+      renderFailActions(failBox, e.actions || []);
+      return;
+    }
+
+    if (name === 'offline') {
+      var offBox = $('#records-offline');
+      if (!offBox) return;
+      var ot = text.offline || {};
+      var form = opt.form === 'panel' ? 'panel' : 'strip';
+      var base = opt.base || 'empty';
+      var carriers = ['records-offline'];
+      /* strip 形态下内容照常显示 —— 这是唯一的双显豁免 */
+      if (form === 'strip') {
+        if (base === 'data') carriers.push('records-scroll');
+        else if (base === 'empty') carriers.push('records-empty');
+      }
+      showOnlyCarriers(carriers);
+      offBox.classList.toggle('is-strip', form === 'strip');
+      offBox.classList.toggle('is-panel', form === 'panel');
+      /* 副文案**按形态取**（fix2 / F1）：panel 那一支底下是空的，
+       * 说"先给你看这台设备上的记录"就是假话。仍是同一个块、同一张文案表，
+       * 只是取值多了一档 —— 不是两块两套文案。 */
+      setStateText(offBox, ot.title, (form === 'panel' && ot.subPanel) ? ot.subPanel : ot.sub);
+      return;
+    }
+
+    if (name === 'empty') {
+      var et = text.empty || {};
+      showOnlyCarriers(['records-empty']);
+      setStateText($('#records-empty'), et.title, et.sub);
+      return;
+    }
+
+    showOnlyCarriers(['records-scroll']);
+  }
+
+  /* 离线用哪个形态：有内容 → 横条；没内容 → 看基础态是不是"空"。
+   * · hasData → strip：内容照常显示，这是全站唯一的双显豁免。
+   * · base=empty → strip：确实一条都没有（未登录语境，或账号档案已到手且 0 局），
+   *   空态该露出来。
+   * · base=loading / fail → panel：**我们还不知道**账号有没有数据
+   *   （「本机 0 局 + 登录中 + 离线」就是这一支），此时露出空态等于替玩家下结论，
+   *   而那张 0 分插画会读成"你这号没打过"。 */
+  function offlineForm(hasData, base) {
+    if (hasData) return 'strip';
+    if (base === 'empty') return 'strip';
+    return 'panel';
+  }
+
+  function failErrKey(avail) {
+    if (!avail) return 'err.data.no_storage';
+    return cloudRecordsErrKey || 'err.net.timeout';
+  }
+
   function recordsPid() {
     if (typeof AuthStore !== 'undefined' && AuthStore.playerId) return AuthStore.playerId() || '';
     return '';
@@ -251,6 +498,9 @@
 
   function loadCloudRecords(force) {
     if (!cloudRecordsReady()) return;
+    /* 离线时**不发**注定失败的请求（build-states v1 R3）。8 秒空等对玩家是纯损失，
+     * 而且"等完再报超时"会把离线误说成"服务器没应声" —— 原因说错，玩家就会去找错的东西。 */
+    if (isOfflineNow()) return;
     if (!force && cloudRecordsOk && Date.now() - cloudRecordsAt < CLOUD_RECORDS_TTL) return;
     var seq = ++cloudRecordsSeq;
     var req = AuthStore.myRecords();
@@ -258,30 +508,61 @@
     req.then(function (res) {
       if (seq !== cloudRecordsSeq) return;               // 已经离开 / 又发了一次
       if (res && res.ok !== false) {
-        cloudRecords = res.profile || null;
-        cloudRecordsOk = true;
-        cloudRecordsPid = recordsPid();     // 记下这份数据属于谁
-        cloudRecordsErr = '';
-        cloudRecordsAt = Date.now();
+        /* 200 但缺必需字段（totalNet / games 是 undefined）= 服务端契约变了的信号。
+         * 这一条最该上报，但**不挡玩家**：页面按本机数据继续，说明只落在页脚那一行。 */
+        if (RS && RS.profileLooksValid && !RS.profileLooksValid(res.profile || null)) {
+          cloudRecordsErrKey = 'err.data.malformed';
+          cloudRecordsErr = errText('err.data.malformed').sub;
+          reportErr('err.data.malformed');
+        } else {
+          cloudRecords = res.profile || null;
+          cloudRecordsOk = true;
+          cloudRecordsPid = recordsPid();     // 记下这份数据属于谁
+          cloudRecordsErr = '';
+          cloudRecordsErrKey = '';
+          cloudStatus = 0;
+          cloudRecordsAt = Date.now();
+        }
       } else {
         /* 只记原因、不弹 toast：战绩页降级到本机数据仍然可用，
-         * 弹个「网络异常」只会让用户以为自己的数据没了。 */
+         * 弹个「网络异常」只会让用户以为自己的数据没了。
+         *
+         * ★ 但"不打扰"不等于"不上报"，而且口径分两种：
+         *   · 本机有数据 → 玩家什么都没感觉到 → 静默类（err.silent.profile）
+         *   · 本机也没数据 → 这一屏已经坏了 → 按可重试/不可恢复报（带 status）
+         * 分开的理由：前者我们要的是"这个周末有多少人是降级看的"，
+         * 后者要的是"哪一档错误在真的挡人"。混成一档，两个问题都答不了。 */
+        cloudRecordsErrKey = errKeyOfResult(res);
         cloudRecordsErr = (res && res.error) || '账号数据读取失败';
+        cloudStatus = Number(res && res.status) || 0;
+        reportErr(recordsHasData ? 'err.silent.profile' : cloudRecordsErrKey,
+          { status: res && res.status });
       }
       if (state.screen === 'records') renderRecords();
     }).catch(function () {
       if (seq !== cloudRecordsSeq) return;
+      cloudRecordsErrKey = 'err.net.timeout';
       cloudRecordsErr = '网络不太好';
+      cloudStatus = 0;
+      reportErr(recordsHasData ? 'err.silent.profile' : 'err.net.timeout');
       if (state.screen === 'records') renderRecords();
     });
   }
 
   function renderRecords() {
     var useCloud = cloudRecordsValid();
+    var online = !isOfflineNow();
     /* 该用云端但还没回来的那一小会儿：显示加载态，别先闪一屏本机旧数据。
-     * （本机旧数据在换了账号的场景下正是错误信息来源。） */
-    var loading = !useCloud && !cloudRecordsErr && cloudRecordsReady();
-    var avail = (typeof Records !== 'undefined') && Records.available();
+     * （本机旧数据在换了账号的场景下正是错误信息来源。）
+     * ★ 离线时一律**不算加载**：加载依赖网络，断网时说「加载中」是骗人 ——
+     * 玩家此刻该做的是连网，而不是在一个注定超时的转圈前面等 8 秒。
+     *
+     * 但 `loading` 恒为 false 会让"本机 0 局"看起来像"确实没有"，所以另留一个
+     * `wouldLoad`（= 假如有网，这一屏会不会在加载）。离线时算横条形态用的是它：
+     * 「本机没有」推不出「你账号没有」，没问过的不能替玩家下结论（fix1 / M4 反向）。 */
+    var wouldLoad = !useCloud && !cloudRecordsErr && cloudRecordsReady();
+    var loading = online && wouldLoad;
+    var avail = recordsAvailable();
     var pid = recordsPid();
     /* 登录中：只看本账号的本机记录（这是「换号串数据」的修法）。
      * 未登录：没有账号可比，全部本机记录都给他看，否则老数据在界面上彻底消失。 */
@@ -301,49 +582,44 @@
     /* 只打过人机局的人也应该看到自己那几行 —— 否则「我明明打过」和
      * 「还没有战绩」两句话会同时成立，用户只会以为数据丢了。 */
     var hasData = st.games > 0 || rows.length > 0;
+    recordsHasData = hasData;
 
-    $('#records-scroll').classList.toggle('hidden', !hasData);
-    $('#records-data').classList.toggle('hidden', !hasData);
-    $('#records-empty').classList.toggle('hidden', hasData);
-    $('#records-foot').classList.toggle('hidden', !hasData); // 空态不显示「清除记录」与说明
+    /* 显隐**不在这里**：全部收到 setRecordsState() 一处（build-states v1 §3.4）。
+     * 以前这四行 toggle 散在这里，加第四个态那天必定漏掉一处，
+     * 而漏掉一处的表现就是两个态同屏叠着。 */
+    if (loading) { if (!loadingSince) loadingSince = Date.now(); } else { loadingSince = 0; }
 
     /* 标题栏右上角的成就数字（v109）。
      *
-     * 只有云端档案到了才有准确值；本机模式 / 未登录 / 还没拉回来时显示 0/N ——
-     * **不显示「—」也不隐藏按钮**：成就入口在空态（一场没打）时恰恰最该看见，
-     * 藏起来等于告诉新玩家「这里没东西」。
-     * 总数取自 achievements.js 的目录长度，不在这个文件里写 26。 */
+     * 只有云端档案到了才有准确值；本机模式 / 未登录 / 加载中 / 离线 / 失败这些
+     * 状态下一律写「—/N」，**不写 0/N**（fix1 / M3）。
+     * 0 是一个结论（"一个都没解锁"），而那些状态下我们并没有结论 ——
+     * 用未知冒充零正是设计 §①-d 明令禁止的那件事，也是空态那张"0 分卡"的同一类错
+     * （QA §3 反例③：数字真写了，只是它是假的）。
+     * 分母照写（目录长度是确定值），形状不变 → 切态时不跳版；
+     * 入口也不隐藏：空态（一场没打）时恰恰最该看见它。
+     * 总数取自 achievements.js 的目录长度，不在这个文件里写死数字。 */
     var achNum = $('#ach-entry-num');
     if (achNum) {
       var total = (typeof window !== 'undefined' && window.Ach && window.Ach.TOTAL) || 26;
-      var unlocked = (useCloud && cloudRecords && Number(cloudRecords.achCount)) || 0;
-      achNum.textContent = unlocked + '/' + total;
+      /* 有云端档案才算"拿到了确定值"；0 也是确定值，不许被 || 吞掉 */
+      var cnt = (useCloud && cloudRecords && typeof cloudRecords.achCount !== 'undefined')
+        ? cloudRecords.achCount : null;
+      achNum.textContent = (RS && RS.achLabel) ? RS.achLabel(cnt, total)
+        : (cnt === null ? '—' : Number(cnt)) + '/' + total;
     }
 
-    // 页脚数据来源：只在「不是账号数据」的时候说清这一屏是什么，正常态不解释实现细节
-    var src = $('#records-source');
-    if (src) {
-      src.textContent = useCloud ? '已保存到账号 · 换设备也在'
-        : (cloudRecordsErr && cloudRecordsReady() ? '账号数据暂时读不到，先显示这台设备上的记录'
-          : '只在这台设备上，换设备会丢');
-    }
+    /* 页脚数据来源 +（失败降级时）行内那个小出口 */
+    renderSourceLine(useCloud, hasData);
 
     if (!hasData) {
-      // 变体 B-2（隐私模式）：布局与按钮不变，只换文案（spec §6）
-      var title = '还没有战绩，去开一局吧';
-      var sub = '';
-      if (loading) {
-        title = '正在读取战绩…';
-      } else if (!avail && !useCloud) {
-        title = '当前浏览器无法保存战绩';
-        sub = '换个浏览器或关掉无痕模式再试';
-      } else if (useCloud) {
-        sub = '打完一局自动记下，换设备也在';
-      } else {
-        sub = '打完一局自动记下';
-      }
-      $('#records-empty-title').textContent = title;
-      $('#records-empty-sub').textContent = sub;
+      /* 空态 / 加载态 / 失败态 / 离线态 —— 一个纯函数决定是哪一态（recordsState.js），
+       * 这里只负责"按结果落 DOM"。250ms 门槛与 1s 慢文案都在 setRecordsState 里。
+       *
+       * ★ 变体 B-2（隐私模式「当前浏览器无法保存战绩」）已经从空态搬走：
+       *   "这台设备存不了"不是"你还没打过"，用 0 分的插画去说"存不了"是在讲错的画面。
+       *   它现在是失败 · 不可恢复类（err.data.no_storage），有自己的标题与单按钮。 */
+      applyRecordsState(useCloud, hasData, avail, loading, online, wouldLoad);
       return;
     }
 
@@ -391,6 +667,85 @@
     renderRecordRows(rows);
     /* 数据进来之后左栏高度才定，渐隐要在这时再对一次账（见 syncSumcolFade）。 */
     syncSumcolFade();
+    /* 有内容的这一支也要走切态：离线 + 有数据时是"内容 + is-strip 横条"，
+     * 失败降级时是"内容 + 页脚小出口"——两者都不许整页空掉。 */
+    applyRecordsState(useCloud, hasData, avail, loading, online, wouldLoad);
+  }
+
+  /* ---------------------------- 切态的最后一厘米 ----------------------------
+   * 纯函数只回答"是哪个态"，这里回答"落成什么样"。分出来是因为它有 5 个分支、
+   * 每个分支的形态差异都值得单独一行注释，塞进 renderRecords() 会把它埋掉。 */
+  function applyRecordsState(useCloud, hasData, avail, loading, online, wouldLoad) {
+    var name = stateOf({
+      online: online, cloudErr: cloudRecordsErr, cloudLoading: loading,
+      hasData: hasData, avail: avail
+    });
+
+    if (name === 'offline') {
+      /* 离线是**非互斥**项：有内容就只加一条横条（内容照常显示），
+       * 没内容且本机代表不了你时才独占。这里的 base 是"假设有网时是哪一态"，
+       * 用来决定横条下面该露出什么。
+       *
+       * ★ base 的 cloudLoading 必须传 `wouldLoad`（假如有网会不会在加载），
+       *   不能传 `loading`（离线时恒为 false）。传错了会得出"有网也是空"，
+       *   于是「本机 0 局 + 登录中 + 离线」被当成"账号确实 0 局" → 露出空态那张
+       *   0 分插画。真相是我们**没问过**账号，只能说"不知道"（fix1 / M4 反向）。 */
+      var base = stateOf({
+        online: true, cloudErr: cloudRecordsErr, cloudLoading: wouldLoad,
+        hasData: hasData, avail: avail
+      });
+      setRecordsState('offline', { form: offlineForm(hasData, base), base: base });
+      return;
+    }
+    if (name === 'fail') {
+      /* 失败态只有两种落法：独占屏（本机也没数据）或页脚降级（已在 renderSourceLine 里）。
+       * 走到这里的一定是前者 —— 后者 recordsStateOf 返回的是 data。 */
+      setRecordsState('fail', { errKey: failErrKey(avail), status: cloudStatus });
+      return;
+    }
+    if (name === 'loading') { setRecordsState('loading'); return; }
+    if (name === 'empty') { setRecordsState('empty'); return; }
+    setRecordsState('data');
+  }
+
+  /* 页脚那一行：数据来源 + 失败降级时的行内出口。
+   *
+   * 为什么降级不占满屏：本机还有数据时，玩家的战绩**好好的在那儿**，
+   * 用一整屏的"失败"把它盖住，等于因为一个附加数据的缺失而没收了主内容。 */
+  function renderSourceLine(useCloud, hasData) {
+    var src = $('#records-source');
+    /* ★ 离线时**不给**这个出口（fix1 / M1）。
+     * 「再读一次」在离线时是一个注定失败的动作：`loadCloudRecords()` 第一行就
+     * return，点了什么都不会发生。留着它等于邀请玩家去点一个空按钮 ——
+     * QA S9 的原话是"不该发注定失败的请求、也不该邀请玩家点它"。
+     * 离线时真正的出路是横条里那个「重新载入」（恢复网络后才动作）。 */
+    var onlineNow = !isOfflineNow();
+    var degraded = onlineNow && !!cloudRecordsErr && hasData && recordsAvailable();
+    if (src) {
+      /* 说话顺序：离线 > 格式不符 > 用云端 > 降级 > 本机。
+       *
+       * 离线排第一，因为它换的不是措辞而是**原因**：「账号数据暂时读不到」在
+       * 离线语境下是结果误报 —— 不是"读不到"，是**根本没发**（fix1 / M2）。
+       * 也不能沿用横条那句「先把这台设备上的记录给你看」：同一屏同一句话说两遍，
+       * 玩家会以为漏了什么。所以这一屏的页脚只说"这一份存在哪儿"。 */
+      var text;
+      if (!onlineNow) text = '只在这台设备上，换设备会丢';
+      else if (cloudRecordsErrKey === 'err.data.malformed') text = errText('err.data.malformed').sub;
+      else if (useCloud) text = '已保存到账号 · 换设备也在';
+      else if (cloudRecordsErr && cloudRecordsReady()) text = '账号数据暂时读不到，先显示这台设备上的记录';
+      else text = '只在这台设备上，换设备会丢';
+      src.textContent = text;
+    }
+    var retry = $('#records-source-retry');
+    if (!retry) return;
+    var act = degraded ? (errText(cloudRecordsErrKey).actions || [])[0] : null;
+    /* malformed 没有动作（页面按本机数据继续）—— 那就连按钮也不给，只留一句话 */
+    retry.classList.toggle('hidden', !degraded || !act);
+    if (!act) { retry.disabled = false; retry.classList.remove('is-busy'); return; }
+    retry.textContent = act.label;
+    retry.setAttribute('data-act', act.act);
+    retry.disabled = false;
+    retry.classList.remove('is-busy');
   }
 
   /* 横屏战绩页左栏（.rp-sumcol）是独立滚动容器，底部 26 设计像素的渐隐表示「下面还有」。
@@ -1138,10 +1493,34 @@
     return parts.length ? '?' + parts.join('&') : '';
   }
 
+  /* 榜单失败：**独立块 #rank-fail**，不再改写 #rank-empty 的文案（build-states v1 §3.2/§3.4.7）。
+   *
+   * 以前失败只是把空态那句换成「排行榜加载失败，请检查网络后重试」，两个毛病：
+   *   ① 等于把"接口挂了"伪装成"还没人上榜"，以后排查会一直以为是真的没人玩；
+   *   ② 那句里带着禁用词「重试」，而它出现在一个**没有任何按钮**的提示里 ——
+   *      玩家被告知可以重试，但屏上没有能点的东西。
+   * 现在失败有自己的块、自己的按钮（刷新榜单），空态那句永远只说"还没人上榜"。 */
+  function showRankFail() {
+    var loading = $('#rank-loading');
+    var emptyEl = $('#rank-empty');
+    var failEl = $('#rank-fail');
+    var bodyEl = $('#rank-body');
+    var scrollEl = $('#rank-scroll');
+    var e = errText('err.net.rank');
+    if (loading) loading.classList.add('hidden');
+    if (emptyEl) emptyEl.classList.add('hidden');
+    if (bodyEl) bodyEl.classList.add('is-empty');
+    if (scrollEl) scrollEl.classList.add('is-empty');
+    if (!failEl) return;
+    setStateText(failEl, e.title, e.sub);
+    failEl.classList.remove('hidden');
+  }
+
   async function renderRank() {
     var loading = $('#rank-loading');
     var listEl = $('#rank-list');
     var emptyEl = $('#rank-empty');
+    var failEl = $('#rank-fail');
     /* 空态标记：榜单为空时提示语要**居中占满**列表区。
      * 不加这个类的话提示会贴着顶部走（.rank-tip 有 120px 上内边距），
      * 竖屏下面留出 70% 的空白 —— 全流程巡检在 6 个视口上量到同一处。 */
@@ -1150,6 +1529,16 @@
     if (loading) loading.classList.remove('hidden');
     if (listEl) { listEl.classList.add('hidden'); listEl.innerHTML = ''; }
     if (emptyEl) emptyEl.classList.add('hidden');
+    if (failEl) failEl.classList.add('hidden');
+
+    /* 离线时**不发**注定失败的请求（R3 / S9）。
+     * 榜单没有自己的离线块 —— 再建一个块就是第五个载体，而离线态的载体只许
+     * #records-offline 一个。这里用失败块说同一件事的上一句原因（"榜单没读上来"），
+     * 一个字的文案都不新造。 */
+    if (isOfflineNow()) {
+      showRankFail();
+      return;
+    }
 
     var rows = [];
     var mine = null;
@@ -1165,6 +1554,9 @@
       // 接口挂了不能伪装成「还没人上榜」，否则以后排查会一直以为是真的没人玩
       failed = true;
       rows = [];
+      /* 榜单是唯一"坏了会被人立刻看见"的接口，所以要上报（design §②-a）。
+       * source 写明是 renderRank —— 同一句"读不到"，出自两个接口时要分得开。 */
+      reportErr('err.net.rank', { status: (e && e.status) || 0 });
     }
 
     if (loading) loading.classList.add('hidden');
@@ -1172,11 +1564,11 @@
     /* 类同时挂到滚动容器上：.rp-scroll 是 flex 项、高度是确定的，
      * 只有它能给 #rank-body 一个「撑满并居中」的参照高度。 */
     if (scrollEl) scrollEl.classList.toggle('is-empty', !rows.length);
+    if (failed) { showRankFail(); return; }
     if (!rows.length) {
       if (emptyEl) {
-        emptyEl.textContent = failed
-          ? '排行榜加载失败，请检查网络后重试'
-          : '还没有人上榜，打完一局就会出现在这里';
+        /* 失败已经在上面分走了 —— 走到这里就一定是真的没人上榜 */
+        emptyEl.textContent = '还没有人上榜，打完一局就会出现在这里';
         emptyEl.classList.remove('hidden');
       }
       return;
@@ -1294,19 +1686,87 @@
         } catch (e) { /* 忽略 */ }
       })
       .catch(function () {
-        /* 失败就把冷却时间清掉，让它下次打开能重试。
-         * 不清的话一次网络抖动会让清理整整推迟 30 秒，而用户可能已经走开了。 */
+        /* 查不到就什么都不做 —— 但**必须留痕**（design §②-a 的 err.silent.purge）。
+         * 误删不可逆，所以"没查成"也必须可追溯；这一条是静默类的标准形状：
+         * 上报一条，页面一个像素都不动（玩家此刻正在看回放，不需要知道我们问了谁）。 */
         purgeInFlight = false;
         purgeAskedAt = 0;
+        reportErr('err.silent.purge');
       });
+  }
+
+  /* ---------------------------- 四态里的按钮（唯一派发口） ----------------------------
+   * data-act 是动作名，按钮上的字只是它的呈现。这样"哪个按钮干什么"只有一处答案：
+   * 加一档错误不用改 HTML，改文案不用碰逻辑。
+   * 反过来做（每个按钮一个 handler、文案写死在标签上）就会漂成
+   * "重新登录"那个按钮其实调的是 retry —— 而这种错在界面上看不出来。 */
+  function onErrAction(act) {
+    if (act === 'retry') { retryCloudRecords(); return; }
+    if (act === 'reload') { retryCloudRecords(); return; }   // 断网恢复后是同一个动作
+    if (act === 'refresh') { renderRank(); return; }
+    if (act === 'create') { onCreateFromRecords(); return; }
+    if (act === 'login') { state.screen = 'auth'; showScreen('screen-auth'); return; }
+    if (act === 'clear') { openClearModal(); return; }
+  }
+
+  /* 重试：必须**真的重发一次，且只发一次**（QA S6 用网络层计数验）。
+   * 这里不做防抖、不做退避 —— 那是"玩家点了没反应"的另一种写法。 */
+  function retryCloudRecords() {
+    if (isOfflineNow()) {
+      /* 离线时不发注定失败的请求（build-states v1 R3 / S9）。
+       * 这一下点击要上报：断网下点按钮的次数是"该不该做真离线模式"的唯一依据。 */
+      reportErr('err.net.offline');
+      flash('现在没有网络，恢复后再试');
+      renderRecords();
+      return;
+    }
+    cloudRecordsErr = '';
+    cloudRecordsErrKey = '';
+    cloudStatus = 0;
+    if (recordsHasData) {
+      /* 降级重试：**内容不藏起来**（玩家正在看它），只让页脚那个小按钮自己变忙。
+       * 把整屏换成"加载中"等于为了重读一份附加数据，没收他正在看的主内容。 */
+      var btn = $('#records-source-retry');
+      if (btn) { btn.disabled = true; btn.classList.add('is-busy'); btn.textContent = '读取中…'; }
+      loadCloudRecords(true);
+      return;
+    }
+    loadingSince = Date.now();     // 新的一轮：慢文案的 1 秒从这一刻重新算
+    renderRecords();               // → 立即落加载态（早过了 250ms 门槛，不再压着）
+    loadCloudRecords(true);
+  }
+
+  /* 断网 / 恢复由 game.js 的 online / offline 事件通知到这里（§3.5.2）。
+   * 恢复时**先收条再重取**：条子留着会让人以为还没连上；不重取就会一直停在
+   * 本机兜底那一份上，而玩家已经能连网了。两件事在同一个同步帧里做完，
+   * 远在"500ms 内"的验收线之内。 */
+  function onNetChange(online) {
+    if (state.screen !== 'records') return;
+    renderRecords();
+    if (!online) return;
+    cloudRecordsErr = '';
+    cloudRecordsErrKey = '';
+    cloudStatus = 0;
+    /* force：刚恢复网络时那份缓存多半已经旧了，TTL 在这里是负资产 */
+    loadCloudRecords(true);
   }
 
   function openRecords(from) {
     state.screen = 'records';
     state.recordsFrom = from === 'settle' ? 'settle' : 'home';
     cloudRecordsErr = '';          // 每次打开都允许重试一次云端（上一次的失败不代表现在也失败）
+    cloudRecordsErrKey = '';
+    cloudStatus = 0;
+    /* 250ms 门槛从**进门**算，不从某次渲染算：换了屏、再进来，就是新的一轮。 */
+    recordsEnterAt = Date.now();
+    loadingSince = 0;
+    clearStateTimers();
     renderRecords();
-    loadCloudRecords(false);       // 先出图再拉云端；回来时同一次渲染里替换
+    /* 先出图再拉云端；回来时同一次渲染里替换。
+     * ★ 离线时不发（R3/S9）：8 秒空等对玩家是纯损失，而且"等完再报超时"会把
+     *   离线说成"服务器没应声"—— 原因说错，玩家就会去修错的东西。
+     *   此时页面上是离线态，横条里那个「重新载入」才是主动重试的入口。 */
+    if (!isOfflineNow()) loadCloudRecords(false);
     /* 顺手问一句「我回放里的人还有几个在」。不发等待、不挡渲染：
      * 查到了会把本机副本里的名字抹掉并重画，查不到（离线）就什么都不做。 */
     purgeDeletedIdentities();
@@ -1317,6 +1777,11 @@
 
   function closeRecords() {
     state.screen = '';
+    /* 离开这一屏就把两个计时器清掉：门槛 timer 会在别的屏上把数据行显示出来，
+     * 慢文案 timer 会把"比平时慢一点"写进一个玩家已经离开的页面。 */
+    clearStateTimers();
+    recordsEnterAt = 0;
+    loadingSince = 0;
     if (state.recordsFrom === 'settle' && state.room) { render(); return; } // 从结束页来 → 回结束页
     showScreen('screen-home');                                            // 从首页来 → 回首页
   }
@@ -1340,6 +1805,9 @@
       : ((typeof Records !== 'undefined' && Records.available())
         ? Records.stats(pid || undefined) : EMPTY_STATS);
     if (!st.games) return;               // 无数据不弹（空态也看不到入口）
+    /* 确认时要写一句「将清除 N 场」，而这个 N 只能来自这里 ——
+     * 确认那一刻再去算一次，可能因为云端档案刷新而变，会让文案和刚才看到的不一致。 */
+    clearCount = st.games;
 
     var canCloud = cloudRecordsReady();
     var box = $('#records-clear-cloud');
@@ -1357,38 +1825,69 @@
     var pid = recordsPid();
     var box = $('#records-clear-cloud');
     var withCloud = cloudRecordsReady() && !!(box && box.checked);
-    var btn = $('#btn-records-clear-ok');
-    if (btn) btn.disabled = true;
+    var n = clearCount || 0;
+    closeClearModal();
 
-    function finish(ok, err) {
-      if (btn) btn.disabled = false;
-      if (!ok) { flash(err || '清除失败，请稍后再试'); return; }
-      /* 云端清成功才动本机：反过来的话，一旦云端那步失败，
-       * 用户会既丢了本机回放、又在排行榜上看见战绩，比原状更糟。 */
-      try { Records.clear(pid || undefined); } catch (e) { /* 清不掉也不影响云端结果 */ }
-      cloudRecords = null;
-      cloudRecordsOk = false;
-      cloudRecordsPid = '';
-      cloudRecordsAt = 0;
-      cloudRecordsErr = '';
-      closeClearModal();
-      renderRecords();                   // 同一次渲染内切空态，不做转场，避免闪一帧旧数据
-      flash(withCloud ? '战绩已清除 · 排行榜已同步' : '已清除这台设备上的记录');
-      if (withCloud) loadCloudRecords(true);   // 拿回清零后的档案（games=0 → 空态）
+    /* 真正清：这一段是 v135 的老逻辑，一字未改，只是被挪进了"5 秒后"才调用。 */
+    function doClear(reason) {
+      var btn = $('#btn-records-clear-ok');
+      if (btn) btn.disabled = true;
+
+      function finish(ok, err) {
+        if (btn) btn.disabled = false;
+        if (!ok) { flash(err || '清除失败，请稍后再试'); return; }
+        /* 云端清成功才动本机：反过来的话，一旦云端那步失败，
+         * 用户会既丢了本机回放、又在排行榜上看见战绩，比原状更糟。 */
+        try { Records.clear(pid || undefined); } catch (e) { /* 清不掉也不影响云端结果 */ }
+        cloudRecords = null;
+        cloudRecordsOk = false;
+        cloudRecordsPid = '';
+        cloudRecordsAt = 0;
+        cloudRecordsErr = '';
+        renderRecords();                   // 同一次渲染内切空态，不做转场，避免闪一帧旧数据
+        flash(withCloud ? '战绩已清除 · 排行榜已同步' : '已清除这台设备上的记录');
+        if (withCloud) loadCloudRecords(true);   // 拿回清零后的档案（games=0 → 空态）
+      }
+
+      if (!withCloud) { finish(true); return; }
+      var req = (typeof AuthStore !== 'undefined' && AuthStore.resetMyStats) ? AuthStore.resetMyStats() : null;
+      if (!req || typeof req.then !== 'function') { finish(false, '当前环境不支持清除账号战绩'); return; }
+      req.then(function (res) {
+        if (res && res.ok !== false) {
+          /* 不在这里写 cloudRecords* —— finish() 会清掉，紧接着 loadCloudRecords(true)
+           * 再取一次真正的清零后档案。多写一遍只会让人以为这份缓存被保留了。 */
+          finish(true);
+        } else {
+          finish(false, (res && res.error) || '清除失败，请稍后重试');
+        }
+      }).catch(function () { finish(false, '网络不太好，请稍后再试'); });
     }
 
-    if (!withCloud) { finish(true); return; }
-    var req = (typeof AuthStore !== 'undefined' && AuthStore.resetMyStats) ? AuthStore.resetMyStats() : null;
-    if (!req || typeof req.then !== 'function') { finish(false, '当前环境不支持清除账号战绩'); return; }
-    req.then(function (res) {
-      if (res && res.ok !== false) {
-        /* 不在这里写 cloudRecords* —— finish() 会清掉，紧接着 loadCloudRecords(true)
-         * 再取一次真正的清零后档案。多写一遍只会让人以为这份缓存被保留了。 */
-        finish(true);
-      } else {
-        finish(false, (res && res.error) || '清除失败，请稍后重试');
+    /* 没有撤销条 = 老行为：立刻清。宁可清掉也不能点了没反应。 */
+    if (!undoBar) { doClear('no-bar'); return; }
+
+    /* 延迟执行，而不是"先删再回滚"。
+     * 云端那一步没有逆操作（resetMyStats 清零之后没有任何接口写得回去），
+     * 所谓"撤销"只能恢复本机，排行榜上已经空了 —— 那种假撤销比不给更坏。
+     * 详情见 pwa/js/undoBar.js 顶部的注释。 */
+    undoBar.show({
+      msg: '将清除 ' + (n > 0 ? n + ' 场' : '全部') + '记录' + (withCloud ? '（含云端）' : '（仅本机）'),
+      action: '撤销',
+      seconds: 5,
+      onUndo: function () {
+        flash('已取消，记录还在');
+      },
+      onCommit: function (reason) {
+        /* 五种 reason 都走到这里，而且都要**真清**：
+         *   timeout     —— 正常到点
+         *   hidden      —— 页面转后台（iOS 上这可能就是最后一次 JS 执行机会）
+         *   navigate    —— 用户离开了战绩页
+         *   superseded  —— 又点了一次清除，旧的被新的顶掉（旧的也得结账）
+         *   no-dom      —— 条子渲染不出来（旧缓存），宁可立刻清也不能静默丢弃
+         * 唯一让"不清"的路径是用户点了撤销，那条根本不进 onCommit。 */
+        doClear(reason);
       }
-    }).catch(function () { finish(false, '网络不太好，请稍后再试'); });
+    });
   }
     return {
       END_REASON_TEXT: END_REASON_TEXT,
@@ -1410,6 +1909,14 @@
       cloudRows: cloudRows,
       loadCloudRecords: loadCloudRecords,
       renderRecords: renderRecords,
+      /* 四态（build-states v1）：唯一真源与唯一执行者，从外面也要够得着 ——
+       * game.js 的 online/offline 事件要走 onNetChange，四态里的按钮要走 onErrAction。 */
+      setRecordsState: setRecordsState,
+      applyRecordsState: applyRecordsState,
+      onErrAction: onErrAction,
+      retryCloudRecords: retryCloudRecords,
+      onNetChange: onNetChange,
+      showRankFail: showRankFail,
       syncSumcolFade: syncSumcolFade,
       profileSeq: profileSeq,
       playerNameOf: playerNameOf,

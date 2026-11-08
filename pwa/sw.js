@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v133';
+const CACHE_NAME = 'weile-liuxuanwu-v138';
 
 /* network-first 的超时上限。
  *
@@ -138,10 +138,15 @@ const PRECACHE = [
   '/js/cardView.js',
   '/js/modalKit.js',
   '/js/nextRoundHints.js',
+  '/js/undoBar.js',
   '/js/historyKit.js',
   '/js/accountView.js',
   '/js/settleView.js',
   '/js/seatSheetView.js',
+/* 四态的状态机（build-states v1）。**必须排在 recordsView 之前**：
+ * recordsView 在 create() 时就要拿到 LXW.recordsState，拿不到会退回两态兜底 ——
+ * 页面看着正常，四个态里丢了两个，只有断言能发现。 */
+  '/js/recordsState.js',
   '/js/recordsView.js',
   '/js/achievementsView.js',
   '/js/game.js',

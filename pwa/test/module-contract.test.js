@@ -99,7 +99,8 @@ const DEPS = ['errorReport.js', 'engine.js', 'card.js', 'config.js', 'emoji.js',
 
 /* 8 个被拆出来的模块。前两个 / 三个是立即执行（挂到 window.LXW），其余是工厂。 */
 const MODULES = ['gameUtils.js', 'modalKit.js', 'cardView.js', 'historyKit.js', 'nextRoundHints.js',
-  'accountView.js', 'settleView.js', 'seatSheetView.js', 'recordsView.js', 'achievementsView.js'];
+  'accountView.js', 'settleView.js', 'seatSheetView.js', 'recordsState.js', 'recordsView.js', 'achievementsView.js',
+  'undoBar.js'];
 
 /* game.js 里指向模块的命名空间变量名 → 模块键名。
  * 新增一个模块时这里加一行，忘了加的话下面的「每个 LXW 引用都被覆盖」断言会红。 */
@@ -111,9 +112,11 @@ const NAMESPACES = {
   Account: 'accountView',
   Settle: 'settleView',
   Seat: 'seatSheetView',
+  RS: 'recordsState',       // 战绩页四态（v137 build-states v1；对象，不是工厂）
   Records: 'recordsView',
   AV: 'achievementsView',   // v109 成就页（对象，不是工厂——见下面对 RESOLVED 的初始化）
   Hints: 'nextRoundHints',  // v126 原因码文案表（对象，不是工厂）
+  UndoBar: 'undoBar',       // v136 「5 秒内可以反悔」条（工厂，但只依赖 DOM，可以空参创建）
 };
 
 const host = makeHost();
@@ -138,12 +141,12 @@ console.log('\n[2] 工厂能创建，导出不是空对象');
 /* ★ 查契约必须查**创建出来的实例**，不是工厂函数本身：
  *   工厂是个函数，它身上本来就没有 HAND_CARD_W 之类的属性，
  *   拿它当命名空间查会把「接得上」全部判成「接不上」。 */
-const RESOLVED = { utils: host.LXW.utils, modalKit: host.LXW.modalKit, achievementsView: host.LXW.achievementsView, nextRoundHints: host.LXW.nextRoundHints };
+const RESOLVED = { utils: host.LXW.utils, modalKit: host.LXW.modalKit, achievementsView: host.LXW.achievementsView, nextRoundHints: host.LXW.nextRoundHints, recordsState: host.LXW.recordsState };
 {
   const deps = {
     cardView: { stageScale: () => 1, onHandCardTap: noop },
     historyKit: { state: {}, getMe: () => null, recordsPid: () => '', flash: noop },
-    accountView: {}, settleView: {}, seatSheetView: {}, recordsView: {},
+    accountView: {}, settleView: {}, seatSheetView: {}, recordsView: {}, undoBar: {},
   };
   Object.keys(deps).forEach((k) => {
     const fn = host.LXW[k];

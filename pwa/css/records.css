@@ -80,7 +80,7 @@
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: background 0.12s ease-out;
+  transition: background var(--dur-1) var(--ease-std);
 }
 .rp-back svg { width: 34px; height: 34px; display: block; }
 .rp-back:active { background: rgba(255, 255, 255, 0.10); } /* 导航键不做位移，避免整页在动的错觉 */
@@ -154,7 +154,7 @@
   display: flex;
   align-items: baseline;
   gap: 10px;
-  font-size: 88px;
+  font-size: var(--num-1);
   font-weight: 800;
   line-height: 0.98;
   letter-spacing: -1px;
@@ -163,7 +163,7 @@
 }
 .rp-sum.down .rp-sum-value { color: var(--down-green); }
 .rp-sum.flat .rp-sum-value { color: var(--gray-aux); }
-.rp-unit { font-size: 28px; font-weight: 700; opacity: 0.72; letter-spacing: 0; }
+.rp-unit { font-size: var(--num-u1); font-weight: 700; opacity: 0.72; letter-spacing: 0; }
 .rp-sum-meta {
   margin-top: 16px;
   display: flex;
@@ -175,7 +175,7 @@
 }
 .rp-meta-item { display: inline-flex; align-items: baseline; gap: 6px; }
 .rp-sum-meta b {
-  font-size: 32px;
+  font-size: var(--num-3);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   color: var(--warm-white);
@@ -215,7 +215,7 @@
 }
 .rp-gdot { width: 12px; height: 12px; border-radius: 50%; background: var(--rp-gc); }
 .rp-gnum {
-  font-size: 48px;
+  font-size: var(--num-2);
   font-weight: 800;
   line-height: 1.08;
   font-variant-numeric: tabular-nums;
@@ -256,7 +256,7 @@
   display: flex;
   align-items: baseline;
   gap: 4px;
-  font-size: 40px;
+  font-size: var(--num-3);
   font-weight: 800;
   line-height: 1.06;
   font-variant-numeric: tabular-nums;
@@ -264,7 +264,7 @@
 }
 .rp-best-v b { font-weight: 800; } /* 数字永远是 b，单位是小号 i，视觉重量分开 */
 .rp-best-v i {
-  font-size: 20px;
+  font-size: var(--num-u2);
   font-style: normal;
   font-weight: 600;
   opacity: 0.6;
@@ -366,7 +366,7 @@
   color: var(--warm-white);
   letter-spacing: 1px;
 }
-.rp-list-count { font-size: 24px; color: var(--gray-aux); font-variant-numeric: tabular-nums; }
+.rp-list-count { font-size: var(--num-4); color: var(--gray-aux); font-variant-numeric: tabular-nums; }
 
 /* ---------- 人机对局（含 AI 的场次不计入战绩与排行榜） ----------
  * 列表上方一行说明 + 行内徽标，「说明」和「被判定的行」用同一个形状，
@@ -438,7 +438,7 @@
   grid-row: 1 / span 2;
   justify-self: end;
   padding-left: 20px;
-  font-size: 40px;
+  font-size: var(--num-3);
   font-weight: 800;
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
@@ -524,7 +524,7 @@
   font-weight: 700;
   letter-spacing: 2px;
   cursor: pointer;
-  transition: transform 0.1s ease-out, background 0.15s ease-out;
+  transition: transform var(--dur-1) var(--ease-std), background var(--dur-2) var(--ease-std);
 }
 .rp-clear:active { transform: translateY(2px); background: rgba(255, 93, 93, 0.15); }
 
@@ -566,6 +566,132 @@
   font-size: 32px;
   letter-spacing: 2px;
 }
+
+/* ===== 四态（build-states v1）=====
+ *
+ * 只做几何，不发明组件：加载 / 失败 / 离线三块复用空态那套定位
+ * （`flex: 1 1 auto` + 居中），靠**形态**区分而不是靠插画 ——
+ * 零按钮 / 两按钮 / 左对齐横条。四张插画会把"这游戏在给你看图"这件事
+ * 稀释成背景噪音，而插画的语义是"安慰"，只有空态需要安慰。
+ *
+ * 切换用 .hidden（display:none）做原子切换（探针要能数"几块可见"，
+ * 用 opacity:0 藏起来的块在 checkVisibility() 眼里仍然是可见的，
+ * 那样断言就永远数不对），再给出现的那一块补一段 opacity 入场：
+ * 用位移会让四个块看起来在互相推开，而它们其实是同一位置的四种说法。
+ * 出现 --dur-3/--ease-emph、消失 --dur-2/--ease-std，不新增第四档时长。
+ */
+.rp-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 60px 150px;
+  text-align: center;              /* 离线是唯一例外 —— 见 .rp-state--offline */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  animation: rpStateIn var(--dur-3) var(--ease-emph) both;
+  transition: opacity var(--dur-2) var(--ease-std);
+}
+@keyframes rpStateIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 加载环：88 设计px ≈ 44 CSS px（本文件全部按 750 设计空间写，见文首）。
+ * 金色透明分档只用 rgba(245, 193, 92, α)，不引入新色相。 */
+.rp-state__ring {
+  width: 88px;
+  height: 88px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 6px solid rgba(245, 193, 92, 0.20);
+  border-top-color: var(--gold);
+  animation: rpSpin 900ms linear infinite;
+}
+@keyframes rpSpin { to { transform: rotate(360deg); } }
+
+/* 失败态的按钮组：竖排而不是横排 —— 320 宽下两个横排按钮会各剩 100px，
+ * 「再读一次」四个字就要断行。只用 .btn 的四个变体，不新建按钮样式。 */
+.rp-state__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 480px;
+  max-width: 100%;
+  margin: 54px 0 0;
+}
+.rp-state__actions .btn { width: 100%; max-width: 100%; }
+.rp-state__actions .btn + .btn { margin-top: 24px; }
+
+/* 离线态：同一个块、两种形态。
+ * 左对齐是**硬约束不是口味**："空 vs 离线"这两态插画都无、按钮都是 1 个，
+ * 唯一稳的差异就是对齐（design §①-b）。改回居中，它就退化成
+ * "只换了文案的第二个空态"。 */
+.rp-state--offline { text-align: left; align-items: flex-start; }
+.rp-state--offline .rp-state__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.rp-state--offline .rp-empty-title { margin: 0; }
+
+/* panel：满屏但仍左对齐（全站唯一一个不居中的满屏态） */
+.rp-state--offline.is-panel { padding: 0 60px 150px; }
+.rp-state--offline.is-panel .rp-empty-title { margin: 0 0 14px; }
+
+/* strip：贴在 #records-foot 上方的一条，**内容照常显示**。
+ * 这是全局唯一的双显豁免：离线时"这台设备上的记录"几乎永远可读，
+ * 做成满屏态等于把能看的内容藏起来，用"你没有网"这个原因去惩罚玩家。 */
+.rp-state--offline.is-strip {
+  flex: 0 0 auto;
+  /* align-self: stretch 决定它是**通栏一条**。只靠 .rp-state 的 width:100% 不够：
+   * 父容器 align-items:center 时，横屏下它会缩成内容宽度（实测 800×360 只剩一半），
+   * 看起来像一块漂浮的补丁，而不是"这一条属于页脚"。 */
+  align-self: stretch;
+  /* 横屏（.wide-stage）里 `.screen > *:not(.home-inner)` 把直接子元素限宽到 750 设计px，
+   * 横条被那一刀截成半条、还贴到了左边（实测 800×360 只剩一半宽）。
+   * 它是"页脚上沿的一条"，不是一张卡，所以按 id 提权放开限宽，与页脚同宽。 */
+  max-width: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 20px var(--screen-pad-x);
+  background: rgba(245, 193, 92, 0.08);
+  box-shadow: var(--elev-1);
+  animation: rpStateIn var(--dur-2) var(--ease-std) both;
+}
+/* 横条里字号收到页脚那一档（28/24）：它是补充说明，不该比屏里的一级标题还响。
+ * 这两个数字就是 .rp-note 现用的两档，不新增字号阶梯。 */
+.rp-state--offline.is-strip .rp-empty-title { margin: 0; font-size: 28px; }
+.rp-state--offline.is-strip .rp-empty-sub { margin: 6px 0 0; font-size: 24px; }
+.rp-state--offline.is-strip .btn { flex: 0 0 auto; margin-left: 24px; }
+/* 上面那句 max-width: none 需要提权才压得住 `.wide-stage .screen > *:not(.home-inner)`
+ * （它有三个类，而 .rp-state--offline.is-strip 只有两个）。用 id 提权而不是 !important：
+ * !important 会连"将来某天真要限宽"的余地一起焊死。 */
+#screen-records .rp-state--offline.is-strip { max-width: none; }
+
+/* 失败降级时页脚那一行右侧的小出口。
+ * 尺寸走 .btn-mini（min-height: max(72px, --tap-min)），所以点得中；
+ * 不新起一行，页脚高度基本不变。
+ * ★ nowrap：不加的话「再读一次」在 390 宽下会断成「再读一 / 次」——
+ *   一个四个字的按钮断行，读起来像排版坏了，而它恰好出现在"出问题的时候"。 */
+.rp-src-retry { margin-left: 12px; white-space: nowrap; }
+
+/* 榜单失败：复用 .rank-tip 的排版，只加 is-fail 修饰类改颜色，
+ * 不新建 tip 样式（design §⑤-a）。 */
+.rank-tip.is-fail { color: var(--warm-white); }
+.rank-tip.is-fail .rank-tip-sub {
+  display: block;
+  margin: 12px 0 0;
+  font-size: 22px;
+  color: var(--gray-aux);
+}
+.rank-tip.is-fail .btn { margin: 28px auto 0; display: flex; width: 360px; max-width: 100%; }
+
+/* 短屏压缩：和空态同一档（compact 段在文件后面，这里只声明本段需要的三条） */
+.compact-v .rp-state { padding: 0 60px 96px; }
+.compact-v .rp-state--offline.is-strip { padding: 16px var(--screen-pad-x); }
 
 /* ---------- 清除确认弹窗（复用 .modal / .modal-box 暖白体系） ---------- */
 .rp-clear-box {
@@ -644,9 +770,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.12s, box-shadow 0.12s;
+  transition: background var(--dur-1) var(--ease-std), box-shadow var(--dur-1) var(--ease-std);
 }
-.rp-opt-box svg { width: 24px; height: 24px; opacity: 0; transition: opacity 0.12s; }
+.rp-opt-box svg { width: 24px; height: 24px; opacity: 0; transition: opacity var(--dur-1) var(--ease-std); }
 .rp-opt input:checked + .rp-opt-box { background: var(--gold); box-shadow: inset 0 0 0 2px var(--gold-deep); }
 .rp-opt input:checked + .rp-opt-box svg { opacity: 1; }
 .rp-opt input:focus-visible + .rp-opt-box { box-shadow: inset 0 0 0 2px var(--gold-deep), 0 0 0 4px rgba(245, 193, 92, 0.45); }
@@ -675,11 +801,11 @@
    命中 320×568 / 360×640 竖屏与横屏 1440；不改 DOM，只覆盖数值
    ============================================================================ */
 .compact-v .rp-sum { padding: 22px 28px 20px; }
-.compact-v .rp-sum-value { font-size: 76px; }
+.compact-v .rp-sum-value { font-size: var(--num-1); }
 .compact-v .rp-sum-meta { font-size: 24px; }
-.compact-v .rp-sum-meta b { font-size: 28px; }
+.compact-v .rp-sum-meta b { font-size: var(--num-4); }
 .compact-v .rp-gcard { padding: 16px 8px 14px; }
-.compact-v .rp-gnum { font-size: 40px; }
+.compact-v .rp-gnum { font-size: var(--num-3); }
 .compact-v .rp-glabel { font-size: 20px; }
 .compact-v .rp-trend-title { font-size: 24px; }
 .compact-v .rp-legend { font-size: 20px; }
@@ -691,7 +817,6 @@
 }
 .compact-v .rp-row { padding: 14px 20px; }
 .compact-v .rp-time { font-size: 28px; }
-.compact-v .rp-net { font-size: 32px; }
 .compact-v .rp-sub { font-size: 20px; }
 .compact-v .rp-ai-note { font-size: 20px; }
 .compact-v .rp-list-head { margin: 24px 0 10px; }
@@ -722,7 +847,7 @@
 .rank-row .rank-no {
   flex: 0 0 52px;
   text-align: center;
-  font-size: 28px;
+  font-size: var(--num-4);
   font-weight: 800;
   color: rgba(255, 247, 232, 0.55);
   font-variant-numeric: tabular-nums;
@@ -748,7 +873,7 @@
 .rank-row .rank-net {
   flex: 0 0 96px;
   text-align: right;
-  font-size: 40px;
+  font-size: var(--num-3);
   font-weight: 800;
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
@@ -807,7 +932,7 @@
 
 .compact-v .rank-row { padding: 16px 20px; gap: 14px; }
 .compact-v .rank-row .rank-name { font-size: 28px; }
-.compact-v .rank-row .rank-net { font-size: 32px; flex-basis: 84px; }
+.compact-v .rank-row .rank-net { flex-basis: 84px; }
 
 /* ---------- 前三名「看台」 ----------
  * 目的不是花哨，是让人一眼分清「这是榜单的前三名」和「这是第 7 名那一行」。
@@ -831,15 +956,11 @@
 }
 #rank-list .rank-row:nth-child(-n+3) .rank-no {
   flex-basis: 60px;
-  font-size: 32px;
 }
 #rank-list .rank-row:nth-child(1) .rank-name {
   font-size: 32px;
   font-weight: 700;
   color: #FFE7B8;
-}
-#rank-list .rank-row:nth-child(-n+3) .rank-net {
-  font-size: 40px;
 }
 /* 前三名和后面之间画一条分界，避免"第 4 名看起来也像看台" */
 #rank-list .rank-row:nth-child(3) {
@@ -883,14 +1004,17 @@
 }
 /* 数字用金色：这是整页唯一的「大数」，其余都是列表 */
 .ach-count b {
-  font-size: 84px;
+  /* 84 是"再缩一点"的第四个值：390 上被 max-width:420 压到 68、横屏压到 62，
+   * 于是**主力机型比大屏的字还小** —— 而舞台已经按屏宽 scale 过一遍了，
+   * 再缩一次就是双重缩小。两条媒体覆盖已删，这里统一走 T1。 */
+  font-size: var(--num-1);
   font-weight: 800;
   color: var(--gold);
   letter-spacing: -2px;
   text-shadow: 0 4px 18px rgba(245, 193, 92, 0.28);
 }
 .ach-count span {
-  font-size: 30px;
+  font-size: var(--num-u1);
   color: var(--gray-aux);
 }
 .ach-head-side { text-align: right; padding-bottom: 6px; }
@@ -965,11 +1089,14 @@
 .ach-type-list li.is-zero .ach-type-num b { color: var(--gray-aux); }
 .ach-type-num {
   flex: 0 0 auto;
-  font-size: 24px;
+  /* 这个 span 自己的文字就是那个「次」（数字在里面的 <b> 上，走 T2 密排 32）。
+   * 单位永远比它配的数字小两档 —— 32 配 20，不是 24（24 是给「名次 / x/N」这种
+   * 独立辅助数字用的，不是单位）。 */
+  font-size: var(--num-u2);
   color: var(--gray-aux);
 }
 .ach-type-num b {
-  font-size: 34px;
+  font-size: var(--num-3);
   font-weight: 700;
   color: var(--gold);
   margin-right: 4px;
@@ -1095,7 +1222,7 @@
   background: linear-gradient(90deg, var(--gold-deep), var(--gold));
 }
 .ach-progress {
-  font-size: 20px;
+  font-size: var(--num-u2);
   color: var(--gray-aux);
   font-variant-numeric: tabular-nums;
   margin-top: auto;      /* 贴底：不画条的那几张卡也要和画条的底边对齐 */
@@ -1106,13 +1233,11 @@
    降到 2 列。断点用设计宽度而不是设备宽度 —— 这一层是按 750 设计稿缩放的。 */
 @media (max-width: 420px) {
   .ach-grid { grid-template-columns: repeat(2, 1fr); }
-  .ach-count b { font-size: 68px; }
 }
 
 /* 横屏：宽了但矮，卡片改成 4 列压高度 */
 @media (orientation: landscape) {
   .ach-grid { grid-template-columns: repeat(4, 1fr); }
-  .ach-count b { font-size: 62px; }
   .ach-head { padding-bottom: 20px; }
 }
 

@@ -2,8 +2,9 @@
 /**
  * 探针台账校验 / 生成器（v129）
  *
- * 解决的问题：仓库里有 37 个真浏览器探针，**只有 1 个在 CI 里**（probe-ui-flow）。
- * 剩下 36 个的处境是：不知道谁还在绿、不知道谁已经过期、也不知道谁是一次性的。
+ * 解决的问题：仓库里有一批真浏览器探针，起初**只有 1 个在 CI 里**（probe-ui-flow），
+ * 其余的处境是：不知道谁还在绿、不知道谁已经过期、也不知道谁是一次性的。
+ * 条数会随台账增长，**不在注释里写死** —— 当前值一律以 scripts/probes.json 为准。
  * BACKLOG N18 就是这么一条挂了很久的债 ——「其余探针的断言是否还反映当前规则，未逐条核」。
  *
  * 这一轮不再指望「把所有探针都塞进 CI」（理由见 docs/PROBES.md），而是先把
@@ -172,7 +173,7 @@ function render(manifest, extra) {
   P();
   P('## 为什么不是「全部塞进 CI」');
   P();
-  P('37 个探针里只有 1 个在 CI 里。这个差距看着像欠账，但直接补齐是错的：');
+  P(total + ' 个探针里只有 ' + counts.ci + ' 个在 CI 里。这个差距看着像欠账，但直接补齐是错的：');
   P();
   P('| 理由 | 具体数字 |');
   P('|---|---|');
@@ -201,7 +202,7 @@ function render(manifest, extra) {
   P('| 档 | 条数 | 谁保证它绿 |');
   P('|---|---:|---|');
   P('| `ci` | ' + counts.ci + ' | 每次 push 的 GitHub Actions |');
-  P('| `manual` | ' + counts.manual + ' | 发版前 `node scripts/run-probes.js`（全量 37 条实测 931 秒） |');
+  P('| `manual` | ' + counts.manual + ' | 发版前 `node scripts/run-probes.js`（全量串行；耗时随条数变，不在此写死） |');
   P('| `oneshot` | ' + counts.oneshot + ' | 没人保证。留着是为了能复现当时的现场 |');
   P();
   P('## 全部探针');

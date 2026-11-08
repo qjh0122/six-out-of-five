@@ -176,8 +176,16 @@ ok(/if \(pat\.timer && pat\.step !== i\) stopPatternFx\(\);/.test(step),
   '上一幕的还没播完就点了「下一组」时先收幕（否则光环盖在新一幕的账上）');
 ok(/#result-modal\.is-hero \.modal-card \{ opacity: 0; \}/.test(CSS),
   '特写期间结算卡是 opacity:0（不是 display:none —— 位置和点击区域要留着）');
-ok(/#result-modal \.modal-card \{ transition: opacity 0\.22s/.test(CSS),
-  '卡回来是 0.22s 淡入（和幕布淡出同一时长，交叉过渡）');
+/* v135：时长收进 --dur-* 之后，这条断言不能再看字面量 0.22s（那是旧的实现细节），
+ * 要看的是**语义**：结算卡淡入与幕布淡出必须是同一档，否则交叉过渡会有一帧空档。 */
+ok(/#result-modal \.modal-card \{ transition: opacity var\(--dur-\d\)/.test(CSS)
+  && /\.pat-fx\.is-out \{ animation: patFadeOut var\(--dur-\d\)/.test(CSS),
+  '卡回来与幕布淡出用同一个时长令牌（交叉过渡，不许一边 200ms 一边 320ms）');
+{
+  const a = /#result-modal \.modal-card \{ transition: opacity var\((--dur-\d)\)/.exec(CSS);
+  const b = /\.pat-fx\.is-out \{ animation: patFadeOut var\((--dur-\d)\)/.exec(CSS);
+  ok(a && b && a[1] === b[1], '两个令牌是同一档（' + (a ? a[1] : '?') + ' vs ' + (b ? b[1] : '?') + '）');
+}
 ok(/if \(m\) m\.classList\.add\('is-hero'\)/.test(GAME) && /if \(m\) m\.classList\.remove\('is-hero'\)/.test(GAME),
   'is-hero 有加有撤（漏掉一处就是一张永远空着的弹窗）');
 

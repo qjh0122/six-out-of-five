@@ -303,6 +303,10 @@
 
   /* ---------------------------- 屏幕切换 ---------------------------- */
   function showScreen(id) {
+    /* 离开战绩页时，把「待撤销的清除」结账（v136）。
+     * 用户已经换到别的屏，说明他接受了这次清除 —— 不结账的话条子会在
+     * 别的页面上继续倒数，5 秒后**在背后**把数据删掉，没有任何人看得见。 */
+    if (id !== 'screen-records' && UndoBar) UndoBar.flush('navigate');
     /* 首屏防闪的 .no-session 到这里就该退场了：从此以后页面可见性完全由 .hidden 决定。
      * 不摘掉的话，它那两条 !important 会把 showScreen 的所有切换都压住
      * （表现：永远停在登录页或永远停在首页，怎么点都不动）。幂等，多调几次无所谓。 */
@@ -323,6 +327,11 @@
     }
     /* 离开对局页就把分牌倒计时的 interval 停掉，别让它每秒白跑一次 */
     if (id !== 'screen-game') stopSplitTick();
+    /* 横幅的显隐跟着"现在露的是哪一屏"走（fix2 / F2）：
+     * 战绩页上让位给 #records-offline，其余屏按在线状态正常显示。
+     * ★ 必须在这里重算一次：只在 offline/online 事件里算的话，从战绩页退回首页时
+     *   横幅会一直藏着 —— 那就把"让位"写成了"删掉"。 */
+    setNetBanner(!isOffline());
   }
 
   var toastTimer = null;
@@ -3098,11 +3107,19 @@
    *
    * 这也是本轮唯一一处「不能就地创建」的模块，原因写在 .tmp-deps.js 的依赖分析里：
    * 依赖项有定义行号，只要有一项在当前行之后且是 var，就得往后挪。 */
+  /* 「5 秒内可以反悔」条（v136）。创建得比 Records 早 —— recordsView 要用它。
+   * 三个屏幕上的破坏性动作都走这里，所以它必须是单例：同一时刻只允许一个待撤销动作。 */
+  var UndoBar = (window.LXW && window.LXW.undoBar) ? window.LXW.undoBar() : null;
+
   var Records = window.LXW.recordsView({
     state: state,
     avatarInner: avatarInner, findPlayer: findPlayer,
     render: render, getMe: getMe, flash: flash, showScreen: showScreen,
     packHistory: packHistory, sameGameOnly: sameGameOnly,
+    undoBar: UndoBar,
+    /* 四态的状态机（build-states v1）。由这里注入而不是让 recordsView 自己去摸
+     * window.LXW：注入项一眼能看出「它依赖谁」，而全局摸法漏了也看不出来。 */
+    recordsState: window.LXW.recordsState,
     showModalEl: showModalEl, hideModalEl: hideModalEl,
     isShown: isShown, pushModalState: pushModalState
   });
@@ -3127,6 +3144,8 @@
   var replayOwners = Records.replayOwners, purgeDeletedIdentities = Records.purgeDeletedIdentities, openRecords = Records.openRecords;
   var closeRecords = Records.closeRecords, onCreateFromRecords = Records.onCreateFromRecords, openClearModal = Records.openClearModal;
   var closeClearModal = Records.closeClearModal, onClearConfirmed = Records.onClearConfirmed;
+  /* 四态（build-states v1）：按钮派发与断网/恢复通知 */
+  var onErrAction = Records.onErrAction, onNetChange = Records.onNetChange;
 
   /* ---------------------------- 声音开关 ---------------------------- */
   /* 首页角落和房间页各有一个图标，共用这一段逻辑；状态由 Sfx 存在 localStorage。
@@ -3161,10 +3180,25 @@
    *   2. 点击后按钮当场变"创建中…"并禁用，同一个按钮在跑完之前不再响应
    *   3. 网络明明断着就别发请求，直接告诉玩家，省掉 8 秒超时等待
    */
+  /* 战绩页此刻可见？（F2 的让位条件）
+   * 判的是"屏真的露着"，不是 state.screen —— 冷启动时 state.screen 有值而屏还 hidden
+   * 的那一小段里，横幅该亮就得亮。 */
+  function recordsScreenVisible() {
+    var scr = $('#screen-records');
+    return !!scr && !scr.classList.contains('hidden');
+  }
+
   function setNetBanner(online) {
     var b = $('#net-banner');
     if (!b) return;
-    b.classList.toggle('hidden', online !== false);
+    /* ★ 战绩页上让位（fix2 / F2）。
+     * 那一屏自己已经有 #records-offline 在说同一件事，横幅是**第三个声音**：
+     * 设计 §⑤-a 的分工是"横幅说事实 + 会自愈，横条说这屏给你什么"，两句话不许重复。
+     * 而且横幅是 position:fixed 的全站层（z 320，top = safe + 8px），它压在这屏的
+     * .rp-nav 上时正好盖住「我的战绩」四个字 —— 截图里能看见字从横幅两侧露出来。
+     * ★ 修法是**让位**，不是给这一屏加 padding：800×360 的横屏最小档本来就挤，
+     *   加 padding 会挤掉内容（S17 会红）。其余屏行为不变。 */
+    b.classList.toggle('hidden', online !== false || recordsScreenVisible());
   }
 
   function isOffline() {
@@ -4540,6 +4574,9 @@
     $('#btn-dissolve-reject').addEventListener('click', function () { onVoteDissolve(false); });
     $('#btn-dissolve-cancel').addEventListener('click', function () { onCancelDissolve(); });
     $('#btn-leave').addEventListener('click', onLeave);
+    /* 「撤销」只做一件事：让 UndoBar 把待办作废。真正的动作在 5 秒计时器里，
+     * 这里不需要知道撤的是什么 —— 知道得越多，越容易和撤销语义分叉。 */
+    if ($('#undo-act')) $('#undo-act').addEventListener('click', function () { if (UndoBar) UndoBar.undo(); });
     $('#btn-submit').addEventListener('click', onSubmit);
     /* 结算弹窗这颗按钮 = 「下一组」/「继续游戏」。它**不是关闭**：
      * 一幕一组时，点掉当前这一幕应该看到下一幕，而不是把整轮结算都关掉。
@@ -4925,6 +4962,21 @@
     $('#btn-records-home').addEventListener('click', function () { openRecords('home'); });
     $('#btn-rank-home').addEventListener('click', openRank);
     $('#btn-rank-back').addEventListener('click', closeRank);
+    /* 四态里的按钮（build-states v1）。
+     * 一律走 data-act 派发，不在这里写 if/else：文案与动作的对应关系只有
+     * recordsState.js 里那张表一处，加一档错误不用回来改这里。
+     * 委托到 #screen-records / #screen-rank 上而不是逐个 id 绑：
+     * #records-source-retry 是运行时才显隐的，逐个绑容易漏掉它。 */
+    $('#screen-records').addEventListener('click', function (e) {
+      var hit = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!hit) return;
+      onErrAction(hit.getAttribute('data-act'));
+    });
+    $('#screen-rank').addEventListener('click', function (e) {
+      var hit = e.target && e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!hit) return;
+      onErrAction(hit.getAttribute('data-act'));
+    });
     /* 成就页：入口在战绩页标题栏右上角（v109 把首页那个第 5 格合并过来了）。
      * 传 'screen-records' 作为返回目标 —— 玩家是从战绩页点进来的，返回要回那儿。 */
     $('#btn-ach-from-records').addEventListener('click', function () {
@@ -5168,13 +5220,26 @@
     document.addEventListener('mousedown', function () { Sfx.unlock(); });
 
     // 断网/恢复：顶部提示条跟着切（WS 自己的重连提示在 init 里另挂）
+    /* ★ 除了顶部横幅，还要通知战绩页（build-states v1 §3.5.2）。
+     * 横幅说"事实 + 会自愈"，战绩页的离线态说"这屏现在给你什么 + 一个按钮"——
+     * 两句话不许重复，但两件事都必须发生：只切横幅的话，停在战绩页的玩家
+     * 会一直看着"加载中"或"读取失败"，而那两句话此刻都是错的。
+     *
+     * ★ 断网这里**不再 flash**（fix1 / S1）：顶部横幅是全站层的、会一直挂着，
+     * 页面横条说的是"这屏给你什么" —— 再加一条 1.8 秒自隐的 toast 就是第三个人
+     * 在重复同一件事。设计 §⑤-a 给横幅与横条的分工是两条，不是三条。
+     * 玩家主动点被拦下时仍然 flash + 音效（blockedOffline），那是"我按了它"的回执，
+     * 不属于这一条 —— 两者的区别是：一个是通知，一个是回执。 */
     window.addEventListener('offline', function () {
       setNetBanner(false);
-      flash('网络已断开');
+      if (onNetChange) onNetChange(false);
     });
     window.addEventListener('online', function () {
       setNetBanner(true);
       flash('网络已恢复');
+      /* 恢复时它会先收条再重取一次数据，两件事在同一个同步帧里做完 ——
+       * 验收线是"500ms 内"，同步做等于 0ms。 */
+      if (onNetChange) onNetChange(true);
     });
 
     window.addEventListener('resize', resize);

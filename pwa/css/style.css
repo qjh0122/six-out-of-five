@@ -37,6 +37,61 @@
   --disable-fg: #8A93A3;
   /* 内容区左右 padding（设计px）。game.js 的手牌布局常量 SCREEN_PAD_X 与此保持一致，永不漂移 */
   --screen-pad-x: 40px;
+  /* ── 光：一条规则，三个高度（v134）─────────────────────────────
+   * 以前有 71 种 box-shadow，等于 71 个光源 —— 玩家读不出「谁在谁上面」。
+   * 现在只留三档，按「离桌面多高」分，不按「哪个屏」分：
+   *   elev-1 内容卡（离桌面一点点） / elev-2 弹窗（浮起来） / elev-3 浮层（最上）
+   * 每档都是「一层柔影 + 一层贴地影」——真实光下近处投影更薄更实。
+   * 装饰性的「实体按钮下沿」（0 2px 0 色）与状态发光（0 0 Npx 金）不在此列，
+   * 它们是造型，不是高度，硬塞进 elevation 会把按钮压平。 */
+  --elev-1: 0 2px 6px rgba(0, 0, 0, 0.18);
+  --elev-2: 0 8px 22px rgba(0, 0, 0, 0.34), 0 2px 6px rgba(0, 0, 0, 0.18);
+  --elev-3: 0 22px 56px rgba(0, 0, 0, 0.48), 0 4px 12px rgba(0, 0, 0, 0.24);
+  /* 纸的边缘：有了 1px 发丝 + 顶部内高光，材质才有厚度；只靠阴影是贴图。 */
+  --edge-hairline: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  --edge-top: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  /* 纸卡 = 低影 + 发丝边（组合 token，避免每次手写两段） */
+  --elev-paper: var(--elev-1), var(--edge-hairline);
+  /* 暖白纸的边：白描边在浅底上看不见，得用极淡墨色收边 + 顶部高光，厚度才出来。 */
+  --edge-paper: inset 0 0 0 1px rgba(58, 29, 0, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  /* ── 动：三档时长 + 两条缓动（v135）─────────────────────────────
+   * 以前 transition 用了 9 种时长（0.1/0.12/0.15/0.16/0.22/0.25/0.3/0.4/0.42s）、5 种缓动。
+   * 那不是一个节律，是九个节拍器 —— 同一件事「点了有反应」，在五个按钮上用五种速度。
+   * 只按「这次变化有多重」分三档，不按「哪个组件」分：
+   *   dur-1 微反馈（按压 / 高亮 / 描边变色）—— 必须比手指抬起快
+   *   dur-2 状态切换（开关 / 展开 / 行变色）
+   *   dur-3 入场（卡片浮起 / 行滑入 / 弹窗出现）
+   * 表演类（特写那段 0.9~1.15s 的连招）**不在这个标尺上**：它是「演给你看」，
+   * 不是「回应你的操作」，压到 320ms 会把特写压没。它在 animation 的白名单里单独记。 */
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  /* 缓动只有两条，且都是原本就在用的曲线 —— 统一的不是曲线本身，是「什么时候用哪条」：
+   *   std  快出慢停，给所有「回应你」的过渡（绝大多数情况）
+   *   emph 末端带一点回弹，只给「东西出现」用（弹窗、徽章、新牌）           */
+  --ease-std: cubic-bezier(0, 0, 0.2, 1);
+  --ease-emph: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── 数：四档显示字号 + 两档单位（v138）──────────────────────────
+   * 以前同一个「数」在四个地方用四个字号：净值 40（榜单）/ 40（战绩列表）/
+   * 32（结算行）/ 34（成就）—— 它们不是设计出来的四档，是一个一个长出来的
+   * （40 是"比 48 小一点"，34 是"比 32 大一点"）。
+   *
+   * 判据不是「一屏最多几个字号」（那条和"T2 有双密度"自相矛盾），而是
+   * **封闭**：数值元素只能落在这四个之一，单位只能落在这两个之一。
+   * 想加档先改文档，不许在 CSS 里现编 —— 现编正是这六个值的来历。
+   *   num-1 一屏一个的结论（累计净胜 / 已解锁 N）
+   *   num-2 并列关键值，独占一行宽（胜/负/平、冠军净胜）
+   *   num-3 列表行内、同排 ≥3（榜单净值、结算行净胜、纪录条）
+   *   num-4 辅助（名次、x/N、场次）
+   * 单位必须严格小于它配的数字，并降一档颜色（见 §③-b）：
+   *   u1 配 num-1，u2 配 num-2/3；num-4 不配单位（"12 场"读起来是一个词）。 */
+  --num-1: 88px;
+  --num-2: 48px;
+  --num-3: 32px;
+  --num-4: 24px;
+  --num-u1: 28px;
+  --num-u2: 20px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -104,6 +159,10 @@ html, body {
  * 横屏当时改成了 calc(100% / --ls-scale)，竖版漏了。现在两边一致：
  * JS 只负责算「比例」这一个数字，铺满由 CSS 保证 —— 容器一变，下一帧自动贴合。 */
 #stage {
+  /* 数字用等宽：结算/回放里一列分数，宽度不等会左右跳。 */
+  font-variant-numeric: tabular-nums;
+  /* 毡面的一层极淡中心光：没有它，整块背景是均色，浮起的卡片会显得"贴"上去。 */
+  background-image: radial-gradient(120% 90% at 50% 16%, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0) 62%);
   position: absolute;
   top: 0;
   left: 0;
@@ -266,7 +325,7 @@ html.no-session #screen-auth { display: flex !important; }
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--elev-2);
   pointer-events: none;
 }
 
@@ -340,7 +399,7 @@ html.no-session #screen-auth { display: flex !important; }
   background-clip: text;
   color: transparent;
   -webkit-text-stroke: 2px #7A4B00;
-  text-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+  text-shadow: var(--elev-2);
 }
 .subtitle { margin: 0 0 28px; font-size: 24px; color: var(--gray-aux); }
 .logo {
@@ -348,7 +407,7 @@ html.no-session #screen-auth { display: flex !important; }
   height: 160px;
   margin-top: 40px;
   border-radius: 32px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 0 4px var(--gold);
+  box-shadow: var(--elev-2), 0 0 0 4px var(--gold);
 }
 .logo svg { display: block; width: 100%; height: 100%; border-radius: 28px; }
 
@@ -366,7 +425,7 @@ html.no-session #screen-auth { display: flex !important; }
   -webkit-text-stroke: 0;
   color: var(--warm-ink);
   text-shadow: none;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--elev-1);
 }
 
 /* ---------- 按钮体系（凸起 + 按压凹陷，全场统一） ---------- */
@@ -389,7 +448,7 @@ html.no-session #screen-auth { display: flex !important; }
   cursor: pointer;
   position: relative;
   box-shadow: 0 8px 0 rgba(0, 0, 0, 0.25);
-  transition: transform 0.1s cubic-bezier(0, 0, 0.2, 1), box-shadow 0.1s cubic-bezier(0, 0, 0.2, 1), filter 0.1s;
+  transition: transform var(--dur-1) var(--ease-std), box-shadow var(--dur-1) var(--ease-std), filter var(--dur-1) var(--ease-std);
 }
 .btn:active {
   transform: translateY(6px);
@@ -534,7 +593,7 @@ input {
   color: #fff;
   outline: none;
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.25);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--dur-2) var(--ease-std), box-shadow var(--dur-2) var(--ease-std);
 }
 input:focus {
   border-color: var(--gold);
@@ -581,7 +640,7 @@ input:focus {
   font-family: inherit;
   color: var(--entry-tint);
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+  transition: background var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std), transform var(--dur-1) var(--ease-std);
 }
 .entry-link svg { width: 34px; height: 34px; flex: 0 0 34px; }
 .entry-label {
@@ -657,7 +716,7 @@ input:focus {
   color: var(--gray-aux);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: opacity 0.15s, color 0.15s;
+  transition: opacity var(--dur-2) var(--ease-std), color var(--dur-2) var(--ease-std);
 }
 .audio-toggle svg { width: 44px; height: 44px; }
 .audio-toggle:active { opacity: 0.7; }
@@ -730,7 +789,7 @@ input:focus {
   font-size: 38px;
   line-height: 1;
   cursor: pointer;
-  transition: background 0.12s, transform 0.12s;
+  transition: background var(--dur-1) var(--ease-std), transform var(--dur-1) var(--ease-std);
 }
 .player-edit:active {
   background: rgba(245, 193, 92, 0.30);
@@ -1538,7 +1597,7 @@ input:focus {
 .slot-type.is-big {
   color: #1b1105;
   background: var(--fx-color, var(--gold));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45), 0 3px 10px -2px rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45), var(--elev-1);
 }
 /* 脉冲只放一次：is-new 由 JS 在「牌型从无到有 / 变了」那一帧挂上，
  * 下一帧内容没变 → innerHTML 不重写 → 类名也不会再出现，动画不会循环。 */
@@ -1691,21 +1750,21 @@ input:focus {
   border-radius: 14px;
   box-shadow: 0 0 0 4px var(--gold), 0 0 26px rgba(245, 193, 92, 0.5);
   transform: translateY(-8px) scale(1.05);
-  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+  transition: transform var(--dur-1) var(--ease-std), box-shadow var(--dur-1) var(--ease-std);
 }
 
 /* ---------- 牌 ---------- */
 .card {
   display: block;
   border-radius: 16px;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--elev-2);
   cursor: pointer;
   background: #fff;
 }
 .card-wrap {
   position: absolute;
   top: 20px;
-  transition: transform 0.15s cubic-bezier(0, 0, 0.2, 1);
+  transition: transform var(--dur-2) var(--ease-std);
   will-change: transform;
   /* 手指按在牌上拖动时不要触发页面滚动/双击缩放，拖拽才跟手。
      手牌区本身不可滚动，所以这里关掉 touch-action 不会损失任何手势。 */
@@ -1723,14 +1782,14 @@ input:focus {
   z-index: 200;
   pointer-events: none;
   border-radius: 16px;
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--elev-3), var(--edge-paper);
   transform: translate(-50%, -50%) scale(1.06);
   opacity: 0.96;
 }
 body.is-dragging { cursor: grabbing; }
 /* 大王牌自带微光 */
 .card.joker-glow {
-  box-shadow: 0 0 16px rgba(245, 193, 92, 0.5), 0 6px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 16px rgba(245, 193, 92, 0.5), var(--elev-2);
 }
 
 @keyframes dealInOdd {
@@ -1793,7 +1852,7 @@ body.is-dragging { cursor: grabbing; }
   font-weight: 700;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+  transition: transform var(--dur-1) var(--ease-std), border-color var(--dur-1) var(--ease-std), background var(--dur-1) var(--ease-std);
 }
 .gchip-count {
   font-size: 20px;
@@ -1943,7 +2002,7 @@ body.is-dragging { cursor: grabbing; }
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--elev-3);
   position: relative;
   animation: modalIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -1973,7 +2032,9 @@ body.is-dragging { cursor: grabbing; }
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  /* 高度走标尺，厚度走纸边：只有投影是「贴图」，加一圈极淡墨色描边 + 顶部高光，
+     纸才立得起来（暖白底上白描边看不见，必须用深色收边）。 */
+  box-shadow: var(--elev-3), var(--edge-paper);
 }
 /* 顶部 8px 金渐变封边：与 .modal-card 统一质感（v2 §4.6-Z4） */
 .modal-box::before {
@@ -2261,7 +2322,7 @@ body.is-dragging { cursor: grabbing; }
   color: var(--warm-ink);
   font-size: 40px;
   font-weight: 800;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--elev-1);
 }
 .result-group {
   background: rgba(0, 0, 0, 0.04);
@@ -2298,7 +2359,7 @@ body.is-dragging { cursor: grabbing; }
   font-weight: 800;
   line-height: 1.5;
   white-space: nowrap;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--elev-1);
 }
 .result-head-winner { margin-left: auto; color: #6b7280; font-size: 20px; }
 .result-head-winner b { color: var(--cta-red); }
@@ -2313,12 +2374,12 @@ body.is-dragging { cursor: grabbing; }
   margin-bottom: 6px;
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(0, 0, 0, 0.06);
-  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform var(--dur-3) var(--ease-emph), box-shadow var(--dur-3) var(--ease-emph);
   transform-origin: center;
 }
 .result-row:last-child { margin-bottom: 0; }
 .result-cards { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
-.result-cards .mini-card { border-radius: 8px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25); }
+.result-cards .mini-card { border-radius: 8px; box-shadow: var(--elev-1); }
 .result-cards.compact .mini-card + .mini-card { margin-left: -30px; }
 .result-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .result-row .rn {
@@ -2381,7 +2442,7 @@ body.is-dragging { cursor: grabbing; }
   font-weight: 800;
   padding: 5px 16px;
   border-radius: 999px;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--elev-1);
   animation: bannerIn 0.6s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes bannerIn {
@@ -2692,7 +2753,7 @@ body.is-dragging { cursor: grabbing; }
   cursor: pointer;
 }
 .pat-fx.hidden { display: none; }
-.pat-fx.is-out { animation: patFadeOut 0.22s ease-out both; }
+.pat-fx.is-out { animation: patFadeOut var(--dur-2) ease-out both; }
 @keyframes patFadeOut { to { opacity: 0; } }
 
 /* 幕布：中间透、四周沉。不做成纯黑遮罩 —— 桌子还在后面，特写是「打在桌上的一束光」，
@@ -2906,7 +2967,7 @@ body.is-dragging { cursor: grabbing; }
  *   幕布得 0.95+，那桌子就彻底看不见了，「打在桌上的一束光」也就不存在了。
  * 所以：卡还在 DOM 里（布局、可点击区域、读屏文本一样不少），只是 opacity 0，
  * 幕布收起时用 0.22s 淡回来 —— 和幕布的淡出是同一个 0.22s，正好交叉。 */
-#result-modal .modal-card { transition: opacity 0.22s ease-out; }
+#result-modal .modal-card { transition: opacity var(--dur-2) var(--ease-std); }
 #result-modal.is-hero .modal-card { opacity: 0; }
 
 /* 分数飞字：涨红（加分）、跌绿（减分） */
@@ -3126,20 +3187,20 @@ body.is-dragging { cursor: grabbing; }
 }
 /* 桌面端（有 hover 的设备）才给悬停反馈：触摸屏上 :hover 会粘住不散。 */
 @media (hover: hover) {
-  .settle-row { transition: border-color 0.15s, background-color 0.15s; }
+  .settle-row { transition: border-color var(--dur-2) var(--ease-std), background-color var(--dur-2) var(--ease-std); }
   .settle-row:hover { border-color: rgba(255, 255, 255, 0.26); }
   .settle-row:hover .settle-go { color: rgba(255, 255, 255, 0.55); }
 }
 .settle-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 28px; }
-.settle-score { text-align: right; font-variant-numeric: tabular-nums; font-size: 28px; color: var(--gold); }
-.settle-net { min-width: 0; text-align: right; font-variant-numeric: tabular-nums; font-size: 32px; font-weight: 800; }
+.settle-score { text-align: right; font-variant-numeric: tabular-nums; font-size: var(--num-4); color: var(--gold); }
+.settle-net { min-width: 0; text-align: right; font-variant-numeric: tabular-nums; font-size: var(--num-3); font-weight: 800; }
 /* 净胜三态，和战绩卡（.rp-net）/ 排行榜（.rank-net）/ 玩家档案（.pf-net）同一套。
  * 原来是 .pos / .neg 两态，把 0 归进 pos —— 净胜 0 显示成红色，看着像赢了；
  * 而同一个「净胜 0」在排行榜是中性灰。同一份数据两套说法，只能有一个对。 */
 .settle-net.up { color: var(--up-red); }
 .settle-net.down { color: var(--down-green); }
 .settle-net.flat { color: var(--gray-aux); }
-.settle-row.champion .settle-net { font-size: 48px; }
+.settle-row.champion .settle-net { font-size: var(--num-2); }
 /* 复盘行：「理论最高 +6 · 你拿了 +2」。
  * 挂在「我」那张卡内部，所以用 grid-column 跨满整行，并在上方画一条虚线分隔 ——
  * 它是这一行分数的注脚，不是第五列。 */
@@ -3394,6 +3455,57 @@ body.is-dragging { cursor: grabbing; }
   box-shadow: inset 0 0 0 2px rgba(255, 93, 93, 0.55), 0 12px 30px rgba(0, 0, 0, 0.42);
 }
 
+/* ── 「5 秒内可以反悔」条（v136）────────────────────────────────────
+ * 和 #toast 分成两个元素，不合并。理由不是洁癖：
+ *   · toast 是**通知**，`pointer-events: none` 让点穿透（否则会挡住它下面的按钮）；
+ *   · 这条是**控件**，必须能点。
+ * 混成一个元素就得在同一个盒子里同时表达"这里能点、那里不能点"，
+ * 迟早会有人为了让提示点得穿过去而把撤销按钮也一起关掉。
+ *
+ * 位置在 toast 上方两档（300 vs 180）：两者可能同屏出现——
+ * 清除战绩后紧接着闪一条"战绩已清除"，压在一起就都读不清了。 */
+.undo-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 300px;
+  z-index: 82;                       /* 高于 toast(80)，低于弹窗 */
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  max-width: 670px;
+  padding: 16px 20px 16px 30px;
+  border-radius: 24px;
+  background: rgba(12, 30, 24, 0.96);
+  color: var(--warm-white);
+  box-shadow: var(--elev-2), inset 0 0 0 1px rgba(245, 193, 92, 0.28);
+  font-size: 24px;
+  line-height: 1.35;
+  text-align: left;
+  /* 容器不吃点击，只有按钮吃 —— 与 .toast 同一条道理，避免压住底下的内容。 */
+  pointer-events: none;
+}
+.undo-bar.hidden { display: none; }
+.undo-msg { flex: 1 1 auto; min-width: 0; }
+.undo-act {
+  flex: 0 0 auto;
+  /* 88 设计px ≈ 390 屏下 46 CSS px：撤销是要在 5 秒内点中的按钮，
+   * 比普通按钮更该够大 —— 点不中就等于没有这个功能。 */
+  min-height: 88px;
+  padding: 0 34px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--gold);
+  color: var(--warm-ink);
+  font-size: 26px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform var(--dur-1) var(--ease-std), filter var(--dur-1) var(--ease-std);
+}
+.undo-act:active { transform: scale(0.96); filter: brightness(0.94); }
+
 /* ============================================================
    全机型适配（竖屏 320~440 / 横屏 / 桌面）
    ============================================================ */
@@ -3506,8 +3618,14 @@ body.is-dragging { cursor: grabbing; }
 .wide-stage .result-row .rn { font-size: 28px; }
 .wide-stage .result-row .rt { font-size: 24px; }
 .wide-stage .result-head { font-size: 28px; }
-.wide-stage .settle-name, .wide-stage .settle-score, .wide-stage .settle-net { font-size: 28px; }
-.wide-stage .settle-row.champion .settle-net { font-size: 40px; }
+/* 横屏把名字压到 28 是为了省行宽（名字是文字，不进阶梯）；
+ * 但**净胜和得分是数字**，压到 28 就等于把数字挤到「单位」那一档 ——
+ * 之前这里是三个选择器一起 28，数字跟着遭殃。现在分开写。 */
+.wide-stage .settle-name { font-size: 28px; }
+.wide-stage .settle-score { font-size: var(--num-4); }
+.wide-stage .settle-net { font-size: var(--num-3); }
+/* 横屏冠军不许比竖屏小（竖屏 48 / 横屏 40 是同一个冠军在更宽的屏上变小） */
+.wide-stage .settle-row.champion .settle-net { font-size: var(--num-2); }
 
 /* 横屏：房间页/结束页竖排按钮改成两列排布 */
 .wide-stage .room-actions {
@@ -3797,14 +3915,20 @@ body.is-dragging { cursor: grabbing; }
  * 的「累计净胜」会把三卡和纪录条一起顶出首屏，而它仍然是这一页最大的字。 */
 #stage.ls #rp-sum { padding: 12px 24px 10px; }
 #stage.ls #rp-sum .rp-sum-label { font-size: max(24px, var(--ls-fs-floor)); }
-#stage.ls #rp-sum .rp-sum-value { margin-top: 2px; font-size: 56px; }
+/* 横屏把 T1 从 88 收到 48（原来 56 是"再收一点"的梯子外值）。这一屏最大的仍是它，只是换了一档。 */
+#stage.ls #rp-sum .rp-sum-value { margin-top: 2px; font-size: var(--num-2); }
+/* 场次/胜率这一行：文字跟着横屏下限走，但**数字和它的单位必须各自落档** ——
+ * 原来是"数字 24 / 单位 25"，单位比数字还大（实测抓到的真缺陷）。 */
 #stage.ls #rp-sum .rp-sum-meta { margin-top: 2px; font-size: max(24px, var(--ls-fs-floor)); }
+#stage.ls #rp-sum .rp-sum-meta b { font-size: var(--num-3); }
+#stage.ls #rp-sum .rp-meta-item { font-size: var(--num-u2); }
 #stage.ls .rp-grid { margin-top: 10px; }
 #stage.ls .rp-gcard { padding: 12px 6px 10px; }
-#stage.ls .rp-gnum { font-size: 32px; }
+#stage.ls .rp-gnum { font-size: var(--num-3); }
 #stage.ls #rp-bests { margin-top: 0; }
 #stage.ls .rp-best { padding: 12px 6px 12px; }
-#stage.ls .rp-best-v { font-size: 40px; }
+#stage.ls .rp-best-v i { font-size: var(--num-u2); }
+#stage.ls .rp-best-v { font-size: var(--num-3); }
 /* 横屏的中段（三卡 + 纪录条） ------------------------------------------------
  * 雷达撤掉之后这里只剩一列，612 的栏宽下三卡各 193 设计像素、纪录格各 204，
  * 与竖屏（207 / 218）几乎一样，因此不再需要「为横屏另配一套列宽」。
@@ -4287,7 +4411,7 @@ body.is-dragging { cursor: grabbing; }
   height: 124px;
   border-radius: 24px;
   overflow: hidden;
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45), 0 0 0 3px rgba(245, 193, 92, 0.55);
+  box-shadow: var(--elev-2), 0 0 0 3px rgba(245, 193, 92, 0.55);
 }
 .auth-logo svg { display: block; width: 100%; height: 100%; }
 
@@ -4318,8 +4442,9 @@ body.is-dragging { cursor: grabbing; }
     linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 42%),
     linear-gradient(165deg, rgba(30, 90, 68, 0.72) 0%, rgba(8, 26, 21, 0.86) 100%);
   border: 1px solid rgba(245, 193, 92, 0.18);
+  /* 登录卡是页面里唯一「浮起来的整块」，用最高档高度；内高光仍按深色底单独给（0.08，不套 --edge-top 的 0.45） */
   box-shadow:
-    0 26px 60px rgba(0, 0, 0, 0.48),
+    var(--elev-3),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
@@ -4345,7 +4470,7 @@ body.is-dragging { cursor: grabbing; }
   letter-spacing: 2px;
   color: var(--gray-aux);
   cursor: pointer;
-  transition: background 0.16s, color 0.16s, border-color 0.16s;
+  transition: background var(--dur-2) var(--ease-std), color var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std);
 }
 .auth-tab.is-on {
   background: rgba(245, 193, 92, 0.16);
@@ -4532,7 +4657,7 @@ body.is-dragging { cursor: grabbing; }
   /* 选中态用外圈金环，不给格子加边框 —— 加边框会让 48 格里被选中的那格
    * 比旁边小一圈，看起来像「它不一样大」而不是「它被选中了」 */
   box-shadow: 0 0 0 1px rgba(26, 29, 35, 0.10);
-  transition: transform 0.1s, box-shadow 0.12s;
+  transition: transform var(--dur-1) var(--ease-std), box-shadow var(--dur-1) var(--ease-std);
 }
 .av-cell:active { transform: scale(0.92); }
 .av-cell.is-on {
@@ -4685,7 +4810,7 @@ a:focus-visible {
   height: 8px;
   border-radius: 8px;
   background: rgba(22, 56, 47, 0.11);
-  transition: background 0.25s ease;
+  transition: background var(--dur-2) var(--ease-std);
 }
 .guide-dots i.done {
   background: rgba(22, 56, 47, 0.3);
@@ -4788,7 +4913,7 @@ a:focus-visible {
   font-size: 32px;
   font-weight: 700;
   line-height: 1;
-  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--elev-2);
 }
 .gcard b { font-weight: 700; }
 .gcard i {
@@ -4804,7 +4929,7 @@ a:focus-visible {
   height: 172px;
   font-size: 48px;
   /* 单张牌撑不满绿区时，靠一圈暖光把它「抬」起来，而不是硬放大到失真 */
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42), 0 0 0 6px rgba(245, 193, 92, 0.12),
+  box-shadow: var(--elev-2), 0 0 0 6px rgba(245, 193, 92, 0.12),
               0 0 48px rgba(245, 193, 92, 0.22);
 }
 .gcard-joker i {
@@ -4993,7 +5118,7 @@ a:focus-visible {
 }
 /* 冠军净胜在结算页是 48px 的巨字（那是揭晓时刻的视觉高潮）。
  * 弹窗里没有揭晓，只有回看，降到 40px 既保住冠军的分量，又不至于把列吃掉。 */
-.prev-result-body .settle-row.champion .settle-net { font-size: 40px; }
+.prev-result-body .settle-row.champion .settle-net { font-size: var(--num-2); }
 
 /* ★ 浅底重上色：这一块是「整屏字看不清」的修复，别当成配色偏好删掉。
  *
@@ -5436,7 +5561,7 @@ a:focus-visible {
   font-family: inherit;
   color: var(--warm-ink);
   cursor: pointer;
-  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  transition: transform var(--dur-1) var(--ease-std), background var(--dur-1) var(--ease-std), border-color var(--dur-1) var(--ease-std);
 }
 .hand-limit-chip .hl-num { font-size: 42px; font-weight: 700; line-height: 1; }
 .hand-limit-chip .hl-unit { font-size: 20px; color: var(--text-muted); line-height: 1; }
@@ -5444,11 +5569,42 @@ a:focus-visible {
   border-color: var(--brand-green);
   background: var(--green-bright);
   color: #FFFFFF;
-  box-shadow: 0 6px 18px rgba(10, 107, 84, 0.28);
+  box-shadow: var(--elev-2);
 }
 .hand-limit-chip.is-on .hl-unit { color: rgba(255, 255, 255, 0.82); }
 .hand-limit-chip:active { transform: scale(0.97); }
 .hand-limit-chip:focus-visible {
   outline: 3px solid var(--gold-ink);
   outline-offset: 3px;
+}
+
+/* ── 全局焦点环（v135）───────────────────────────────────────────
+ * 桌面档（1280×720 / 728×348）真在用键盘，但焦点环此前是一份**手写白名单**：
+ * 11 条规则点了名的元素有环，没点名的（.audio-toggle / .player-edit / .tr-skip /
+ * .modal-x / .install-x / .install-main / .guide-skip / 整个 emoji.css）**一个都没有**。
+ * 白名单的问题不是漏了几个，是"以后新加的按钮默认没有" —— 所以改成反向：
+ * 先给所有可聚焦元素一条兜底环，个别元素要特殊样式再覆盖。
+ *
+ * 为什么不用 :where()：`:where()` 权重是 0，会让 `input { outline: none }`
+ * 这类单类/单元素规则反过来盖掉它 —— 兜底环被悄悄关掉，而且看起来"写了"。
+ * 这里用「元素 + 伪类」= 权重 (0,1,1)，压得住单类规则，又低于
+ * `.modal-box .btn:focus-visible` 那种两段选择器，特殊样式仍然优先。
+ *
+ * 为什么不含 input / textarea：它们在浅底上有专门的 `input:focus`
+ * （金边 + 外发光），再叠一圈 3px 轮廓会变成双环。
+ */
+button:focus-visible,
+a[href]:focus-visible,
+summary:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 3px solid rgba(245, 193, 92, 0.95);
+  outline-offset: 3px;
+}
+/* 暖白纸面上金色环对比度不够（纸底就是暖色），改用深绿；与 .modal-box 里既有的那条同源。 */
+.modal-box button:focus-visible,
+.modal-box a[href]:focus-visible,
+.modal-box [role="button"]:focus-visible {
+  outline-color: var(--brand-green);
 }
