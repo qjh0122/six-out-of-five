@@ -107,9 +107,26 @@ console.log('\n[跑完能再跑一次 / 流水不丢状态 / 打法可选]');
  * 静态契约先钉住形状，真正的行为由 scripts/probe-admin.js 在浏览器里点。 */
 ok(/if \(!running\) updatePoolCount\(\);/.test(html), '任务结束后按勾选恢复「开始模拟」（不用刷新）');
 ok(/id="job-hands"/.test(html) && /#job-hands/.test(html), '逐把流水有独立容器，不跟摘要一起重绘');
-ok(/det\.open = wasOpen/.test(html), '重绘后保留展开状态（下拉不会自己合上）');
+ok(/#job-hands'\)\.addEventListener\('click'/.test(html), '流水的展开/收起走事件委托（面板是增量建的）');
 ok(/pollTick % 2 === 0\) loadJobDetail/.test(html), '跑的过程中定时刷新流水（条数跟得上已完成把数）');
 ok(/#bot-strategy/.test(html) && /strategy: \$\('#bot-strategy'\)/.test(html), '打法可选（smart 挑牌 / naive 按位置）');
+
+console.log('\n[逐把流水：按场分组 / 不跳回顶部 / 累计净胜单起一条]');
+/* 2026-11-10 的第二轮反馈。三条都不是「功能没有」，是「有了但不好用」，
+ * 所以契约要钉的是**结构选择**，不只是一句文案：
+ *   分组 → 每场一个 data-room 面板；
+ *   不跳顶 → 复用同一个面板 + 重建 tbody 前后搬 scrollTop；
+ *   累计净胜 → 单独一条，且不许再占表头（表头就是「本把盈亏」）。 */
+ok(/det\.setAttribute\('data-room', key\)/.test(html), '流水按场分组：每场一个独立面板');
+ok(/handsUI\.rooms\[key\] = ui/.test(html) && /if \(!ui\) \{/.test(html),
+  '面板按场复用同一个 DOM 节点（重建才会丢展开状态与滚动位置）');
+ok(/scrollTop = prevTop/.test(html) && /ui\.stick/.test(html),
+  '重绘后把 scrollTop 搬回去（新记录不会把页面顶回第一条）');
+ok(/scrollHeight - ui\.sc\.scrollTop - ui\.sc\.clientHeight < 24/.test(html),
+  '贴着底部才继续跟随，用户往上翻就停（不在看历史时把人拽走）');
+ok(/class="hands-sum"/.test(html) && /<th>本把盈亏<\/th>/.test(html),
+  '累计净胜单起一条，表头写「本把盈亏」');
+ok(!/<th>累计净胜<\/th>/.test(html), '不再把「累计净胜」当表头（格子里装的是本把）');
 
 console.log('\n[轮询只在需要时开]');
 ok(/function startPoll\(/.test(html) && /function stopPoll\(/.test(html), '有轮询开关');

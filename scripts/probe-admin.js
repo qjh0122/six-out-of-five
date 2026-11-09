@@ -234,7 +234,7 @@ function ok(cond, name, extra) {
   ok(/已启动/.test(String(await evaluate('document.querySelector("#bot-hint").textContent'))), '页面提示已启动');
 
   /* 等这一个任务跑完。断言锚定 newJob —— 不看页面上「某个」任务的状态 */
-  let done = false, last = null;
+  let done = false, last = null, midRun = null;
   for (let i = 0; i < 60; i++) {
     await sleep(1500);
     const st = await evaluate(`(function(){
@@ -244,15 +244,51 @@ function ok(cond, name, extra) {
       return {id:b?b.getAttribute('data-job'):'', text:el.innerText.replace(/\\s+/g,' ').slice(0,300)};
     })()`);
     last = st;
+    /* 跑到一半抓一次「进行中」状态的流水 —— 已完成场次走服务端合计，
+     * 进行中那一场走「最后一把的累计」，两条路都要在真实页面里验一遍。 */
+    /* 跑到一半抓一次「进行中」状态的流水 —— 已完成场次走服务端合计，
+     * 进行中那一场走「最后一把的累计」，两条路都要在真实页面里验一遍。
+     * 只在进行中那一场**已经结算过至少一把**时取样：刚开局的空面板是合法状态，
+     * 拿它来断言「有明细」等于拿时序赌绿灯。 */
+    if (!midRun && st && st.id === newJob && /场 1\/2/.test(st.text) && /进行中/.test(st.text)) {
+      const cand = await evaluate(`(function(){
+        var pan=document.querySelectorAll('#job-hands details.room-hands');
+        var out={pan:pan.length, rooms:[]};
+        Array.prototype.forEach.call(pan, function(d){
+          out.rooms.push({
+            room: d.getAttribute('data-room'),
+            rows: d.querySelectorAll('tbody tr').length,
+            tag: ((d.querySelector('.rh-s .tag')||{}).textContent||'').trim(),
+            sumLbl: ((d.querySelector('.hands-sum .lbl')||{}).textContent||'').trim(),
+            vals: Array.prototype.map.call(d.querySelectorAll('.hands-sum .who'),function(w){return w.textContent.trim();})
+          });
+        });
+        return out;
+      })()`);
+      const run = cand && cand.rooms.filter((x) => x.tag === '进行中');
+      if (run && run.length === 1 && run[0].rows > 0) midRun = cand;
+    }
     if (st && st.id === newJob && /已完成/.test(st.text) && /场 2\/2/.test(st.text)) { done = true; break; }
   }
   ok(done, '目标任务跑完（2/2 场）', last);
+
+  /* 进行中的那一场也要有独立的流水面板，且「累计净胜」在跑的时候就已经有值 */
+  const midRunning = midRun && midRun.rooms.filter((x) => x.tag === '进行中');
+  ok(midRun && midRun.pan >= 1, '跑到一半时流水已按场分好面板', midRun && midRun.rooms);
+  ok(midRun && midRun.rooms[0].tag === '完成', '上一场已标「完成」（进入第二场时第一场收尾了）',
+    midRun && midRun.rooms.map((x) => ({ r: x.room, tag: x.tag })));
+  ok(midRunning && midRunning.length === 1, '进行中的那一场单独一个面板，状态是「进行中」',
+    midRun && midRun.rooms.map((x) => ({ r: x.room, tag: x.tag })));
+  ok(midRunning && midRunning[0].rows > 0, '进行中那一场已经有逐把明细', midRunning && midRunning[0].rows);
+  ok(midRunning && midRunning[0].sumLbl === '累计净胜' && midRunning[0].vals.length >= 2,
+    '进行中时累计净胜单起一条且已有数值（不用等打完）', midRunning && midRunning[0].vals);
   await shot('02-done.png');
 
   const detail = String(await evaluate('(function(){var el=document.querySelector("#job-view");return el?el.innerText.replace(/\\s+/g," "):"";})()'));
   ok(/把 6\/6/.test(detail), '6 把全部完成', detail.slice(0, 160));
   ok(/场次 0→2/.test(detail), '榜单增量 0→2（战绩真的落库了）', detail.slice(0, 220));
   ok((detail.match(/完成/g) || []).length >= 2, '逐场明细两场都是「完成」');
+  ok(!/handLimit|someoneLeft|scoreZero|dissolve/.test(detail), '逐场明细的结束原因也说人话', detail.slice(0, 200));
 
   /* 逐把流水在**独立容器** #job-hands 里（与任务摘要分开重绘）。
    * 断言要看「条数 == 已完成的把数」—— 这正是用户报的第三个问题：
@@ -262,14 +298,130 @@ function ok(cond, name, extra) {
   ok(handRows >= 6, '逐把流水 6 条', handRows);
   ok(handRows === handsDone, '流水条数 == 已完成把数（不再落后于进度）', { handRows, handsDone });
 
-  /* 重绘不能把用户展开的下拉合上：点「刷新」会走一遍 renderJob → renderHands，
-   * 原来那版每次都用新 <details> 覆盖，展开状态当场丢失。 */
-  await evaluate('(function(){var d=document.querySelector("#job-hands details"); if(d) d.open=true;})()');
+  /* ---- 2026-11-10 反馈：按场分组 / 不跳回顶部 / 累计净胜单起一条 ---- */
+  console.log('\n[逐把流水：按场分组]');
+  const panels = await evaluate(`(function(){
+    return Array.prototype.map.call(
+      document.querySelectorAll('#job-hands details.room-hands'),
+      function (d) {
+        return {
+          room: d.getAttribute('data-room'),
+          open: d.open,
+          rows: d.querySelectorAll('tbody tr').length,
+          meta: (d.querySelector('.rh-m') || {}).textContent || '',
+          head: Array.prototype.map.call(d.querySelectorAll('thead th'), function (t) { return t.textContent; }),
+          sumLbl: (d.querySelector('.hands-sum .lbl') || {}).textContent || '',
+          sums: Array.prototype.map.call(d.querySelectorAll('.hands-sum .who'), function (w) { return w.textContent.trim(); })
+        };
+      });
+  })()`);
+  ok(panels.length === 2, '两场各自一个面板（不再摊成一张平表）', panels.map(p => p.room));
+  ok(panels.map(p => p.room).join(',') === '1,2', '面板按场次顺序排列', panels.map(p => p.room));
+  ok(panels.every(p => p.rows === 3), '每个面板只装自己那 3 把', panels.map(p => p.rows));
+  ok(panels.every(p => p.head.join('|') === '把|本把盈亏'), '表头是「把 / 本把盈亏」', panels[0] && panels[0].head);
+  ok(panels.every(p => p.sumLbl === '累计净胜'), '累计净胜单起一条（不在表头里）', panels[0] && panels[0].sumLbl);
+  ok(panels.every(p => p.sums.length >= 2), '每条累计净胜列出所有玩家', panels[0] && panels[0].sums);
+  ok(panels.every(p => !/handLimit|someoneLeft|scoreZero|dissolve/.test(p.meta)),
+    '结束原因说人话（不再是 handLimit 这种原始枚举）', panels.map(p => p.meta));
+  ok(panels.some(p => /打满把数结束/.test(p.meta)), '结束原因用的是战绩页同一套文案', panels.map(p => p.meta));
+
+  /* 正负必须一眼分得出。这里验的是**约定**（涨红跌绿），不是某个具体色值：
+   * 只写 .up/.down 类名却忘了定义样式，数字会静静变成白色 —— 那时表还在、
+   * 数也对，就是看不出谁赢谁输，截图里最容易漏掉的一类坏。 */
+  const colors = await evaluate(`(function(){
+    function rgb(el){ if(!el) return null; var m = getComputedStyle(el).color.match(/\\d+/g); return m ? [Number(m[0]), Number(m[1]), Number(m[2])] : null; }
+    return {
+      up: rgb(document.querySelector('#job-hands .hands-sum b.up, #job-hands tbody b.up')),
+      down: rgb(document.querySelector('#job-hands .hands-sum b.down, #job-hands tbody b.down'))
+    };
+  })()`);
+  ok(colors.up && colors.up[0] > colors.up[1] && colors.up[0] > colors.up[2], '正数是红色（涨红）', colors.up);
+  ok(colors.down && colors.down[1] > colors.down[0] && colors.down[1] > colors.down[2], '负数是绿色（跌绿）', colors.down);
+
+  /* 累计净胜必须等于本场各把之和 —— 不然「单起一条」只是换了个位置显示错数。
+   * 打完的场次走服务端权威合计（rooms[i].scores），这里核对的是它与逐把明细是否对得上。 */
+  const sumCheck = await evaluate(`(function(){
+    var out = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#job-hands details.room-hands'), function (d) {
+      var acc = {};
+      Array.prototype.forEach.call(d.querySelectorAll('tbody tr .hs-cell .who'), function (w) {
+        var name = w.childNodes[0].textContent.trim();
+        var v = Number(w.querySelector('b').textContent.replace('+', ''));
+        acc[name] = (acc[name] || 0) + (isNaN(v) ? 0 : v);
+      });
+      var shown = {};
+      Array.prototype.forEach.call(d.querySelectorAll('.hands-sum .who'), function (w) {
+        var name = w.childNodes[0].textContent.trim();
+        var v = Number(w.querySelector('b').textContent.replace('+', ''));
+        shown[name] = isNaN(v) ? 0 : v;
+      });
+      var bad = Object.keys(acc).filter(function (n) { return acc[n] !== shown[n]; });
+      out.push({ room: d.getAttribute('data-room'), ok: bad.length === 0 && Object.keys(acc).length > 0, acc: acc, shown: shown, bad: bad });
+    });
+    return out;
+  })()`);
+  ok(sumCheck.every(x => x.ok), '累计净胜 == 该场逐把之和', sumCheck.map(x => ({ r: x.room, bad: x.bad })));
+
+  /* 重绘不能把用户展开的下拉合上（2026-11-09 修过一次，这里防回归）。 */
+  await evaluate('(function(){var d=document.querySelector("#job-hands details.room-hands"); if(d) d.open=true;})()');
   await sleep(300);
   await evaluate('document.querySelector("#btn-job-refresh").click()');
   await sleep(1500);
-  const stillOpen = await evaluate('(function(){var d=document.querySelector("#job-hands details"); return d?d.open:null;})()');
+  const stillOpen = await evaluate('(function(){var d=document.querySelector("#job-hands details.room-hands"); return d?d.open:null;})()');
   ok(stillOpen === true, '刷新后展开状态还在（下拉不会自己合上）', stillOpen);
+
+  /* ---- 核心：新记录把滚动条顶回第一条 ---- */
+  /* 3 把撑不满 320px，人为把可视高度压到 40px 制造滚动条。
+   * 这不是「为了测试改样式」，而是把用户的真实处境（15 把撑满容器）复现出来 ——
+   * 否则这条断言永远是绿的，因为容器根本滚不动。 */
+  console.log('\n[逐把流水：重绘不把人顶回第一条]');
+  await evaluate(`(function(){
+    Array.prototype.forEach.call(document.querySelectorAll('#job-hands .hands'), function (el) {
+      el.style.maxHeight = '40px';
+    });
+  })()`);
+  await sleep(300);
+  const scrollable = await evaluate('(function(){var el=document.querySelector("#job-hands .hands"); return {sh:el.scrollHeight, ch:el.clientHeight};})()');
+  ok(scrollable.sh > scrollable.ch + 10, '容器已可滚动（复现「15 把撑满」的处境）', scrollable);
+
+  /* A. 用户往上翻到中间看历史 → 重绘不能把他拽回顶部，也不能拽到底部 */
+  await evaluate('(function(){var el=document.querySelector("#job-hands .hands"); el.scrollTop=20;})()');
+  await sleep(400);
+  const midBefore = await evaluate('document.querySelector("#job-hands .hands").scrollTop');
+  await evaluate('document.querySelector("#btn-job-refresh").click()');
+  await sleep(1500);
+  const midAfter = await evaluate('document.querySelector("#job-hands .hands").scrollTop');
+  ok(Math.abs(midAfter - midBefore) <= 2, '翻到中间时重绘不动位置（不拽走正在看历史的人）', { midBefore, midAfter });
+
+  /* B. 用户贴着底部看最新 → 重绘后继续贴底部（不是回顶部） */
+  await evaluate('(function(){var el=document.querySelector("#job-hands .hands"); el.scrollTop=el.scrollHeight;})()');
+  await sleep(400);
+  const botBefore = await evaluate('(function(){var el=document.querySelector("#job-hands .hands"); return {top:el.scrollTop, max:el.scrollHeight-el.clientHeight};})()');
+  await evaluate('document.querySelector("#btn-job-refresh").click()');
+  await sleep(1500);
+  const botAfter = await evaluate('(function(){var el=document.querySelector("#job-hands .hands"); return {top:el.scrollTop, max:el.scrollHeight-el.clientHeight};})()');
+  ok(botAfter.top > 0 && Math.abs(botAfter.top - botAfter.max) <= 2,
+    '贴着底部时重绘后仍在底部（旧版这里会变成 0 = 跳回第一条）', { botBefore, botAfter });
+
+  /* C. 「全部展开 / 全部收起」真的管到每一个面板 */
+  await evaluate('document.querySelector(\'#job-hands [data-hands="close"]\').click()');
+  await sleep(300);
+  ok((await evaluate('Array.prototype.filter.call(document.querySelectorAll("#job-hands details.room-hands"), function(d){return d.open;}).length')) === 0,
+    '「全部收起」收起所有面板');
+  await evaluate('document.querySelector(\'#job-hands [data-hands="open"]\').click()');
+  await sleep(300);
+  ok((await evaluate('Array.prototype.filter.call(document.querySelectorAll("#job-hands details.room-hands"), function(d){return d.open;}).length')) === 2,
+    '「全部展开」展开所有面板');
+
+  /* 还原样式，截图要能看清分组卡片 */
+  await evaluate(`(function(){
+    Array.prototype.forEach.call(document.querySelectorAll('#job-hands .hands'), function (el) {
+      el.style.maxHeight = '';
+    });
+    var h = document.querySelector('#job-hands');
+    if (h) h.scrollIntoView({ block: 'start' });
+  })()`);
+  await sleep(400);
   await shot('03-hands.png');
 
   /* 跑完不用刷新就能再起一个 —— 原来开始按钮停在 disabled，

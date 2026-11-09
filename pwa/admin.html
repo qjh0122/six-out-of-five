@@ -165,6 +165,31 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
 .hands { max-height: 320px; overflow: auto; margin-top: 8px; }
 .hands table { font-size: 13px; }
 .hands th, .hands td { padding: 6px 8px; }
+.hands .hs-cell { white-space: normal; }
+.hands .hs-cell .who { display: inline-block; margin-right: 10px; white-space: nowrap; }
+
+/* 逐把流水：按场分组的卡片。每场一个下拉，标题自带状态与把数。 */
+.hands-head { display: flex; align-items: center; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.hands-head .hh-lbl { font-size: 13px; color: var(--gold-light); flex: 1 1 auto; }
+.room-hands {
+  margin-top: 10px; padding: 0 10px 10px; border-radius: 10px;
+  border: 1px solid rgba(184, 192, 204, 0.16); background: rgba(0, 0, 0, 0.14);
+}
+.room-hands > summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 0 4px; }
+.room-hands .rh-t { font-weight: 600; color: var(--warm-white); }
+.room-hands .rh-m { font-size: 12px; color: rgba(184, 192, 204, 0.7); }
+/* 累计净胜单起一条，钉在表格上方：滚到第 15 把时它还在，不用滚回去找 */
+.hands-sum {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 6px 0 2px; padding: 6px 10px; border-radius: 8px; font-size: 13px;
+  background: rgba(245, 193, 92, 0.08); border: 1px solid rgba(245, 193, 92, 0.16);
+}
+.hands-sum .lbl { color: var(--gold-light); }
+.hands-sum .vals { display: flex; gap: 10px; flex-wrap: wrap; }
+.hands-sum .who { color: rgba(184, 192, 204, 0.92); white-space: nowrap; }
+.hands-sum .hands-jump { margin-left: auto; }
+.hands-none { margin: 6px 0 0; }
+.hidden { display: none !important; }
 .warn { color: #FFD08A; }
 
 /* 重置密码弹窗：**不用 prompt()**。
@@ -700,6 +725,18 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
 
   /* ---------------------------- 任务 ---------------------------- */
 
+  /* 结束原因：文案与战绩页同一套口径（`pwa/js/recordsView.js` 的 END_REASON_TEXT）。
+   * 后台是独立页面、不加载那个模块，所以这里是一份**有意为之的副本** ——
+   * 改文案时两边一起改。留着原始英文（handLimit / someoneLeft）给管理员看不叫
+   * 「技术细节」，叫看不懂。 */
+  var END_REASON_TEXT = {
+    scoreZero: '分数见底结束',
+    someoneLeft: '有人离开结束',
+    handLimit: '打满把数结束',
+    dissolve: '提前结束'
+  };
+  function endReasonText(r) { return END_REASON_TEXT[r] || '已结束'; }
+
   function statusTag(s) {
     if (s === 'running') return '<span class="tag ok">进行中</span>';
     if (s === 'cancelling') return '<span class="tag wait">停止中</span>';
@@ -804,7 +841,7 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
         return '<tr><td class="num">' + r.index + '</td><td class="num">' + esc(r.roomId || '—') + '</td>'
           + '<td>' + tag + '</td>'
           + '<td class="num">' + (r.hands || 0) + '/' + (r.handsTarget || 0) + '</td>'
-          + '<td>' + esc(r.endReason || '—') + (r.voided ? ' <span class="tag bad">作废</span>' : '') + '</td>'
+          + '<td>' + esc(r.endReason ? endReasonText(r.endReason) : '—') + (r.voided ? ' <span class="tag bad">作废</span>' : '') + '</td>'
           + '<td>' + (sc || '—') + '</td>'
           + (r.error ? '<td class="warn">' + esc(r.error) + '</td>' : '<td></td>')
           + '</tr>';
@@ -829,54 +866,213 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     renderHands(curJob && curJob.__id === curJobId ? curJob.hands : [], j);
   }
 
-  /* 逐把流水独立渲染：容器是 #job-hands，与任务摘要分开。
+  /* ---------------- 逐把流水：按场分组 ----------------
    *
-   * 两个历史 bug 都出在这里：
-   *   1) 条数少于「已完成的把数」—— 详情只拉了一次，跑的过程中一直显示旧快照；
-   *   2) 展开的下拉每 1.5 秒自己合上 —— 摘要整块 innerHTML 重绘会把 <details> 重建。
-   * 现在：数据由轮询刷新，DOM 复用同一个 <details>，重绘前后把 open 状态搬回去。 */
+   * 这块被连着报了三条问题，根子是同一个：它把「N 场 × M 把」摊成**一张平表**，
+   * 越跑越长，而且每 3 秒整块重建一次。
+   *
+   *   1) 场次混在一起，看不出哪一把属于哪一场 —— 现在按场分组，每场一个下拉，
+   *      标题写「第 3 场 · 进行中 · 7/15 把」；
+   *   2) 新记录追加在表格末尾，重建把滚动条顶回第一条，每完成一把都要重新拉到底
+   *      —— 现在复用同一个 <details>/<tbody> 节点，重绘前后把 scrollTop 搬回去；
+   *      用户本来就贴着底部时继续跟到底部（跟着最新一把走），只有他自己往上翻过
+   *      才停跟随，滚回底部又自动恢复；
+   *   3) 表头写着「累计净胜」，格子里装的却是**本把**盈亏 —— 表头改成「本把盈亏」，
+   *      累计净胜单起一条（钉在表格上方，不随滚动跑掉）。
+   *
+   * 累计净胜不逐行累加：任务结束后服务端已经给出每场的权威合计（`rooms[i].scores`），
+   * 直接用它，避免「页面累加」和「服务端累计」两套口径对不上账。
+   * 只有进行中的那一场还没有合计，才退化成按已结算的把累加。
+   *
+   * 另一条刻意保留的约束：累计净胜**不进 <tbody>**。这样「tbody 行数 == 已结算把数」
+   * 这个不变量还在（上一轮为了查「流水条数少于进度」立的），多一行汇总就把它废了。
+   */
+  var handsUI = { jobId: '', head: null, rooms: {} };
+
+  function handsReset() {
+    var box = $('#job-hands');
+    if (box) box.innerHTML = '';
+    handsUI = { jobId: '', head: null, rooms: {} };
+  }
+
+  function statusTagOf(s) {
+    return s === 'done' ? '<span class="tag ok">完成</span>'
+      : (s === 'failed' ? '<span class="tag bad">失败</span>' : '<span class="tag wait">进行中</span>');
+  }
+
   function renderHands(hands, job) {
     var box = $('#job-hands');
     if (!box) return;
+    var arr = Array.isArray(hands) ? hands : [];
+    var rooms = (job && Array.isArray(job.rooms)) ? job.rooms : [];
     var p = (job && job.progress) || {};
     var done = Number(p.handsDone) || 0;
-    var arr = Array.isArray(hands) ? hands : [];
+    var jid = (job && job.id) || curJobId || '';
 
-    if (!arr.length) {
+    /* 换任务必须整块重建，否则上一场的下拉会留在原地冒充这一场 */
+    if (handsUI.jobId !== jid) {
+      handsReset();
+      handsUI.jobId = jid;
+    }
+
+    if (!arr.length && !rooms.length) {
       box.innerHTML = done
         ? '<p class="hint" style="margin-top:12px;">逐把流水：已算完 ' + done + ' 把，正在回填明细…</p>'
         : '<p class="hint" style="margin-top:12px;">逐把流水：第一把结算后会出现在这里。</p>';
+      handsUI.head = null;
+      handsUI.rooms = {};
       return;
     }
 
-    var rows = arr.map(function (h) {
-      var sc = (h.scores || []).map(function (x) {
-        return esc(x.nickname) + ' <b class="' + netCls(x.score) + '">' + num(x.score) + '</b>';
-      }).join(' / ');
-      return '<tr><td class="num">' + h.roomIndex + '</td><td class="num">' + h.handNo + '</td><td>' + sc + '</td></tr>';
-    }).join('');
-
-    /* 条数与进度对不上时，把原因直接写在标题里，不留悬念：
-     * 上限 800 条（历史裁剪）或「刚结算、下一把还没进来」。 */
-    var label = '逐把流水（' + arr.length + ' 条';
-    if (done > arr.length) label += '，仅保留最近 ' + arr.length + ' 条 / 共 ' + done + ' 把';
-    else if (done && done !== arr.length) label += ' / 已完成 ' + done + ' 把';
-    label += '）';
-
-    var det = box.querySelector('details');
-    var wasOpen = det ? det.open : false;
-    if (!det) {
-      det = document.createElement('details');
+    /* 标题条只建一次，之后只改文字 —— 按钮每 3 秒重建一次的话，
+     * 恰好按在重建那一刻的点击会被吞掉。
+     * 建之前先把容器清空：空态时那个「第一把结算后会出现在这里」的提示
+     * 是直接 innerHTML 写进去的，不清掉就会一直挂在流水上面。 */
+    if (!handsUI.head) {
       box.innerHTML = '';
-      box.appendChild(det);
-      /* 首次出现默认展开：用户点开这块就是想看流水，多一次点击没有意义 */
-      wasOpen = true;
+      var head = document.createElement('div');
+      head.className = 'hands-head';
+      head.innerHTML = '<span class="hh-lbl"></span>'
+        + '<button class="ghost mini" data-hands="open">全部展开</button>'
+        + '<button class="ghost mini" data-hands="close">全部收起</button>';
+      box.appendChild(head);
+      handsUI.head = head;
     }
-    det.innerHTML = '<summary>' + esc(label) + '</summary>'
-      + '<div class="hands"><table><thead><tr><th>场</th><th>把</th><th>累计净胜</th></tr></thead>'
-      + '<tbody>' + rows + '</tbody></table></div>';
-    det.open = wasOpen;
-    det.setAttribute('data-count', String(arr.length));
+    var label = '逐把流水 · ' + arr.length + ' 条';
+    if (done > arr.length) label += '（只留最近 ' + arr.length + ' 条，共 ' + done + ' 把）';
+    else if (done && done !== arr.length) label += ' / 已结算 ' + done + ' 把';
+    var lbl = handsUI.head.querySelector('.hh-lbl');
+    if (lbl.textContent !== label) lbl.textContent = label;
+
+    /* 按场分组。以服务端的 rooms 顺序为准，再把没有对应 room 记录的散牌挂到末尾，
+     * 免得 rooms 还没建起来时把已有的流水整段吞掉。 */
+    var byRoom = {};
+    arr.forEach(function (h) {
+      var k = String(h.roomIndex == null ? 0 : h.roomIndex);
+      (byRoom[k] = byRoom[k] || []).push(h);
+    });
+    var order = rooms.map(function (r) { return String(r.index); });
+    Object.keys(byRoom).forEach(function (k) { if (order.indexOf(k) < 0) order.push(k); });
+
+    var names = (job && job.players ? job.players : []).map(function (x) { return x.nickname || x.account; });
+
+    order.forEach(function (key, seq) {
+      var list = byRoom[key] || [];
+      var room = null;
+      for (var i = 0; i < rooms.length; i++) if (String(rooms[i].index) === key) room = rooms[i];
+
+      var ui = handsUI.rooms[key];
+      if (!ui) {
+        var det = document.createElement('details');
+        det.className = 'room-hands';
+        det.setAttribute('data-room', key);
+        det.innerHTML = '<summary><span class="rh-t"></span><span class="rh-s"></span>'
+          + '<span class="rh-m"></span></summary>'
+          + '<div class="hands-sum"><span class="lbl">累计净胜</span><span class="vals"></span>'
+          + '<button class="ghost mini hands-jump" data-hands="jump">↓ 最新</button></div>'
+          + '<p class="hint hands-none">这一场还没有结算的牌局。</p>'
+          + '<div class="hands"><table><thead><tr><th>把</th><th>本把盈亏</th></tr></thead>'
+          + '<tbody></tbody></table></div>';
+        box.appendChild(det);
+
+        ui = {
+          det: det,
+          s: det.querySelector('.rh-s'),
+          m: det.querySelector('.rh-m'),
+          vals: det.querySelector('.vals'),
+          none: det.querySelector('.hands-none'),
+          sc: det.querySelector('.hands'),
+          tb: det.querySelector('tbody'),
+          jump: det.querySelector('.hands-jump'),
+          /* 默认跟随最新：用户点开流水就是想看「刚刚那把」 */
+          stick: true
+        };
+        det.querySelector('.rh-t').textContent = '第 ' + key + ' 场';
+
+        /* 往下滚 = 用户在看历史，停跟随；滚回底部 = 恢复跟随。
+         * 没有这个开关，任何「保持滚动位置」的做法都会在用户看第 3 把时
+         * 把他拽到第 15 把（那是另一种骚扰）。 */
+        ui.sc.addEventListener('scroll', function () {
+          var atBottom = ui.sc.scrollHeight - ui.sc.scrollTop - ui.sc.clientHeight < 24;
+          if (ui.stick !== atBottom) {
+            ui.stick = atBottom;
+            ui.jump.classList.toggle('hidden', atBottom);
+          }
+        });
+        ui.jump.addEventListener('click', function () {
+          ui.stick = true;
+          ui.sc.scrollTop = ui.sc.scrollHeight;
+          ui.jump.classList.add('hidden');
+        });
+        /* 收起时 scrollHeight 是 0，写进去没意义；所以在展开时补一次 */
+        det.addEventListener('toggle', function () {
+          if (det.open && ui.stick) ui.sc.scrollTop = ui.sc.scrollHeight;
+        });
+
+        /* 默认只展开「正在打的那一场」和「最后一场」。十几场全摊开会把页面
+         * 拉成一列长条，用户还得自己一个个点掉。 */
+        var isRunning = !room || room.status === 'running' || room.status === 'cancelling';
+        det.open = isRunning || seq === order.length - 1;
+
+        handsUI.rooms[key] = ui;
+      }
+
+      var status = room ? room.status : 'running';
+      ui.s.innerHTML = statusTagOf(status);
+      var handsN = list.length;
+      var target = room && room.handsTarget ? room.handsTarget : 0;
+      var meta = handsN + (target ? '/' + target : '') + ' 把';
+      if (room && room.voided) meta += ' · 作废';
+      if (room && room.endReason) meta += ' · ' + endReasonText(room.endReason);
+      /* 历史上限 800 条会截断最早的场次，截了就得说，不能装作全都有 */
+      if (room && room.hands && room.hands > handsN) meta += '（只留最近 ' + handsN + ' 把）';
+      ui.m.textContent = meta;
+
+      /* 累计净胜：打完的场次用服务端权威合计；进行中的那一场用**最后一把的 score**
+       * （每把上报的 score 本来就是「打完这把之后的累计」，所以最后一把就是当前累计）。
+       * 两条路都直接用权威值，不做逐行累加 —— 累加一旦被历史上限裁掉中间某行就错。 */
+      var cum = {};
+      var useSrv = room && status !== 'running' && status !== 'cancelling'
+        && Array.isArray(room.scores) && room.scores.length;
+      if (useSrv) {
+        room.scores.forEach(function (x) { cum[x.nickname] = Number(x.score) || 0; });
+      } else if (list.length) {
+        (list[list.length - 1].scores || []).forEach(function (x) {
+          cum[x.nickname] = Number(x.score) || 0;
+        });
+      }
+      var seen = names.filter(function (n) { return Object.prototype.hasOwnProperty.call(cum, n); });
+      Object.keys(cum).forEach(function (n) { if (seen.indexOf(n) < 0) seen.push(n); });
+      ui.vals.innerHTML = seen.map(function (n) {
+        return '<span class="who">' + esc(n) + ' <b class="' + netCls(cum[n]) + '">' + num(cum[n]) + '</b></span>';
+      }).join('') || '<span class="who">—</span>';
+
+      ui.none.classList.toggle('hidden', list.length > 0);
+
+      /* 重绘 tbody 前先记位置：贴着底部就继续贴到底部，否则原地不动 */
+      var prevTop = ui.sc.scrollTop;
+      /* 「本把盈亏」用服务端给的 delta（这一把本身赢/输多少），而不是 score。
+       * score 是打完这把之后的累计 —— 直接铺出来就是一行行往上叠的累计数，
+       * 看着像明细，实际看不出任何一把的输赢（用户报的就是这个）。 */
+      var prevScore = {};
+      ui.tb.innerHTML = list.map(function (h) {
+        var sc = (h.scores || []).map(function (x) {
+          var cur = Number(x.score) || 0;
+          var d = (x.delta == null) ? (cur - (prevScore[x.nickname] || 0)) : (Number(x.delta) || 0);
+          prevScore[x.nickname] = cur;
+          return '<span class="who">' + esc(x.nickname) + ' <b class="' + netCls(d) + '">'
+            + num(d) + '</b></span>';
+        }).join('');
+        return '<tr><td class="num">' + h.handNo + '</td><td class="hs-cell">' + sc + '</td></tr>';
+      }).join('');
+      if (ui.stick) {
+        ui.sc.scrollTop = ui.sc.scrollHeight;
+        ui.jump.classList.add('hidden');
+      } else {
+        ui.sc.scrollTop = prevTop;
+        ui.jump.classList.remove('hidden');
+      }
+    });
   }
 
   async function loadJobDetail(id) {
@@ -930,7 +1126,7 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     curJob = null;
     detailLoadedFor = '';
     pollTick = 0;
-    $('#job-hands').innerHTML = '';
+    handsReset();
     setBotHint('已启动：' + r.job.id);
     await loadJobs();
   }
@@ -1078,9 +1274,21 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     curJobId = $('#job-pick').value;
     curJob = null;
     detailLoadedFor = '';
-    $('#job-hands').innerHTML = '';
+    handsReset();
     renderJob();
     loadJobDetail(curJobId);
+  });
+
+  /* 流水的「全部展开 / 全部收起」用事件委托：面板是按场增量建的，
+   * 每建一个就绑一次监听，反而更容易漏绑。 */
+  $('#job-hands').addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-hands]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-hands');
+    if (act === 'jump') return;   // 单场「↓ 最新」自己绑了，见 createRoomPanel
+    var open = act === 'open';
+    var dets = $('#job-hands').querySelectorAll('details.room-hands');
+    for (var i = 0; i < dets.length; i++) dets[i].open = open;
   });
   $('#btn-board').addEventListener('click', loadBoard);
 

@@ -47,6 +47,27 @@ const clampInt = (v, lo, hi, dflt) => {
   return Math.min(hi, Math.max(lo, n));
 };
 
+/**
+ * 把「这一把打完后的累计快照」翻译成逐把明细。
+ *
+ * 为什么不只存累计：明细表要显示**这一把本身**赢输多少。只给累计的话，
+ * 页面得拿相邻两行相减 —— 而 `MAX_HANDS_KEPT` 会把最早的若干行裁掉，
+ * 裁掉之后减出来的数字不会报错，只会静默偏掉一个常数，特别难发现。
+ *
+ * @param {Object} prevSnap 昵称 → 上一把的累计。**每场必须重置**：
+ *   每场分数都从 0 重发，跨场沿用会把上一场终局分当成本场起点。
+ * @param {Object} snap 昵称 → 这一把打完后的累计
+ * @returns {{nickname:string, score:number, delta:number}[]}
+ */
+function handDeltas(prevSnap, snap) {
+  return Object.keys(snap || {}).map((k) => {
+    const cur = Number(snap[k]) || 0;
+    const prev = Object.prototype.hasOwnProperty.call(prevSnap, k) ? prevSnap[k] : 0;
+    prevSnap[k] = cur;
+    return { nickname: k, score: cur, delta: cur - prev };
+  });
+}
+
 const pairOf = (v, dflt) => {
   if (!Array.isArray(v) || v.length !== 2) return dflt;
   const a = Number(v[0]);
@@ -294,6 +315,9 @@ class BotRunner {
         this._touch(job);
 
         try {
+          /* 每场开局分数都从 0 重发，所以「上一把的累计」也必须每场清空，
+           * 否则第二场第 1 把的增量会拿第一场终局分去减，算出个负几十的假数字。 */
+          const prevSnap = {};
           const res = await playOneRoom(bots, task.handsPerRoom, {
             pace: task.pace,
             gap: task.gap,
@@ -318,7 +342,12 @@ class BotRunner {
                   roomIndex: i,
                   handNo: e.handNo,
                   at: Date.now(),
-                  scores: Object.keys(e.scores).map((k) => ({ nickname: k, score: e.scores[k] }))
+                  /* score 是**这一把打完后的累计**，delta 才是**这一把本身的输赢**。
+                   * 两个都带上：明细表要显示本把盈亏，累计净胜要单独一行，
+                   * 只存累计的话页面得自己相邻两行相减 —— 一旦历史上限裁剪掉
+                   * 中间某行，算出来的就是错的，而且是错得很像对的（差一个常数）。
+                   * delta 在这里算：此刻「上一把的累计」是确定已知的。 */
+                  scores: handDeltas(prevSnap, e.scores)
                 });
               }
               this._touch(job);
@@ -464,4 +493,4 @@ class BotRunner {
   }
 }
 
-module.exports = { BotRunner, HAND_LIMITS, MIN_PLAYERS, MAX_PLAYERS, MAX_ROOMS };
+module.exports = { BotRunner, HAND_LIMITS, MIN_PLAYERS, MAX_PLAYERS, MAX_ROOMS, handDeltas };
