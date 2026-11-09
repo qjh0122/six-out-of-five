@@ -125,6 +125,10 @@ jobs:
             only: '360x640,360x800,800x360,915x412'
           - name: 电脑四档
             only: '1280x720,1920x947,960x1040,728x348'
+          # R5 · 本批：320×568 独立分片。半角 x —— 全角 × 经过 YAML→env→Node
+          # 会被改坏，曾「安静跑 0 个视口然后通过」（probe-ui-flow.js:982-990 的教训）。
+          - name: 最小档 320×568
+            only: '320x568'
 
     name: 浏览器巡检 · ${{ matrix.name }}
 
@@ -162,15 +166,18 @@ jobs:
           node scripts/probe-ci.js scripts/probe-ui-flow.js > /tmp/ui.log 2>&1
           code=$?
           cat /tmp/ui.log
-          # 分片自检：这一片必须真的跑了 4 档。
+          # 分片自检：这一片必须真的跑满**它自己**配置的档数（R5「按分片期望数取」）。
+          # 不能写死 4 —— 320×568 是独立分片，只配了 1 档，写死会立刻 exit 3 假红。
+          # 期望数取自本片的 ONLY，而不是从 workflow 文本里抄一个常数。
           # 用 node 解析而不是 grep —— runner 的 C locale 下 grep 匹配不到多字节字符，
           # 上一轮就因此只看到一句「exit code 2」，日志里到底红在哪一句完全看不到。
           node -e "
             const t = require('fs').readFileSync('/tmp/ui.log', 'utf8');
             const m = t.match(/本轮视口 (\d+) 个/);
             const n = m ? Number(m[1]) : -1;
-            if (n !== 4) {
-              console.error('::error::分片应跑 4 档，实际 ' + (n < 0 ? '日志里没有「本轮视口」' : n) + ' —— ONLY=' + process.env.ONLY);
+            const expected = process.env.ONLY.split(',').filter(Boolean).length;
+            if (n !== expected) {
+              console.error('::error::分片应跑 ' + expected + ' 档，实际 ' + (n < 0 ? '日志里没有「本轮视口」' : n) + ' —— ONLY=' + process.env.ONLY);
               process.exit(3);
             }
           "
@@ -252,12 +259,26 @@ jobs:
       # 它验的是「破坏性动作之前的 5 秒里，数据到底还在不在」——
       # 这件事没有任何静态断言能证明：单测只能说"到点会调回调"，
       # 说不了"第 3 秒时记录还在屏幕上"。真浏览器里插一刀才有意义。
-      - name: 撤销条（5 秒窗口内数据仍在 / 撤销还原 / 到点真清）
+      - name: 撤销条（5 秒窗口内数据仍在 / 撤销还原 / 到点真清 / 离房广播时序）
         run: |
           set +e
           node scripts/probe-ci.js scripts/probe-undo.js > /tmp/u.log 2>&1
           code=$?
           cat /tmp/u.log
+          # 本批：离开房间专项（[6] / [7]）必须**真的跑过**。
+          # 只核退出码看不出「新断言压根没被执行」—— 那是 G1 类「写了没接进执行链」。
+          # 用 node 解析而不是 grep：runner 的 C locale 下 grep 匹配不到多字节字符。
+          node -e "
+            const t = require('fs').readFileSync('/tmp/u.log', 'utf8');
+            const need = ['[6] 离开房间', '[7] 离开房间', '广播到达', '250ms', 'leaveRoom 调用数'];
+            const missing = need.filter(function(s){ return t.indexOf(s) < 0; });
+            if (missing.length) {
+              console.error('::error::离开房间专项断言没跑全：' + missing.join(' / '));
+              process.exit(3);
+            }
+          "
+          self=$?
+          if [ $self -ne 0 ]; then exit $self; fi
           if [ $code -ne 0 ]; then
             tail -8 /tmp/u.log | while IFS= read -r line; do
               [ -n "$line" ] && echo "::error::$line"
@@ -322,6 +343,22 @@ jobs:
           cat /tmp/n2.log
           if [ $code -ne 0 ]; then
             tail -10 /tmp/n2.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      # 数字阶梯 · 320×568（R5 四步同改之第 3 步）：与 :304-315 完全同构。
+      # 320 同时命中 .compact-v 与 max-width:420，是 390×844 / 800×360 都不覆盖的组合；
+      # 只加 VIEWPORTS 一行、不在这里挂探针，等于「新档从没被真跑」（AC-NB-23 / 24）。
+      - name: 数字阶梯 · 320×568
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-numbers.js 320 568 > /tmp/n3.log 2>&1
+          code=$?
+          cat /tmp/n3.log
+          if [ $code -ne 0 ]; then
+            tail -10 /tmp/n3.log | while IFS= read -r line; do
               [ -n "$line" ] && echo "::error::$line"
             done
           fi

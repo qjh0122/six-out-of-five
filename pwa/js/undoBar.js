@@ -137,6 +137,7 @@
      *   'hidden'    —— 页面转入后台 / 关闭
      *   'navigate'  —— 用户已经离开这个屏
      *   'external'  —— 别的流程要求收尾（例如重新登录换了账号）
+     *   'room-changed' —— 房间状态变了，待撤销的离房动作必须立刻结账
      */
     function flush(reason) { return commit(reason || 'flush'); }
 

@@ -30,7 +30,9 @@ const PORT = 3055;
 const CDP_PORT = 9363;
 const ROOT = path.join(__dirname, '..', 'pwa');
 const SHOTS = !!process.env.ZOOM;
-const OUT = path.join(os.tmpdir(), 'lxw-undo-probe');
+/* SHOT_DIR 可指定：验收要看图时收进仓库（tmp-shots/ 是 .gitignore 的），
+ * 默认仍进临时目录 —— 与 probe-numbers.js:353-359 同一条通道。 */
+const OUT = process.env.SHOT_DIR ? path.resolve(process.env.SHOT_DIR) : path.join(os.tmpdir(), 'lxw-undo-probe');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
@@ -164,6 +166,33 @@ async function main() {
   await sleep(1800);
   console.log('视口 ' + W + '×' + H);
 
+  /* ---- 离开房间专项的两个页面内探针（v139） ----
+   * 装在这里而不是 addScriptToEvaluateOnNewDocument：本地演示模式刚加载完时
+   * 还没有房间，subscribe 一次都没被调过，此刻包一层就能捕获到真正的
+   * attachRoom 订阅回调；leaveRoom 同理，游戏代码是在调用时才取 RoomStore 上的方法。
+   *   · spy   —— 数「真离开」发生了几次（延迟窗口内必须是 0）。
+   *   · subs  —— 留住订阅回调，用来在窗口内**注入一次广播**（P2 阶段推进）。
+   * 不注入脚本到产品代码，全部在探针进程里包一层。 */
+  const hookOk = await evaluate(`(function(){
+    var R = window.RoomStore;
+    if (!R) return 'no-RoomStore';
+    window.__leaveSpy = { calls: 0, args: [] };
+    var origLeave = R.leaveRoom;
+    R.leaveRoom = function(){
+      window.__leaveSpy.calls++;
+      window.__leaveSpy.args.push([].slice.call(arguments));
+      return origLeave.apply(this, arguments);
+    };
+    window.__roomSubs = [];
+    var origSub = R.subscribe;
+    R.subscribe = function(id, cb){
+      window.__roomSubs.push({ id: id, cb: cb });
+      return origSub.apply(this, arguments);
+    };
+    return 'ok';
+  })()`);
+  ok(hookOk === 'ok', '★ 装上了 leaveRoom spy 与 subscribe 捕获（不是空扫描）', hookOk);
+
   const readState = `(function(){
     var bar = document.getElementById('undo-bar');
     var msg = document.getElementById('undo-msg');
@@ -228,6 +257,8 @@ async function main() {
   ok(st.barShown === false, '★ 条子收起');
   ok(st.visRows === 2, '★★ 记录仍在（撤销真的撤销了，而不是只是把条子藏起来）', 'visRows=' + st.visRows);
   ok(st.storeCount === 2, '★★ 存储仍是 2 条');
+  const pHidden = await shot('undo-bar-hidden.png');       // 撤销条「消失」帧
+  if (pHidden) console.log('    图：' + pHidden);
 
   console.log('\n[4] 再确认一次，这次不撤销 → 5 秒后真的清掉');
   await evaluate(`document.getElementById('btn-records-clear').click()`);
@@ -264,6 +295,145 @@ async function main() {
     ok(pos && pos.display === 'none', '★★ 隐藏时 display:none（不是 opacity:0 留一个看不见的盒子吃点击）', JSON.stringify(pos));
     ok(pos && pos.w === 0 && pos.h === 0, '★ 隐藏时尺寸为 0（不占位）', JSON.stringify(pos));
   }
+
+  /* ===================================================================
+   * [6] / [7]：离开房间的「5 秒内可以反悔」（v139 / design-next-batch §2.3、R8）
+   *
+   * 战绩清除那套验的是「数据还在不在」；离开房间验的是**动作有没有被推迟**：
+   *   · 确认后 250ms 内条子必须出现、文案逐字、leaveRoom 调用数 == 0；
+   *   · 窗口内注入一次「房间已结算」广播 → 250ms 内条子收起 / 转「已不可撤销」，
+   *     leaveRoom 恰好 1 次、flash 文本 == §2.5 终值、「撤销成功 / 已取消」0 次；
+   *   · 不注入广播时，5 秒窗口内 leaveRoom 仍为 0，越过窗口恰好 1 次。
+   * 250ms 来自 QA §三「消除时机」（250/5000 = 5%），写死不取自运行时常量。
+   * =================================================================== */
+  const LEAVE_MSG_IDLE = '正在离开房间（5 秒内可撤销）';
+  const LEAVE_IRREVOCABLE = '房间状态已变化，已按最新状态离开，本次无法撤销';
+  const MS250 = 250;
+
+  const leaveStateExpr = `(function(){
+    var bar = document.getElementById('undo-bar');
+    var msg = document.getElementById('undo-msg');
+    var act = document.getElementById('undo-act');
+    var toast = document.getElementById('toast');
+    return {
+      barShown: !!bar && !bar.classList.contains('hidden'),
+      origin: bar ? bar.getAttribute('data-undo-origin') : null,
+      msg: msg ? msg.textContent : null,
+      actText: act ? act.textContent : null,
+      actDisabled: act ? !!act.disabled : null,
+      toast: toast ? toast.textContent : null,
+      leaveCalls: window.__leaveSpy ? window.__leaveSpy.calls : -1,
+      subs: window.__roomSubs ? window.__roomSubs.length : -1,
+      screen: (function(){
+        var s = document.querySelector('#stage .screen:not(.hidden)');
+        return s ? s.id : '';
+      })(),
+      flashLog: (window.__flashLog || []).slice(),
+      undoMsgLog: (window.__undoMsgLog || []).slice()
+    };
+  })()`;
+
+  /* 回到首页 → 建房 → 进房间（本地演示模式，RoomStore.createRoom 走 localStorage） */
+  const createRoom = async () => {
+    await evaluate(`(function(){
+      var home = document.getElementById('screen-home');
+      if (home && home.classList.contains('hidden')) {
+        var b = document.getElementById('btn-records-back');
+        if (b) b.click();
+      }
+      return 'ok';
+    })()`);
+    await sleep(500);
+    await evaluate(`(function(){ var b = document.getElementById('btn-create'); if (b) b.click(); return 'ok'; })()`);
+    await sleep(400);
+    await evaluate(`(function(){ var b = document.getElementById('btn-create-confirm'); if (b) b.click(); return 'ok'; })()`);
+    await sleep(1100);
+  };
+
+  /* 点「离开」→ 确认框 → 确定。**动作一律不许在 onCommit 之前发生**。 */
+  const clickLeaveAndConfirm = async () => {
+    await evaluate(`(function(){
+      window.__leaveSpy.calls = 0;
+      window.__flashLog = []; window.__undoMsgLog = [];
+      var t = document.getElementById('toast'), u = document.getElementById('undo-msg');
+      if (window.MutationObserver && t) {
+        var mo = new MutationObserver(function(){ window.__flashLog.push(t.textContent); });
+        mo.observe(t, { childList: true, characterData: true, subtree: true });
+      }
+      if (window.MutationObserver && u) {
+        var mu = new MutationObserver(function(){ window.__undoMsgLog.push(u.textContent); });
+        mu.observe(u, { childList: true, characterData: true, subtree: true });
+      }
+      return 'ok';
+    })()`);
+    await evaluate(`(function(){ var b = document.getElementById('btn-leave'); if (b) b.click(); return 'ok'; })()`);
+    await sleep(500);                                   // 等 fetchRoomSnapshot + 确认框
+    await evaluate(`(function(){ var b = document.getElementById('btn-confirm-ok'); if (b) b.click(); return 'ok'; })()`);
+  };
+
+  console.log('\n[6] 离开房间 · 5 秒延迟窗口 + 广播到达时序（250ms）');
+  await createRoom();
+  let ls = await evaluate(leaveStateExpr);
+  ok(ls.subs >= 1, '★★ 建房后 attachRoom 真的订阅了房间广播（捕获到回调）', 'subs=' + ls.subs + ' screen=' + ls.screen);
+  await clickLeaveAndConfirm();
+  await sleep(150);                                     // < 250ms
+  ls = await evaluate(leaveStateExpr);
+  ok(ls.barShown === true, '★★ 确认后 ' + MS250 + 'ms 内撤销条已出现', JSON.stringify(ls));
+  ok(ls.msg === LEAVE_MSG_IDLE, '★★ 等待期文案逐字一致（§2.5 非对局中）', ls.msg);
+  ok(ls.origin === 'leave', '★ 条子带 data-undo-origin="leave"（屏级锚点修饰）', String(ls.origin));
+  ok(ls.actText === '撤销' && ls.actDisabled === false, '★ 撤销入口仍可用', ls.actText + '/' + ls.actDisabled);
+  ok(ls.leaveCalls === 0, '★★★ ' + MS250 + 'ms 内 leaveRoom 调用数 == 0（延迟执行）', 'leaveCalls=' + ls.leaveCalls);
+  const pShown = await shot('leave-undo-bar-shown.png');   // 撤销条「出现」帧（离开场景）
+  if (pShown) console.log('    图：' + pShown);
+
+  /* 窗口内注入一次「本局结算」广播：P2 phase 推进 + P4 结算事件，命中即 flush('room-changed')。 */
+  const inject = await evaluate(`(function(){
+    var list = window.__roomSubs || [];
+    var s = list[list.length - 1];
+    if (!s) return 'no-sub';
+    var room = RoomStore.getRoom(s.id);
+    if (!room) return 'no-room';
+    var changed = {};
+    for (var k in room) if (Object.prototype.hasOwnProperty.call(room, k)) changed[k] = room[k];
+    changed.phase = 'SETTLED';
+    s.cb(changed, { type: 'settled' });
+    return 'ok';
+  })()`);
+  ok(inject === 'ok', '★ 广播注入成功（不是空注入）', inject);
+  await sleep(150);                                     // 广播到达后 < 250ms
+  ls = await evaluate(leaveStateExpr);
+  ok(ls.leaveCalls === 1, '★★★ 广播到达后 leaveRoom 恰好 1 次（立即提交，非作废/非等满 5 秒）', 'leaveCalls=' + ls.leaveCalls);
+  ok(ls.barShown === false, '★★ 广播到达后 ' + MS250 + 'ms 内撤销条已收起', 'barShown=' + ls.barShown);
+  ok(ls.msg === LEAVE_IRREVOCABLE, '★ #undo-msg 已切到「已不可撤销」终值', ls.msg);
+  ok(ls.undoMsgLog.indexOf(LEAVE_IRREVOCABLE) >= 0,
+    '★★ flush 之前 #undo-msg 已切到同一终值（R8）', JSON.stringify(ls.undoMsgLog));
+  ok(ls.flashLog.indexOf(LEAVE_IRREVOCABLE) >= 0,
+    '★★ 广播到达后 flash 文本 == §2.5 终值（R8）', JSON.stringify(ls.flashLog));
+  const uiText = String(ls.toast || '') + '|' + String(ls.msg || '') + '|' + ls.flashLog.join('|') + '|' + ls.undoMsgLog.join('|');
+  ok(uiText.indexOf('撤销成功') < 0 && uiText.indexOf('已取消') < 0,
+    '★★ 「撤销成功 / 已取消」出现次数 == 0（R8）', uiText.slice(0, 160));
+  const pBroadcast = await shot('leave-undo-broadcast.png');  // 广播到达后条子状态帧
+  if (pBroadcast) console.log('    图：' + pBroadcast);
+  await sleep(300);
+  ls = await evaluate(leaveStateExpr);
+  ok(ls.leaveCalls === 1, '★ 提交幂等：再等 300ms leaveRoom 仍是 1 次', 'leaveCalls=' + ls.leaveCalls);
+
+  console.log('\n[7] 离开房间 · 无广播，5 秒到点才真离开');
+  await createRoom();
+  await clickLeaveAndConfirm();
+  await sleep(150);
+  ls = await evaluate(leaveStateExpr);
+  ok(ls.barShown === true && ls.leaveCalls === 0,
+    '★★ 第二次进入窗口：条子在、leaveRoom 仍为 0', 'bar=' + ls.barShown + ' calls=' + ls.leaveCalls);
+  await sleep(3000);
+  ls = await evaluate(leaveStateExpr);
+  ok(ls.leaveCalls === 0, '★★ 第 3 秒（窗口内）leaveRoom 仍是 0', 'leaveCalls=' + ls.leaveCalls);
+  await sleep(2700);                                    // 累计 5.7s，越过窗口
+  ls = await evaluate(leaveStateExpr);
+  ok(ls.leaveCalls === 1, '★★ 到点后 leaveRoom 恰好 1 次', 'leaveCalls=' + ls.leaveCalls);
+  ok(ls.barShown === false, '★★ 到点后条子自己消失', 'barShown=' + ls.barShown);
+  const pGone = await shot('leave-undo-bar-gone.png');
+  if (pGone) console.log('    图：' + pGone);
 
   cdp.close();
   edge.kill();

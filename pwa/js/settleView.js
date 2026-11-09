@@ -53,6 +53,33 @@
     var render = deps.render, avatarInner = deps.avatarInner;
     var findPlayer = deps.findPlayer, roomHasBot = deps.roomHasBot;
 
+  /* ③ 首次进结算页的一行策略引导。文案 / 键名终值唯一来源 =
+   * design-next-batch-v1.md §4.2；本文件不写物理键字面量（只在 storage.js 的 ST.KEYS 注册）。
+   * 按设备只一次：显示那一刻即写键；写不进（隐私模式）就降级为每次进结算页都显示，
+   * 不新增第二个去重源。规则弹窗的已读键不碰。 */
+  var ST = deps.Store || (global.LXW && global.LXW.Store) || global.Store || null;
+  var STRATEGY_TIP_TEXT = '这 6 张牌两轮各拆一次：大牌别只放 1 张比大小，凑十点半、斗牛收分更多。';
+  var STRATEGY_TIP_KEY = ST && ST.KEYS ? ST.KEYS.STRATEGY_TIP_SEEN : null;
+  var tipVisit = null, tipActive = false;
+
+  function takeStrategyTipOnce() {
+    if (!ST || !STRATEGY_TIP_KEY) return false;
+    if (ST.read(STRATEGY_TIP_KEY, '', 'local')) return false;
+    ST.write(STRATEGY_TIP_KEY, '1', 'local');   // 显示那一刻即写，写失败也不拦截显示
+    return true;
+  }
+
+  /* 同一次结算页访问内的重绘要常驻；换房 / 换局 / 阶段变化算新访问，重新按设备键判定。
+   * 不设关闭按钮、不设自动消失计时器 —— 离开结算页随屏收起。 */
+  function strategyTipLine(room) {
+    var visit = String(state && state.roomId) + '|' + String(room && room.round) + '|' + String(room && room.phase);
+    if (visit !== tipVisit) {
+      tipVisit = visit;
+      tipActive = takeStrategyTipOnce();
+    }
+    return tipActive ? STRATEGY_TIP_TEXT : '';
+  }
+
   /* ---------------------- 牌型特写幕（v98，原型 .fx 层移植） ----------------------
    * 原型 docs/prototypes/circle-table.html 里有一整层 .fx，在结算**前面**播：
    *   旋转的 conic 金环（920，7s 无限） + 三道扩散冲击波（0/0.14/0.28s）
@@ -991,7 +1018,9 @@
 
     var waitTxt = '';
     if (gate.code === CODES.HOLD) {
-      waitTxt = '房间已挂起，等朋友进来' + (joined ? '（' + joined + ' 人已进入下一把）' : '');
+      /* 口径对齐到就位态的「房主」（design-next-batch-v1.md §三）：同一事实两种说法，
+       * 非房主在两屏都该读到「房主在等朋友」。只改这一行字，不新增节点 / 载体。 */
+      waitTxt = '房主在等朋友进来，先不开牌' + (joined ? '（' + joined + ' 人已进入下一把）' : '');
     } else if (gate.code === CODES.NEED_PLAYERS || gate.code === CODES.WAITING_OFFLINE) {
       /* 这两条以前在结算页是**空白或误导**的：
        *   · 一个人都没上场时 waitTxt 是空串，房主却看到「还有朋友要来？点等人」；
@@ -1066,6 +1095,44 @@
       } else if (!line) {
         line = '还有朋友要来？点「等人」先别开牌';
       }
+    }
+    /* 一行策略文本：首次进入结算页（非 HOLD）时占用 #settle-wait 这一行。
+     * 不新增节点、不新增行高、不压 #btn-next / #btn-hold / 结算数字。
+     *
+     * ★ 不能只判 `!line`：真机验帧发现 renderSettle 里的门槛提示
+     *   （WAITING_OTHERS / NEED_PLAYERS / OK）**恒有文字**，房主分支还会再补一句，
+     *   于是 `!line` 永不成立 —— 320×568 结算页截帧里根本看不到这行策略文本。
+     *   改为「非 HOLD 且本设备首次进入」就由策略文本占用这一行；tipVisit 缓存整次
+     *   访问，所以重绘仍常驻，离开结算页 / 换局随屏收起（§4.2）。 */
+    /* R11（制作人裁定）：短竖屏 `.compact-v`（320/360 等）放不下 §4.2 的整句策略，
+     * 宁可不给也不给半句 —— 省略号收尾是「给了但没给」的无效交互。
+     * 短路必须放在 strategyTipLine() **之前**：它内部会写「已看过」键，
+     * 不调用就不会误烧掉这一次的额度，用户换到 390 屏仍能正常看到。
+     * 门槛提示 / HOLD 倒计时照常占用这一行，`#settle-wait` 本身不隐藏。 */
+    var stage = document.getElementById('stage');
+    var compact = !!(stage && stage.classList &&
+      stage.classList.contains('compact-v') && !stage.classList.contains('wide-stage'));
+    var tip = (holdNow || compact) ? '' : strategyTipLine(room);
+    if (!line) {
+      if (tip) line = tip;
+    } else if (tip) {
+      line = tip;
+    }
+    if (line === STRATEGY_TIP_TEXT && box && box.style) {
+      /* 28–36 字必须排成一行：撑成两行会把底部动作条顶下去（§九的可砍项）。
+       * maxWidth / minWidth 让这一行只占自己的格子：320×568 实测不收口会
+       * 把 p#settle-wait 撑出舞台 16px（probe-ui-flow 的 out 断言会红）。 */
+      box.style.maxWidth = '100%';
+      box.style.minWidth = '0';
+      box.style.whiteSpace = 'nowrap';
+      box.style.overflow = 'hidden';
+      box.style.textOverflow = 'ellipsis';
+    } else if (box && box.style) {
+      box.style.maxWidth = '';
+      box.style.minWidth = '';
+      box.style.whiteSpace = '';
+      box.style.overflow = '';
+      box.style.textOverflow = '';
     }
     if (box) {
       box.textContent = line || '';

@@ -3315,6 +3315,26 @@
     state.roomId = roomId;
     state.room = room;
     state.unsub = RoomStore.subscribe(roomId, function (r, meta) {
+      lastRoomMeta = meta || null;
+      /* 唯一的状态变更守卫：命中 P1–P4 立即提交，不作废、不照常执行、不等满 5 秒。 */
+      if (leaveMustCommitNow(leaveConfirmSnap, r)) {
+        markLeaveIrrevocable();
+        if (UndoBar) UndoBar.flush('room-changed');
+        leaveConfirmSnap = null;
+        /* flush 的 render() 会把 #undo-msg 清空：把「已不可撤销」回写到条子上再收起，
+         * 机检读得到文案，玩家侧由 flash 看见同一句。 */
+        var im = $('#undo-msg'), ia = $('#undo-act');
+        if (im) im.textContent = LEAVE_IRREVOCABLE;
+        if (ia && ia.removeAttribute) ia.removeAttribute('disabled');
+        flash(LEAVE_IRREVOCABLE);
+        /* 已结算的广播仍要进本机战绩；但不再 cleanupRoom()/showScreen()/render() ——
+         * onCommit 已做过一次，重复走就是第二次导航 + 第二条「已退出房间」。 */
+        if (r) {
+          state.room = r;
+          try { absorbRoom(r); } catch (e) { /* 记账失败不该挡住离开 */ }
+        }
+        return;
+      }
       if (r === null) {
         cleanupRoom();
         showScreen('screen-home');
@@ -3697,8 +3717,69 @@
     return null;
   }
 
+  /* ---------------- 离开房间：5 秒内可以反悔（design-next-batch-v1.md §2.3 / §2.5） ----------------
+   * 三步（leaveRoom / cleanupRoom / showScreen）整体搬进 undoBar 的 onCommit：
+   * 服务端没有逆操作，窗口内**真的没离开**，撤销才不是「本机假装回去」。
+   * 四句文案的终值逐字取自 §2.5，不在别处复述。 */
+  var LEAVE_MSG_MID = '正在离开（5 秒内可撤销）· 对局中离开算弃局，其他人这局也会结束';
+  var LEAVE_MSG_IDLE = '正在离开房间（5 秒内可撤销）';
+  var LEAVE_UNDO_MSG = '已取消，你还在房间里';
+  var LEAVE_IRREVOCABLE = '房间状态已变化，已按最新状态离开，本次无法撤销';
+
+  var leaveConfirmSnap = null;   // 有待撤销的离开时，确认前的房间快照；提交 / 撤销即清空
+  var lastRoomMeta = null;       // 最近一次广播的 meta，供 P4 判「本局结算事件」
+
+  function setLeaveOrigin(on) {
+    var bar = $('#undo-bar');
+    if (!bar || !bar.setAttribute) return;   // 旧缓存没条子：靠 no-dom 兜底真离开
+    if (on) bar.setAttribute('data-undo-origin', 'leave');
+    else bar.removeAttribute('data-undo-origin');
+  }
+
+  /* 单一判据：P1 房间没了 / P2 阶段推进 / P3 已解散或我不在席位 / P4 本局结算事件。
+   * 明确**不**判：ownerId 变化、其他成员进出、score / ready / wantNext / holdNext、
+   * 未生效的 dissolve 投票过程。
+   * 只有确实存在「待撤销的离开」（leaveConfirmSnap 非空）才可能返回真 ——
+   * 否则清除战绩那条撤销会被房间广播误结账。 */
+  function leaveMustCommitNow(confirmSnap, r) {
+    if (!confirmSnap) return false;
+    if (r === null) return true;                                             // P1
+    if (!r || typeof r !== 'object') return false;
+    if (confirmSnap.phase && r.phase && r.phase !== confirmSnap.phase) return true;   // P2
+    if (r.dissolved === true || r.isDissolved === true || r.phase === 'DISSOLVED') return true; // P3
+    var d = r.dissolve;
+    if (d && typeof d === 'object' && (d.passed === true || d.applied === true)) return true; // P3（已生效）
+    if (r.players && r.players.length) {                                     // P3：players 里已无我
+      var stillIn = false;
+      for (var i = 0; i < r.players.length; i++) {
+        var p = r.players[i];
+        if (p && String(p.id) === String(state.myId) && !p.left) { stillIn = true; break; }
+      }
+      if (!stillIn) return true;
+    }
+    var m = lastRoomMeta;                                                     // P4：结算广播
+    if (m) {
+      var t = String(m.type || m.event || m.reason || '').toLowerCase();
+      if (/settle|roundend|round_end|gameover|endround|result/.test(t)) return true;
+      if (m.settled === true || m.roundEnded === true || m.gameEnded === true) return true;
+    }
+    if (r.settled === true && confirmSnap.settled !== true) return true;
+    return false;
+  }
+
+  /* 命中后：条子切「已不可撤销」文本、撤销入口失效，随后由 flush 收起。
+   * 不新建节点、不新建弹窗；可见性由既有 flash 兜住（§2.5 的两个载体之一）。 */
+  function markLeaveIrrevocable() {
+    var msg = $('#undo-msg'), act = $('#undo-act');
+    if (msg) msg.textContent = LEAVE_IRREVOCABLE;
+    if (act && act.setAttribute) act.setAttribute('disabled', 'disabled');
+  }
+
   async function onLeave() {
     if (!state.roomId) return;
+    /* 连点短路：第二次「离开」不能把第一次顶成 superseded —— 那会真把人踢出房间，
+     * 再开一个已经没有对象的窗口。别的待撤销动作进来时仍由契约规矩 1 结账，不例外。 */
+    if (UndoBar && UndoBar.isPending()) { flash('正在离开…'); return; }
     if (blockedOffline()) return;
     /* 核对进度要走一趟网络，最长 2.5 秒。这期间按钮必须有反馈——
      * 「点了没反应」和「点了没生效」在手机上分不出来，人只会反复点。
@@ -3745,10 +3826,43 @@
     if (!fresh && RoomStore.getMode && RoomStore.getMode() === 'ws') {
       desc += '\n（没连上服务端核对最新进度，以上按本地画面判断。）';
     }
-    askConfirm(title, desc, async function () {
-      await RoomStore.leaveRoom(state.roomId, state.myId);
-      cleanupRoom();
-      showScreen('screen-home');
+    /* 确认后**不导航、不调 leaveRoom**：三项动作整体延到 onCommit（延迟执行）。
+     * roomId / myId 在确认时捕获 —— 窗口内 r===null 分支可能已经 cleanupRoom() 清空了 state。 */
+    var leaveRoomId = state.roomId, leaveMyId = state.myId;
+    var confirmSnap = snap || state.room || null;
+    function doLeave() {
+      setLeaveOrigin(false);
+      leaveConfirmSnap = null;
+      try {
+        return Promise.resolve(RoomStore.leaveRoom(leaveRoomId || state.roomId, leaveMyId || state.myId))
+          .catch(function () { /* 断网 / 房间已删除：沿用 roomStore 的尽力而为，不弹离开失败 */ })
+          .then(function () {
+            cleanupRoom();
+            showScreen('screen-home');
+          });
+      } catch (e) {
+        /* 同步抛也不能把人卡在房间里；三步可重复调用不抛错（§2.3 提交幂等）。
+         * 只上报、不弹窗：断网也算退出，不把玩家卡回房间。 */
+        reportBug('onLeave', e);
+        cleanupRoom();
+        showScreen('screen-home');
+        return Promise.resolve();
+      }
+    }
+    askConfirm(title, desc, function () {
+      setLeaveOrigin(true);
+      leaveConfirmSnap = confirmSnap;
+      if (!UndoBar) { doLeave(); return; }        // 旧缓存连条子都没有：动作照做
+      UndoBar.show({
+        msg: mid ? LEAVE_MSG_MID : LEAVE_MSG_IDLE,
+        action: '撤销',
+        onUndo: function () {
+          setLeaveOrigin(false);
+          leaveConfirmSnap = null;
+          flash(LEAVE_UNDO_MSG);
+        },
+        onCommit: function () { return doLeave(); }
+      });
     }, { busyText: '离开中…' });
   }
 

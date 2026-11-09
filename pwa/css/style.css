@@ -3506,6 +3506,31 @@ body.is-dragging { cursor: grabbing; }
 }
 .undo-act:active { transform: scale(0.96); filter: brightness(0.94); }
 
+/* 离开房间的撤销条 —— 屏级锚点（design-next-batch-v1.md §2.6 / D-2）。
+ * .undo-bar 的 bottom:300px 是按**战绩页**调的；离开发生在房间 / 对局 / 结算三屏，
+ * 沿用会压住结算数字与 #btn-next。这里只换锚点：复用同一个 #undo-bar 节点，
+ * 不新建第二个条子、不新建 DOM、不碰 v138 数字阶梯。
+ * data-undo-origin 由 game.js 在 undoBar.show() 前写到条子（或屏级容器）上，
+ * 提交 / 撤销时移除，所以清除战绩那条仍走原锚点。 */
+/* R17（制作人验帧发现的作用域错配）：#undo-bar 是 #stage 的**直接子元素**
+ * （index.html:1300），与各 #screen-* section 是兄弟，不是后代 ——
+ * 原先那三条 `#screen-room/.undo-bar …` 分屏规则**从未匹配过**，
+ * 真正生效的一直是这条基础值。把 176 / 190 / 224 改来改去当然没效果。
+ * 修正：删掉死规则，屏级差异改由 stage 状态标记承担（将来需要时），
+ * 本批只保留一个对三屏都安全的统一锚点，并以实际渲染帧复核。 */
+.undo-bar[data-undo-origin="leave"],
+[data-undo-origin="leave"] .undo-bar {
+  bottom: 300px;
+  max-width: 92%;
+  padding-left: 20px;
+  /* 不动 gap：flex-gap-fallback.css 是从源 CSS 的 gap 声明推导的生成物，
+   * 这里只换锚点，不引入新的 gap，生成物不必重跑。 */
+}
+/* R14：320 档缩放后 .undo-act 的 88 设计px ≈ 38 CSS px，低于 40 触摸判据。
+ * 只给紧凑竖屏补到 96 设计px（≈41 CSS px），不动全局 —— 全局改会顶高条子、
+ * 连带影响上面三屏锚点。 */
+.compact-v:not(.wide-stage) .undo-act { min-height: 96px; }
+
 /* ============================================================
    全机型适配（竖屏 320~440 / 横屏 / 桌面）
    ============================================================ */
@@ -4521,11 +4546,13 @@ body.is-dragging { cursor: grabbing; }
 .auth-link {
   /* 热区 vs 视觉：这行字本身只有 24 设计px 高，在 0.44 缩放下只有 14 CSS px，
    * 触屏上基本点不中（全流程巡检测到的最小热区）。
-   * 用 padding 撑热区、再用等量负 margin 把版面拉回去 —— 视觉零变化，
-   * 但可点范围长到 69 设计px（≥30 CSS 一直到 scale 0.44）。
-   * 为什么不写 min-height：它是行内元素，min-height 不生效。 */
-  padding: 20px 8px;
-  margin: -20px -4px;
+   * 用 padding 撑热区、再用等量负 margin 把版面拉回去 —— 视觉零变化。
+   * R18：原值 20px 撑到 69 设计px，注释写「≥30 CSS 一直到 scale 0.44」；
+   * 但 320×568 的 scale 是 **0.4267** → 69×0.4267 = 29.4 CSS px < TAP_HARD(30)，
+   * 差 0.6px 让新挂进 CI 的 320 分片恒红。改 22px（73 设计px → 31.1 CSS px），
+   * 负 margin 同步，版面一格不动。为什么不写 min-height：行内元素不生效。 */
+  padding: 22px 8px;
+  margin: -22px -4px;
   border: 0;
   background: none;
   font-family: inherit;

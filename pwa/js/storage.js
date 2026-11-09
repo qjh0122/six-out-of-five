@@ -68,6 +68,9 @@
     HAND_LIMIT: 'lxw_hand_limit_v1',
     /* 新手引导看过没有 */
     GUIDE_SEEN: 'lxw_guide_seen_v1',
+    /* 首次进结算页的一行策略引导（按设备只一次；§4.2 唯一终值来源）。
+     * 与 GUIDE_SEEN 分开：规则是「必须知道才能玩」，策略是「玩过一局才有用」。 */
+    STRATEGY_TIP_SEEN: 'lxw_strategy_tip_seen_v1',
     /* 安装引导条关掉的时间戳（一段时间内不再弹） */
     INSTALL_DISMISSED: 'lxw_install_dismissed_v1',
     /* 声音总开关（老键 BGM_LEGACY 只管背景音乐） */

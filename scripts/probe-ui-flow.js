@@ -35,7 +35,9 @@ const { spawn } = require('child_process');
 const ROOT = path.join(__dirname, '..', 'pwa');
 const SHOTS = process.argv.includes('--shots');
 const ONLY = process.env.ONLY || '';
-const SHOT_DIR = path.join(__dirname, '..', 'tmp-shots', 'flow');
+/* SHOT_DIR 可指定（v139）：验收要看图时与 probe-numbers / probe-undo 收进同一个目录，
+ * 默认仍是 tmp-shots/flow。只改输出目录，不改拍摄时机与帧内容。 */
+const SHOT_DIR = process.env.SHOT_DIR ? path.resolve(process.env.SHOT_DIR) : path.join(__dirname, '..', 'tmp-shots', 'flow');
 /* 端口可配（v110）。写死 3042/3043 有一个必然踩到的问题：
  * 连跑两次会撞 —— 上一个实例刚退出时端口还在 TIME_WAIT，新实例 bind 直接
  * EADDRINUSE，而那个报错看起来像「巡检卡住了」。本地偶发、CI 里必发
@@ -53,6 +55,9 @@ const MIME = {
 
 /* 只留必须支持的三个族（平板 / 折叠屏按裁定不纳入）。 */
 const VIEWPORTS = [
+  /* 320×568（v139）：本批补的矮屏档。390×844 上量不出的数字阶梯拥挤，
+   * 只在 320 宽上现形；CI 分片里单独一档，ONLY 写半角 '320x568'。 */
+  { g: '安卓竖', m: '320×568', w: 320, h: 568 },
   { g: 'iOS竖', m: '390×844', w: 390, h: 844 },
   { g: 'iOS横', m: '844×390', w: 844, h: 390 },
   { g: 'iOS竖', m: '430×932', w: 430, h: 932 },

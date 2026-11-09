@@ -197,6 +197,68 @@ head('[4] 成就总数：小屏不许比大屏小');
   ok(drops.length === 1 && /var\(--num-1\)/.test(drops[0].body), '★ 它走 T1');
 }
 
+/* =================== [5] §3.2 条件 ↔ 几何断言对照（AC-NB-20 / 25） ===================
+ * 守的不是「某个字号对不对」，而是**那句自留条件有没有一条会在恶化时变红的断言**：
+ * build-numbers-v1.md §3.2 写着「.compact-v .rp-sum-value | 76 | var(--num-1)
+ * （若 320×568 溢出，改 --num-2 并在提交里写明）」，而 :78-79 自己承认
+ * 「条件写了，但没有一条断言会在它恶化时变红」。这里把「条件 / 令牌 / 几何断言 /
+ * 三处 320x568 对齐」钉成一条链，任何一环被摘掉都要红。
+ * 本文件只做**静态**守（看不见 rect）；真渲染的几何断言在 scripts/probe-numbers.js。 */
+head('[5] §3.2 条件 ↔ 几何断言对照（320×568 三处对齐）');
+{
+  const ROOT = path.join(__dirname, '..', '..');   // 仓库根（本文件原本只用到 CSS_DIR）
+  const css = readAll();
+  const rec = blocks(css['records.css']);
+  const cond = rec.filter((b) => /\.compact-v\s+\.rp-sum-value$/.test(b.sel));
+  eq(cond.length, 1, '★ 找得到 .compact-v .rp-sum-value 这一条 §3.2 条件声明',
+    cond.map((b) => b.sel).join(','));
+
+  const m = /font-size\s*:\s*([^;}]+)/.exec(cond.length ? cond[0].body : '');
+  const v = m ? m[1].trim() : '(无 font-size)';
+  ok(v === 'var(--num-1)' || v === 'var(--num-2)',
+    '★★ §3.2 条件只许落在 {var(--num-1), var(--num-2)} 两档（N5 令牌内换档）', v);
+  eq(/\d\s*px/.test(v), false,
+    '★★ 该选择器 font-size 直接写 px 的次数 == 0（改回 76px 必须红，M5）', v);
+  /* 负向：全站 .compact-v .rp-sum-value 不许出现第二处覆盖（把条件架空） */
+  const compactRules = rec.filter((b) => /\.compact-v\s+\.rp-sum-value/.test(b.sel) && /font-size/.test(b.body));
+  eq(compactRules.length, 1, '★ 条件只有一处（没有被后面的媒体查询悄悄盖掉）', String(compactRules.length));
+
+  /* 「几何断言」那一端：探针里必须有独立 collectGeometry()，且不许复用文本采集器。 */
+  const probe = fs.readFileSync(path.join(ROOT, 'scripts', 'probe-numbers.js'), 'utf8');
+  const geo = /const GEOMETRY = `([\s\S]*?)`;/.exec(probe);   // 页面内独立采集器
+  ok(!!geo && geo[1].length > 200, '（前置）能取到独立几何采集器全文（不是空匹配）',
+    geo ? String(geo[1].length) : 'null');
+  ok(/const GEOMETRY = `/.test(probe) && /document\.querySelector\('\.rp-sum-value'\)/.test(probe),
+    '★★ 几何采集器按 querySelector 结构取节点（不读 textContent）');
+  ok(/const collectGeometry = /.test(probe), '★ 有独立的 collectGeometry() 入口');
+  /* 断言里的容差 / 间隙必须写死，不取自 computed style、不 == T1 */
+  ok(/const TOL = 1;/.test(probe) && /const GAP = 10;/.test(probe),
+    '★★ 1px 容差 / 10px 间隙写死在断言里（§3.1 规格表 + records.css:156 手算）');
+  ok(/nScroll|cScrollW/.test(probe) && /cScrollW <= g\.cClientW/.test(probe),
+    '★ scrollWidth / clientWidth 溢出判据在位（overflow:hidden 藏不住）');
+  /* 只查 [1b] 这一段新断言：文件别处（成就页）沿用 T1 是既有口径，不该被误伤。 */
+  const geoAssert = (probe.split('[1b]')[1] || '').split('/* ---------- [2]')[0];
+  const t1Compare = /[!=]={1,2}\s*T1\b/;      // === T1 / == T1（文字注释里提「T1 主判据」不算）
+  ok(!t1Compare.test(geoAssert) && !t1Compare.test(geo ? geo[1] : ''),
+    '★ 几何采集器 / 断言块里没有 == T1（不钉被测常量）');
+  ok(!/ownText\(|NUM\.test|\bNUM\b/.test(geo ? geo[0] : ''),
+    '★★ 几何采集器不复用 COLLECT 的 ownText() / NUM（M8 负向）');
+
+  /* 三处 320x568 对齐：文档（全角）/ 探针（全角标签 + 半角归一）/ CI（半角 only + step） */
+  const doc = fs.readFileSync(path.join(ROOT, 'docs', 'build-numbers-v1.md'), 'utf8');
+  const flow = fs.readFileSync(path.join(ROOT, 'scripts', 'probe-ui-flow.js'), 'utf8');
+  const wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'test.yml'), 'utf8');
+  ok(/320×568/.test(doc), '★ 文档（build-numbers §3.2）写的是 320×568');
+  ok(/320×568/.test(flow) && /w:\s*320,\s*h:\s*568/.test(flow),
+    '★ 探针 VIEWPORTS 有 320×568 这一档（且尺寸对得上）');
+  ok(/replace\(\/×\/g,\s*'x'\)/.test(flow), '★ 探针仍把 × 归一成半角 x（CI 的 only 才匹配得上）');
+  ok(/only:\s*'320x568'/.test(wf), "★★ CI matrix 里是半角 x 的 '320x568'（不是全角 ×）", 'M7');
+  ok(/probe-ci\.js scripts\/probe-numbers\.js 320 568/.test(wf),
+    '★★ CI 的 run: 块里真调用了 probe-numbers.js 320 568（核到调用点，AC-NB-24）');
+  ok(/ONLY\.split\(','\)/.test(wf), '★ 320 分片自检按 ONLY 期望数取（R5）');
+  ok(!/only:\s*'[^']*×/.test(wf), '★ only 值里没有全角 ×（空列表 exit 2 的坑）');
+}
+
 /* =================== 收尾 =================== */
 console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
 process.exit(fail ? 1 : 0);

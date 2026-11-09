@@ -39,7 +39,7 @@
 |---|---|---|
 | 线上版本 | `20261108a` / sw `v138` | `grep -o '2026110[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
 | 线上核对 | 冒烟 **15/15**；线上 `records.css` 18 处 + `style.css` 13 处 `var(--num-*)` = 31，与本地一致 | `node scripts/probe-online-smoke.js <url>` |
-| 全量回归 | **155 文件 / 6119 断言 / 0 失败**（含 `pwa/test/doc-consistency.test.js` 的 39 项文档守） | `npm test`（日志里能看到 `✓ [21/155] pwa\test\doc-consistency.test.js`） |
+| 全量回归 | **156 文件 / 6261 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项与本批 `leave-undo.test.js`） | `npm test`（日志里能看到 `✓ [21/155] pwa\test\doc-consistency.test.js`） |
 | 探针台账 | **41 条**（`ci` 5 / `manual` 17 / `oneshot` 19） | `npm run probes:check`；真源 `scripts/probes.json` |
 | CSS 规模 | 6853 行（style 5610 / records 1243） | `wc -l pwa/css/style.css pwa/css/records.css` |
 | B3 进度 | v136 撤销 · v137 四态/错误分级 · v138 数字阶梯 均已上线；仍欠离开房间撤销、等人可见、首局策略引导 | [`PLAN.md`](./PLAN.md) §P8 |
@@ -3950,3 +3950,35 @@ rAF 采样互斥、加载零按钮、重试网络层 +1 且只 +1、离线不寄
 （页面 200 不代表样式表 200 —— 少了它，数字会静默退回旧字号，而那看起来"只是有点不对"。）
 
 ---
+
+## 下一批（待发布）· 后悔权收口 / 策略引导 / 320 验证债（2026-11-09）
+
+**状态**：本地全绿，**未发版、未 bump**；线上仍是 `20261108a` / sw `v138`。
+发布时统一升版本号，并按固定五步链路走（文档检查 → 验收 → 推私库 → 推公库 → 发布 → 回填）。
+
+**做了什么**（裁定口径见 `build-next-batch-v1.md` R1–R18）：
+- **① 离开房间撤销**：`leaveRoom` / `cleanupRoom` / `showScreen` 三步整体搬进 `undoBar.show().onCommit`
+  （延迟 5 秒、导航一并延后）；`attachRoom` 订阅回调的单一守卫 P1–P4 命中即 `flush('room-changed')`
+  立即提交，闭合「导航中被结账」。**不改服务端、不加协议字段**（R1 / R2）。
+- **②「等人」判 A 销项**：两份独立复核都证实两屏对非房主本就可见「房主在等人 + 还剩多久」，
+  加控件属重复设计；只做结算页 HOLD 文案口径对齐一行字（R3）。
+- **③ 策略引导**：首次进结算页、按设备一次、独立存储键；参数终值唯一出处 `design-next-batch-v1.md §4.2`。
+  短竖屏放不下整句 → **不显示、也不会烧掉「已看过」额度**（R11，短路在写键之前，不采用省略号）。
+- **④ 320×568 验证债闭环**：`probe-numbers.js` 独立 `collectGeometry()`；`probe-ui-flow` VIEWPORTS 加 320 档；
+  `test.yml` 四步同改（独立分片 / 半角 `320x568` / 自检按分片期望数 / 新增 `probe-numbers 320 568` step）；
+  `number-scale.test.js` + `ci-matrix.test.js` 补静态守（R5）。
+
+**两条只有看实际渲染帧才发现的问题**：
+- **R17**：`#undo-bar` 是 `#stage` 的直接子元素，三条 `#screen-*/.undo-bar` 分屏 CSS 规则**从未匹配过**，
+  改 176→300 当然没效果；删死规则、统一锚点后 390 / 320 两帧都不再压主按钮。
+  与 v136「接线断了不报错」、v138「emoji 名次格子看不见」同族：**不是数值错，是规则没命中那一类元素**。
+- **R18**：320 全流程巡检 `FAILED 2 项`（`auth-link` 热区 29.4 < 30，临界 0.6px，非本批引入），
+  而 R5 新挂的 CI 分片跑的正是它 → 不修就恒红。padding 20→22px、负 margin 同步，视觉零变化、不改判据。
+
+**验收**：`npm test` **156 文件 / 6261 断言 / 0 失败**；`npm run docs:check` 39/39；
+`npm run probes:check` 41 条；`probe-undo` 390 / 320 两档各 **38/38**；
+`probe-numbers` 320 / 390 / 800 三档**全绿**；`ONLY='320x568' probe-ui-flow` **ALL PASS 1 视口 × 13 屏 / EXIT 0**；
+变异自证 M1 / M5 / M6 / M7 实跑（M8 列为验证债）。
+**未做**：真人试玩、线上冒烟（本批未发版）；自动化帧与断言不能替代。
+
+**四条验证债**（逐条在 `BACKLOG.md`）：三屏几何断言 / 320 策略行完整可读 / M8 / 真人试玩。

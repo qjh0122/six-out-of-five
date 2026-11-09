@@ -298,6 +298,63 @@ const COLLECT = `(function(){
   return JSON.stringify({ nums: nums, units: units });
 })()`;
 
+/* ==================== 独立几何采集器（AC-NB-19） ====================
+ * 与上面的 COLLECT 完全分开：那一个按**文本内容**分类数字（ownText + NUM 正则），
+ * 这一个只按 **querySelector 结构**取节点、量 getBoundingClientRect / scroll 尺寸。
+ * 不读 textContent、不用 NUM、不靠单位 span 的文字、不 require 任何被测常量。
+ *
+ * 为什么要独立：v138 的教训是「采集器先天性盲区」—— 一个按文本分类的采集器
+ * 看不见「框没溢出但被 overflow:hidden 裁掉」「矩形越出容器」「相邻块压在一起」。
+ * 复用它只会把这些盲区一起继承过来，M5 变异下不会红（假绿）。
+ *
+ * 期望值 1px 容差 / 10px 间隙写死在断言里：来自 §3.1 规格表与 records.css:156
+ * 的手算，不取自 getComputedStyle，也不随档位漂移。
+ *
+ * 注意：#stage 有 transform 缩放，getBoundingClientRect 给的是缩放后的 CSS px，
+ * 而 offsetLeft / offsetWidth / scrollWidth / clientWidth 是**设计 px 的布局值**。
+ * 「N 与 U 的水平间隙 == 10px」比的是 CSS 声明里的 10px，所以用布局值量；
+ * 边界 / 交集用 rect 量（同一坐标系内比较，缩放不影响「在内 / 交集为 0」）。 */
+const GEOMETRY = `(function(){
+  var C = document.querySelector('.rp-sum-value');
+  var N = document.querySelector('#rp-net');
+  var U = document.querySelector('.rp-unit');
+  var L = document.querySelector('.rp-sum-label');
+  var M = document.querySelector('.rp-sum-meta');
+  function rect(el){
+    if (!el) return null;
+    var b = el.getBoundingClientRect();
+    return { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height };
+  }
+  function overlap(a, b){
+    if (!a || !b) return 0;
+    var x = Math.min(a.r, b.r) - Math.max(a.l, b.l);
+    var y = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+    return (x > 0 && y > 0) ? x * y : 0;
+  }
+  var c = rect(C), n = rect(N), u = rect(U), l = rect(L), m = rect(M);
+  return JSON.stringify({
+    found: !!(C && N && U && L && M),
+    C: c, N: n, U: u, L: l, M: m,
+    /* (b) 真实内容尺寸：overflow:hidden 也藏不住 scrollWidth */
+    cScrollW: C ? C.scrollWidth : -1,
+    cClientW: C ? C.clientWidth : -1,
+    cScrollH: C ? C.scrollHeight : -1,
+    cClientH: C ? C.clientHeight : -1,
+    /* C 的纵向 scrollHeight 被 inline 字度量污染（见下），所以要同时验两件事：
+     *   ① 没有人用 overflow:hidden 把真溢出「藏」起来（M5 的第二种变异）；
+     *   ② 子元素的矩形确实都在 C 内（由下面 (b) 的 rect 断言完成）。
+     * 这两条合起来等价于「scrollHeight<=clientHeight」想守的东西，但不会假红。 */
+    cOverflowX: C ? getComputedStyle(C).overflowX : '?',
+    cOverflowY: C ? getComputedStyle(C).overflowY : '?',
+    /* (c) 矩形交集面积，不读文字 */
+    nLabelOverlap: overlap(n, l),
+    nMetaOverlap: overlap(n, m),
+    /* (c) 水平间隙：布局 px（设计稿坐标），与 CSS 的 gap:10px 同一量纲 */
+    nuGapLayout: (N && U) ? (U.offsetLeft - (N.offsetLeft + N.offsetWidth)) : NaN,
+    nuGapRect: (n && u) ? (u.l - n.r) : NaN
+  });
+})()`;
+
 /* ==================== 断言小工具 ==================== */
 const fails = [];
 function ok(cond, name, extra) {
@@ -435,11 +492,53 @@ async function main() {
       return { data, sizes };
     };
 
+    /* 独立几何采集器的 Node 侧入口。返回的是**量出来的数**，判据全在下面写死。 */
+    const collectGeometry = async () => JSON.parse(await evaluate(GEOMETRY));
+
     /* ---------- [1] 战绩页 ---------- */
     console.log('\n[1] 我的战绩');
     await openScreen('btn-records-home', 'screen-records');
     const rec = await report('战绩页');
     await shot('numbers-records');
+
+    /* ---------- [1b] AC-NB-19：T1 主判据「量格子不看内容」 ----------
+     * 三档都跑（390 / 800 / 320）。320×568 同时命中 .compact-v 与
+     * max-width:420，是另两档都不覆盖的组合 —— 这正是补 320 档的理由。 */
+    console.log('\n[1b] 几何断言（独立 collectGeometry，按选择器量格子）');
+    {
+      const TOL = 1;    // 1px 抗锯齿容差：写死，不取自 computed style
+      const GAP = 10;   // records.css:156 的 gap:10px，手算，不读 computed gap
+      const g = await collectGeometry();
+      ok(g.found === true, '★★ 按 querySelector 找到了 C / N / U / label / meta 五个节点', JSON.stringify(g.found));
+      if (g.found) {
+        const C = g.C, N = g.N, U = g.U;
+        ok(N.l >= C.l - TOL && N.r <= C.r + TOL && N.t >= C.t - TOL && N.b <= C.b + TOL,
+          '★★ (a) N 四边都在 C 内（1px 容差）',
+          'N=' + JSON.stringify(N) + ' C=' + JSON.stringify(C));
+        ok(g.cScrollW <= g.cClientW,
+          '★★ (b) C 横向没有溢出：scrollWidth<=clientWidth（差值 > 0 即红）',
+          'scrollW=' + g.cScrollW + ' clientW=' + g.cClientW);
+        /* 纵向：C.scrollHeight - C.clientHeight 恒为 12px（88 档）/ 7px（48 档）——
+         * inline 盒内容区（≈1.11em）比 line-height:0.98 的行盒高，三档**全都**这样，
+         * 与屏宽无关。拿它当判据会恒红（probe-ui-flow.js:518-520 记过同一条教训）。
+         * 故按项目既有口径「用子元素矩形判」，等价地守住「没有东西溢出 C」。 */
+        ok(N.b <= C.b + TOL && U.b <= C.b + TOL,
+          '★★ (b) C 纵向没有溢出：N / U 矩形底边都在 C 内（rect 口径）',
+          'N.b=' + N.b + ' U.b=' + U.b + ' C.b=' + C.b
+          + '（scrollH-clientH=' + (g.cScrollH - g.cClientH) + 'px 为 inline 字度量，非布局溢出）');
+        ok(!/hidden|clip/.test(g.cOverflowX) && !/hidden|clip/.test(g.cOverflowY),
+          '★★ (b) 没有用 overflow:hidden 掩盖溢出（M5 负向）',
+          g.cOverflowX + '/' + g.cOverflowY);
+        ok(g.nLabelOverlap === 0 && g.nMetaOverlap === 0,
+          '★★ (c) N 与 .rp-sum-label / .rp-sum-meta 交集面积 == 0',
+          'label=' + g.nLabelOverlap + ' meta=' + g.nMetaOverlap);
+        ok(Math.abs(g.nuGapLayout - GAP) <= TOL,
+          '★★ (c) N 与 U 水平间隙 == ' + GAP + 'px（布局格，不读 computed gap）',
+          '实测 ' + g.nuGapLayout + '（rect 口径 ' + g.nuGapRect + '）');
+        ok(U.r <= C.r + TOL, '★ (c) U.right <= C.right + 1',
+          'U.r=' + U.r + ' C.r=' + C.r);
+      }
+    }
     {
       const off = rec.data.nums.filter((n) => NUM_TIERS.indexOf(n.size) < 0);
       ok(off.length === 0, '★ 数值元素全部落在阶梯 {88/48/32/24} 上',
@@ -498,6 +597,9 @@ async function main() {
         return JSON.stringify(out);
       })()`));
       ok(rows.length >= 10, '量到了整张榜（' + rows.length + ' 行）');
+      /* AC-NB-21：320 档也必须走同一套「逐行量格子」口径，不许因为屏窄就跳过。 */
+      if (W === 320) ok(rows.length >= 10,
+        '★ 320×568 逐行量格子仍成立（榜行数 ' + rows.length + ' >= 10）', String(rows.length));
       const rowNoSizes = [...new Set(rows.map((r) => r.no))];
       const rowNetSizes = [...new Set(rows.map((r) => r.net))];
       ok(rowNoSizes.length === 1, '★★ 逐行量：名次格子只有一号（奖牌行也算）', rowNoSizes.join('/'));

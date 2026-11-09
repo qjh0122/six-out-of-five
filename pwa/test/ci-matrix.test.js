@@ -67,10 +67,17 @@ const scheduled = shards.reduce((a, b) => a.concat(b), []);
   const dup = scheduled.filter((k, i) => scheduled.indexOf(k) !== i);
   eq(dup.length, 0, '同一个档位没有被两个分片重复配置', dup.join(','));
 
-  /* 分片大小要均匀：一个 8 档的分片会让整轮 CI 的墙钟时间等于它自己 */
+  /* ★ R5：320×568 是**独立分片**（只有 1 档），分片大小天然不均匀。
+   * 旧的「max - min <= 1」守的是墙钟时间，会把正确接线直接判红 —— 它已经不适用了。
+   * 真正要守的是「每片自检的期望数取自**本片** ONLY」，而不是抄一个 4。
+   * 这条与 [4] 的自检表达式一起构成「按分片期望数取」的一致性守卫。 */
   const sizes = shards.map((s) => s.length);
-  ok(Math.max.apply(null, sizes) - Math.min.apply(null, sizes) <= 1,
-    '分片大小均匀（' + sizes.join(' / ') + '）', '差 ' + (Math.max.apply(null, sizes) - Math.min.apply(null, sizes)));
+  const sum = sizes.reduce((a, b) => a + b, 0);
+  eq(sum, viewports.length,
+    '★★ 各分片档数之和 == 探针支持档数（' + sizes.join('+') + '=' + sum + '，不多不少）',
+    'supported=' + viewports.length);
+  ok(shards.every((s) => s.length >= 1), '★ 每个分片至少 1 档（没有空片）');
+  eq(shards.length, 4, '★ iOS / 安卓 / 电脑 / 320 最小档，共 4 片');
 }
 
 /* ---- 两边必须一一对应 ---- */
@@ -99,8 +106,27 @@ head('[4] 每个分片都自带"真的跑了 N 档"的自检');
    * 分片就会静默跑 0 档。自检那段断言数字必须还在。 */
   ok(/本轮视口 \(d\+\) 个/.test(job.replace(/\\/g, '')) || /本轮视口/.test(job),
     '★ 分片里有「本轮视口」的解析（真的跑了才算过）');
-  ok(/n !== 4/.test(job), '★ 断言每片恰好 4 档（数字写死，改分片必须同步改这里）');
-  ok(/分片应跑 4 档/.test(job), '★ 少跑的时候会报 ::error::，不是静默通过');
+  /* ★ R5 核心：期望数按**本片** ONLY 的档数取，不再写死 4。
+   * 留着 n !== 4 的话，320 那一片（1 档）会立刻 exit 3 假红（M7 要证伪的正是它）。 */
+  ok(/ONLY\.split\(','\)/.test(job), '★★ 自检期望数取自本片 ONLY.split(",")（按分片期望数取）');
+  ok(!/n !== 4/.test(job), '★★ 旧的 n !== 4 写死断言已删除');
+  ok(/process\.exit\(3\)/.test(job), '★ 少跑时会 exit 3，不是静默通过');
+  ok(/::error::/.test(job) && /分片应跑/.test(job),
+    '★ 少跑的时候会报 ::error:: 并说明应跑几档，不是静默通过');
+}
+
+head('[4b] 320×568 真的挂进了 CI（AC-NB-23 / AC-NB-24 核到调用点）');
+{
+  /* 除「退出码 == 0」外，还要核到 workflow 的哪个 run: 块真的调用了探针。
+   * 只加 VIEWPORTS 一行而没挂探针 = 新档从没被真跑过（R5 四步同改的第 3 步）。 */
+  ok(/probe-numbers\.js 320 568/.test(ci) || /probe-numbers\.js\s+320\s+568/.test(ci),
+    '★★ CI 里真有 `node scripts/probe-ci.js scripts/probe-numbers.js 320 568` 调用');
+  ok(/probe-ci\.js scripts\/probe-numbers\.js 320 568/.test(ci),
+    '★★ 调用点走 probe-ci.js 启动器（参数原样转发到 W/H）');
+  ok(/only:\s*'320x568'/.test(ci), "★★ matrix.include 有半角 x 的独立分片 '320x568'");
+  /* 半角 x 归一：全角 × 经 YAML→env→Node 会被改坏，曾「安静跑 0 档然后通过」 */
+  ok(!/only:\s*'[^']*×/.test(ci), '★ only 值里没有全角 ×（M7 负向）');
+  ok(/320×568/.test(probe), '★ 探针 VIEWPORTS 里确实有 320×568 这一档');
 }
 
 /* ---- 顺带守一件事：ONLY 的多值语法 ---- */
