@@ -38,14 +38,14 @@
 | 项 | 现在的值 | 怎么复算 |
 |---|---|---|
 | 线上版本 | `20261109a` / sw `v139` | `grep -o '2026110[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
-| 线上核对 | **15/15 通过**（2026-11-09 发布后实跑；含后台功能上线后复跑一次；版本号回读 = `20261109a`，无 JS 异常 / 无 HTTP≥400 / SW 已接管） | `node scripts/probe-online-smoke.js <url>` |
+| 线上核对 | **15/15 通过**（2026-11-09 模拟对战修复版发布后实跑；版本号回读 = `20261109a`，无 JS 异常 / 无 HTTP≥400 / SW 已接管；另直取 `/admin.html` 200 且五个新标记全中） | `node scripts/probe-online-smoke.js <url>` |
 | 管理后台 | 线上 `/admin.html` 可用（三页签：用户管理 / 模拟对战 / 排行榜）；真浏览器登录 **12/12**，错误密钥反向 **8 条全红**。密钥取自 `server/backup-key.txt`（gitignore，未入库），旧值备份在本机 `.workbuddy/` | `curl -H 'x-backup-key: <key>' "<url>/api/admin/users?sharecode=<sc>"` |
 | 全量回归 | **158 文件 / 6328 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项、`bot-runner.test.js` 28 项、`bot-split.test.js` 11 项、`admin.test.js` 53 项） | `npm test` |
 | 探针台账 | **42 条**（`ci` 5 / `manual` 18 / `oneshot` 19） | `npm run probes:check`；真源 `scripts/probes.json` |
 | 几何判定工具自验 | **10/10**（6 组已知答案样本 + 2 个采集器合规），M8 变异下退出码 1 | `npm run qa:geom` |
 | CSS 规模 | 6888 行（style 5645 / records 1243） | `wc -l pwa/css/style.css pwa/css/records.css` |
 | B3 进度 | v136 撤销 · v137 四态/错误分级 · v138 数字阶梯 · v139 离开撤销三屏锚点 / 320 策略行 / 工具自验；**仍欠真人试玩**（`BACKLOG.md` N-4） | [`PLAN.md`](./PLAN.md) §P8 |
-| 代码同步 | 本地与 `origin/main` 一致；**代码提交** HEAD `bb04431`（其后提交只动文档与密钥文件，不影响代码一致性） | `git status -sb`；`git log --oneline -1 -- server pwa scripts` |
+| 代码同步 | 本地与 `origin/main` 一致；**代码提交** HEAD `552c4e2`（其后提交只动文档与密钥文件，不影响代码一致性） | `git status -sb`；`git log --oneline -1 -- server pwa scripts` |
 
 ### 历史记录：v129 / v133 段落（当时，保留原文数值）
 
@@ -4111,7 +4111,7 @@ rAF 采样互斥、加载零按钮、重试网络层 +1 且只 +1、离线不寄
 
 ---
 
-### 后台模拟对战 · 四条反馈的修复 + 机器人学会挑牌（2026-11-09，**未发布**）
+### 后台模拟对战 · 四条反馈的修复 + 机器人学会挑牌（2026-11-09 已发布 · 未 bump 客户端版本）
 
 四条反馈里，前三条是后台页面的真 bug，第四条是**打法问题而不是发牌问题**。
 第四条先用数据定性，再动代码，顺序不能反 —— 否则很容易把「我的机器人不会打牌」
@@ -4204,3 +4204,16 @@ rAF 采样互斥、加载零按钮、重试网络层 +1 且只 +1、离线不寄
 
 **未做**：真人试玩（`BACKLOG.md` N-4）仍然只欠人。这轮修的是「模拟数据像不像真人」，
 不是「真人对局手感如何」。
+
+#### 发布后核对（2026-11-09）
+
+- 私库提交 `552c4e2`，公库同步 `848d621`（敏感检查通过）
+- 线上 `probe-online-smoke` **15/15**：版本回读 `20261109a`、无 JS 异常、
+  无 HTTP≥400、SW 已接管
+- 后台页面直取线上 200 / 51248 字节，五个新标记全部命中
+  （`pw-remember`、`bot-strategy`、`job-hands`、`lxw_admin_pw_v1`、`updatePoolCount`）——
+  证明线上跑的就是这轮代码，不是缓存里的旧页
+- 服务端随部署重启一次，当时进行中的房间作废；档案与榜单未受影响
+
+> 榜单口径提醒：`strategy: 'smart'` 上线后，机器人战绩与此前 14 场（按位置拆牌）
+> **不可直接相比**。要看「机器人是否还吃亏」，请以这轮之后新产生的场次为准。
