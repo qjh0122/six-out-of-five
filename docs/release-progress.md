@@ -31,20 +31,20 @@
 
 ## 当前状态（唯一权威 · 2026-11-09 核对）
 
-> **本文件按版本正序追加**：下面从 v108 一路写到 v138，每一段写的都是**当时**的线上事实。
+> **本文件按版本正序追加**：下面从 v108 一路写到 v139，每一段写的都是**当时**的线上事实。
 > 判断「现在是什么」只看**本卡片**与**文件最后一段**；中间任何一段里的「线上」「当前」
 > 都是那一版发布时写的，不是现状。
 
 | 项 | 现在的值 | 怎么复算 |
 |---|---|---|
 | 线上版本 | `20261109a` / sw `v139` | `grep -o '2026110[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
-| 线上核对 | **待本版发布后跑**（结果回填到下方 v139 段与本节） | `node scripts/probe-online-smoke.js <url>` |
+| 线上核对 | **15/15 通过**（2026-11-09 发布后实跑；版本号回读 = `20261109a`，无 JS 异常 / 无 HTTP≥400 / SW 已接管） | `node scripts/probe-online-smoke.js <url>` |
 | 全量回归 | **156 文件 / 6263 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项、`leave-undo.test.js` 与新增的几何工具自验） | `npm test` |
 | 探针台账 | **41 条**（`ci` 5 / `manual` 17 / `oneshot` 19） | `npm run probes:check`；真源 `scripts/probes.json` |
 | 几何判定工具自验 | **10/10**（6 组已知答案样本 + 2 个采集器合规），M8 变异下退出码 1 | `npm run qa:geom` |
 | CSS 规模 | 6888 行（style 5645 / records 1243） | `wc -l pwa/css/style.css pwa/css/records.css` |
 | B3 进度 | v136 撤销 · v137 四态/错误分级 · v138 数字阶梯 · v139 离开撤销三屏锚点 / 320 策略行 / 工具自验；**仍欠真人试玩**（`BACKLOG.md` N-4） | [`PLAN.md`](./PLAN.md) §P8 |
-| 代码同步 | 本地与 `origin/main` 一致，HEAD `e77ba14` | `git status -sb` |
+| 代码同步 | 本地与 `origin/main` 一致，HEAD `47634f3` | `git status -sb` |
 
 ### 历史记录：v129 / v133 段落（当时，保留原文数值）
 
@@ -4015,6 +4015,7 @@ rAF 采样互斥、加载零按钮、重试网络层 +1 且只 +1、离线不寄
 **验收**：`npm test` **156 文件 / 6263 断言 / 0 失败**；`npm run docs:check` 39/39；
 `npm run probes:check` 41 条；`npm run qa:geom` 10/10；
 `node scripts/probe-undo.js` 390×844 **65/65**、320×568 **65/65**；
-线上冒烟：**待本段回填**。
+线上冒烟：`node scripts/probe-online-smoke.js "https://your-app.app.workbuddy.host/?sharecode=…"` **15/15 通过**
+（版本回读 `20261109a`、JS 异常 0、console.error 0、HTTP≥400 0、manifest 带码 200、SW 已接管）。
 
 **未做**：真人试玩（`BACKLOG.md` N-4，只能人在真机上走，脚本已写好）。
