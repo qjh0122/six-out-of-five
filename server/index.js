@@ -18,6 +18,7 @@ const { WebSocketServer } = require('./ws');
 const { ProfileStore } = require('./profile');
 const { AvatarStore, MAX_BYTES: AVATAR_MAX_BYTES } = require('./avatars');
 const { Hub } = require('./hub');
+const { BotRunner, HAND_LIMITS, MIN_PLAYERS, MAX_PLAYERS, MAX_ROOMS } = require('./botRunner');
 const auth = require('./auth');
 const { cleanNickname } = require('./text');
 
@@ -153,6 +154,20 @@ const hub = new Hub({
      * 别人拿着旧令牌照样能通过 ws 占用你的座位。 */
     return tokenAlive(pid, payload) ? pid : '';
   }
+});
+
+/* ---------------------------- 后台模拟对战 ---------------------------- */
+
+/* 为什么 base 是环回地址：任务是**服务端自己**发起的，再绕一遍部署网关既没意义、
+ * 还要多带一次 sharecode（网关对 /ws 同样校验）。协议本身完全一样 ——
+ * 同样是 /ws + auth 帧 + createRoom/submitGroups，所以后台跑出来的数据和真人同源。
+ * BOT_BASE 留给特殊部署（比如服务另有独立域名）覆盖。 */
+const botRunner = new BotRunner({
+  base: function () { return process.env.BOT_BASE || ('http://127.0.0.1:' + PORT); },
+  log: log,
+  /* 任务历史与档案放同一个数据目录（项目外）：部署覆盖代码时不丢。
+   * **注意这个文件里永远没有密码** —— job 只存账号名，见 botRunner 文件头第 2 条。 */
+  storeFile: path.join(path.dirname(profiles.file), 'bot-jobs.json')
 });
 
 /* ---------------------------- 账号 / 登录 ---------------------------- */
@@ -1187,7 +1202,15 @@ async function handleRequest(req, res) {
      *   unmark-ai-games 撤销修正、restore 用备份快照整体覆盖。 */
     '/api/admin/mark-ai-games': true,
     '/api/admin/unmark-ai-games': true,
-    '/api/admin/restore': true
+    '/api/admin/restore': true,
+    /* 后台「模拟对战」与「排行榜」：同样是管理动作，沿用同一把密钥。
+     * 为什么单独开接口而不是让页面直接打 /api/leaderboard：
+     * 页面要的是**全部名次 + 名次序号 + 谁在打**，公开接口只给 top50 摘要。 */
+    '/api/admin/leaderboard': true,
+    '/api/admin/bot/start': true,
+    '/api/admin/bot/jobs': true,
+    '/api/admin/bot/job': true,
+    '/api/admin/bot/stop': true
   };
 
   if (ADMIN_PATHS[adminPath] === true) {
@@ -1210,6 +1233,73 @@ async function handleRequest(req, res) {
     if (adminPath === '/api/admin/users') {
       if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只接受 GET' });
       return sendJson(res, 200, { ok: true, list: profiles.accountList() });
+    }
+
+    /* 完整排行榜（带名次序号）。排序只有 `profile._standings()` 一处真源，
+     * 这里**不再自己 sort 一遍** —— 两套排序口径迟早会不一致，而榜单是玩家最会较真的地方。 */
+    if (adminPath === '/api/admin/leaderboard') {
+      if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只接受 GET' });
+      const all = profiles.standings();
+      const want = Number(queryParam(req.url, 'limit')) || 500;
+      const limit = Math.min(all.length, Math.max(1, Math.floor(want)));
+      const list = all.slice(0, limit).map((r, i) => Object.assign({ rank: i + 1 }, r));
+      return sendJson(res, 200, { ok: true, total: all.length, list: list });
+    }
+
+    /* 任务列表：页面每 1.5 秒轮询一次，所以只回摘要（不带逐把流水）。 */
+    if (adminPath === '/api/admin/bot/jobs') {
+      if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只接受 GET' });
+      return sendJson(res, 200, {
+        ok: true,
+        jobs: botRunner.list(),
+        running: botRunner.runningId,
+        /* 上限放服务端下发，页面就不用把 3/5/15/30 这些数字再抄一遍 */
+        limits: {
+          handLimits: HAND_LIMITS,
+          minPlayers: MIN_PLAYERS,
+          maxPlayers: MAX_PLAYERS,
+          maxRooms: MAX_ROOMS
+        }
+      });
+    }
+
+    /* 任务详情：带逐把流水。只在用户点开某一条时请求，不跟着轮询走。 */
+    if (adminPath === '/api/admin/bot/job') {
+      if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: '只接受 GET' });
+      const jobId = queryParam(req.url, 'id');
+      if (!jobId) return sendJson(res, 400, { ok: false, error: '缺少 id' });
+      const job = botRunner.get(jobId);
+      if (!job) return sendJson(res, 404, { ok: false, error: '找不到这个任务' });
+      return sendJson(res, 200, { ok: true, job: job });
+    }
+
+    if (adminPath === '/api/admin/bot/start') {
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只接受 POST' });
+      if (!requireJson(req, res)) return;
+      const botBody = await readJsonBody(req);
+      if (!botBody) return sendJson(res, 400, { ok: false, error: '请求格式不正确' });
+      try {
+        const job = botRunner.start(botBody);
+        log('admin bot start ' + job.id + '：' + job.players.map((p) => p.account).join('/') +
+          ' × ' + job.spec.rooms + '场×' + job.spec.handsPerRoom + '把');
+        return sendJson(res, 200, { ok: true, job: job });
+      } catch (e) {
+        /* BUSY 用 409 而不是 400：这不是「参数写错了」，是「现在不行」，
+         * 页面据此可以把正在跑的那条任务高亮出来，而不是让用户去猜哪里填错。 */
+        const code = e && e.code === 'BUSY' ? 409 : 400;
+        return sendJson(res, code, { ok: false, error: e.message, jobId: (e && e.jobId) || '' });
+      }
+    }
+
+    if (adminPath === '/api/admin/bot/stop') {
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只接受 POST' });
+      if (!requireJson(req, res)) return;
+      const stopBody = await readJsonBody(req);
+      if (!stopBody) return sendJson(res, 400, { ok: false, error: '请求格式不正确' });
+      const rr = botRunner.cancel(stopBody.id);
+      if (!rr.ok) return sendJson(res, rr.code === 'NOTFOUND' ? 404 : 409, { ok: false, error: rr.error });
+      log('admin bot stop ' + stopBody.id);
+      return sendJson(res, 200, { ok: true, job: rr.job });
     }
 
     if (adminPath === '/api/admin/mark-ai-games') {

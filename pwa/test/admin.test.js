@@ -72,5 +72,36 @@ const escUses = (html.match(/esc\(/g) || []).length;
 ok(escUses >= 6, '账号/昵称等用户数据渲染前都转了义（' + escUses + ' 处）');
 ok(html.indexOf("esc(u.account)") >= 0 && html.indexOf("esc(u.nickname") >= 0, '账号名与昵称确实过 esc()');
 
+console.log('\n[三个页签]');
+ok(/data-tab="users"/.test(html) && /data-tab="bot"/.test(html) && /data-tab="board"/.test(html), '用户管理 / 模拟对战 / 排行榜 三个页签');
+ok(/id="pane-users"/.test(html) && /id="pane-bot"/.test(html) && /id="pane-board"/.test(html), '三个面板容器都在');
+
+console.log('\n[模拟对战：能选人、能定场数局数]');
+ok(calls.some((c) => c.path === '/admin/bot/start' && c.method === 'POST'), 'POST /admin/bot/start（启动任务）');
+ok(calls.some((c) => c.path === '/admin/bot/jobs' && c.method === 'GET'), 'GET /admin/bot/jobs（进度轮询）');
+ok(calls.some((c) => c.path === '/admin/bot/job' && c.method === 'GET'), 'GET /admin/bot/job（逐把明细）');
+ok(calls.some((c) => c.path === '/admin/bot/stop' && c.method === 'POST'), 'POST /admin/bot/stop（停止）');
+ok(/id="bot-rooms"/.test(html), '有「对战场数」输入');
+ok(/id="bot-hands"/.test(html), '有「每场局数」选择');
+ok(/<option value="3"/.test(html) && /<option value="30"/.test(html), '局数选项覆盖 3~30（建房白名单）');
+ok(/data-acc=/.test(html) && /input\[type="checkbox"\]/.test(html), '玩家池用勾选框选人');
+ok(/pool-count/.test(html), '显示已选人数（2~5 人约束）');
+
+console.log('\n[排行榜页]');
+ok(calls.some((c) => c.path === '/admin/leaderboard' && c.method === 'GET'), 'GET /admin/leaderboard（完整名次）');
+ok(/名次/.test(html) && /净胜/.test(html), '表头含名次与净胜');
+
+console.log('\n[账号密码不落地]');
+/* 后台密钥本来就只存 sessionStorage；账号密码比密钥更不该在设备上多留一份。
+ * 这条一旦被改成 sessionStorage/localStorage，页面看起来一切正常，
+ * 但密码就长期留在浏览器存储里了 —— 属于「功能没坏、风险变大」的改动。 */
+ok(/var pwMap = \{\};/.test(html), '密码只放内存变量 pwMap');
+ok(!/sessionStorage\.setItem\([^)]*[Pp]assword/.test(html), '不把密码写进 sessionStorage');
+ok(!/localStorage/.test(html), '整页不用 localStorage');
+
+console.log('\n[轮询只在需要时开]');
+ok(/function startPoll\(/.test(html) && /function stopPoll\(/.test(html), '有轮询开关');
+ok(/if \(name === 'bot'\) \{ startPoll\(\); \} else \{ stopPoll\(\); \}/.test(html), '只在模拟对战页签轮询，切走就停');
+
 console.log('\n结果: ' + pass + ' 通过, ' + fail + ' 失败');
 process.exit(fail ? 1 : 0);
