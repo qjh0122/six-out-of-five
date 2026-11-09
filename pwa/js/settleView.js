@@ -1104,35 +1104,36 @@
      *   于是 `!line` 永不成立 —— 320×568 结算页截帧里根本看不到这行策略文本。
      *   改为「非 HOLD 且本设备首次进入」就由策略文本占用这一行；tipVisit 缓存整次
      *   访问，所以重绘仍常驻，离开结算页 / 换局随屏收起（§4.2）。 */
-    /* R11（制作人裁定）：短竖屏 `.compact-v`（320/360 等）放不下 §4.2 的整句策略，
-     * 宁可不给也不给半句 —— 省略号收尾是「给了但没给」的无效交互。
-     * 短路必须放在 strategyTipLine() **之前**：它内部会写「已看过」键，
-     * 不调用就不会误烧掉这一次的额度，用户换到 390 屏仍能正常看到。
-     * 门槛提示 / HOLD 倒计时照常占用这一行，`#settle-wait` 本身不隐藏。 */
-    var stage = document.getElementById('stage');
-    var compact = !!(stage && stage.classList &&
-      stage.classList.contains('compact-v') && !stage.classList.contains('wide-stage'));
-    var tip = (holdNow || compact) ? '' : strategyTipLine(room);
+    /* R11 原定：短竖屏「宁可不给也不给半句」。N-2 改判 —— 不给也是一种缺口，
+     * 而且 320 档玩家恰好是最需要这句策略的人。改为**允许换行**：
+     * 整句照给，行数由容器决定（`white-space: normal`），绝不出现省略号。
+     * 「不给半句」这条原则不变：宁可多占一行，也不截断。
+     * HOLD 态仍不显示（那一行要留给「还剩多久」）。 */
+    var tip = holdNow ? '' : strategyTipLine(room);
     if (!line) {
       if (tip) line = tip;
     } else if (tip) {
       line = tip;
     }
     if (line === STRATEGY_TIP_TEXT && box && box.style) {
-      /* 28–36 字必须排成一行：撑成两行会把底部动作条顶下去（§九的可砍项）。
+      /* ★ 390 一行、320 两行：行数交给排版，不写死。
        * maxWidth / minWidth 让这一行只占自己的格子：320×568 实测不收口会
-       * 把 p#settle-wait 撑出舞台 16px（probe-ui-flow 的 out 断言会红）。 */
+       * 把 p#settle-wait 撑出舞台 16px（probe-ui-flow 的 out 断言会红）。
+       * 换行必须显式写 normal —— `.settle-wait` 在 style.css 的
+       * nowrap+ellipsis 那一组里，不覆盖就会截成省略号（正是被否掉的「给了但没给」）。 */
       box.style.maxWidth = '100%';
       box.style.minWidth = '0';
-      box.style.whiteSpace = 'nowrap';
-      box.style.overflow = 'hidden';
-      box.style.textOverflow = 'ellipsis';
+      box.style.whiteSpace = 'normal';
+      box.style.overflow = 'visible';
+      box.style.textOverflow = 'clip';
+      box.setAttribute('data-strategy-tip', '1');
     } else if (box && box.style) {
       box.style.maxWidth = '';
       box.style.minWidth = '';
       box.style.whiteSpace = '';
       box.style.overflow = '';
       box.style.textOverflow = '';
+      box.removeAttribute('data-strategy-tip');
     }
     if (box) {
       box.textContent = line || '';

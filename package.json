@@ -15,6 +15,7 @@
     "probes:check": "node scripts/probes.js --check",
     "probes:doc": "node scripts/probes.js --write",
     "docs:check": "node scripts/check-docs.js",
+    "qa:geom": "node tools/qa/geometry-selftest.js",
     "backup": "node scripts/backup-leaderboard.js",
     "audit:comments": "node scripts/audit-comments.js"
   },

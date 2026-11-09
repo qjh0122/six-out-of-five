@@ -255,6 +255,11 @@ jobs:
           fi
           exit $code
 
+      # 判定工具自验（AC-NB-26 / N-3）：先证明尺子准，才许拿它量别人。
+      # 它同时挡 M8 变异 —— 采集器一旦改成「按文本采集」，这里立刻红并拒绝下结论。
+      - name: 几何判定工具自验
+        run: node tools/qa/geometry-selftest.js
+
       # ── 撤销条（v136）────────────────────────────────────────────────
       # 它验的是「破坏性动作之前的 5 秒里，数据到底还在不在」——
       # 这件事没有任何静态断言能证明：单测只能说"到点会调回调"，
@@ -270,7 +275,8 @@ jobs:
           # 用 node 解析而不是 grep：runner 的 C locale 下 grep 匹配不到多字节字符。
           node -e "
             const t = require('fs').readFileSync('/tmp/u.log', 'utf8');
-            const need = ['[6] 离开房间', '[7] 离开房间', '广播到达', '250ms', 'leaveRoom 调用数'];
+            const need = ['[6] 离开房间', '[7] 离开房间', '广播到达', '250ms', 'leaveRoom 调用数',
+                          '[8] 房间屏', '[9] 对局屏', '[10] 结算屏', '策略行', '已知代价'];
             const missing = need.filter(function(s){ return t.indexOf(s) < 0; });
             if (missing.length) {
               console.error('::error::离开房间专项断言没跑全：' + missing.join(' / '));
@@ -281,6 +287,32 @@ jobs:
           if [ $self -ne 0 ]; then exit $self; fi
           if [ $code -ne 0 ]; then
             tail -8 /tmp/u.log | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done
+          fi
+          exit $code
+
+      # 撤销条 · 320×568：N-1（结算屏锚点）与 N-2（策略行两行）两条缺陷都是
+      # **窄屏专有**的 —— 只跑 390 会全绿。窄屏是遮挡最容易发生的地方，必须单跑一档。
+      - name: 撤销条 · 320×568（三屏几何 + 策略行两行）
+        run: |
+          set +e
+          node scripts/probe-ci.js scripts/probe-undo.js 320 568 > /tmp/u320.log 2>&1
+          code=$?
+          cat /tmp/u320.log
+          node -e "
+            const t = require('fs').readFileSync('/tmp/u320.log', 'utf8');
+            const need = ['[8] 房间屏', '[9] 对局屏', '[10] 结算屏', '策略行', '最多 3 行'];
+            const missing = need.filter(function(s){ return t.indexOf(s) < 0; });
+            if (missing.length) {
+              console.error('::error::320 档断言没跑全：' + missing.join(' / '));
+              process.exit(3);
+            }
+          "
+          self=$?
+          if [ $self -ne 0 ]; then exit $self; fi
+          if [ $code -ne 0 ]; then
+            tail -8 /tmp/u320.log | while IFS= read -r line; do
               [ -n "$line" ] && echo "::error::$line"
             done
           fi

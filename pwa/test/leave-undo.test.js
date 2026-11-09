@@ -315,7 +315,16 @@ head('[AC-NB-15] 不遮挡：不新增节点 / 行高 / 按钮');
 {
   ok(/if \(!line\)/.test(SETTLE) && /strategyTipLine\(room\)/.test(SETTLE), 'AC-NB-15 复用 #settle-wait 既有行');
   ok(/box\.textContent = line \|\| ''/.test(SETTLE), 'AC-NB-15 只写既有行的 textContent');
-  ok(/box\.style\.whiteSpace = 'nowrap'/.test(SETTLE), 'AC-NB-15 单行不换行（不新增行高）');
+  /* N-2 改判：R11 原来要求「单行不换行、放不下就不显示」，实测 320 档整句排不下，
+   * 于是那一档什么都看不到 —— 「给了但没给」换了个方向照样成立。
+   * 现在允许换行：行数交给排版，但**必须**显式关掉省略号（`.settle-wait` 在
+   * style.css 的 nowrap+ellipsis 那一组里），否则截断就是被否掉的那件事。 */
+  ok(/box\.style\.whiteSpace = 'normal'/.test(SETTLE),
+    'AC-NB-15 策略行允许换行（N-2 改判，不再单行硬压）');
+  ok(/box\.style\.textOverflow = 'clip'/.test(SETTLE),
+    'AC-NB-15 显式关掉省略号（整句照给，不截断）');
+  eq(occurrences(SETTLE, 'textOverflow = \'ellipsis\''), 0,
+    'AC-NB-15 策略行不再出现 ellipsis（负向）');
   eq(occurrences(SETTLE, 'role="dialog"'), 0, 'AC-NB-15 无第二个 [role=dialog]');
   eq(occurrences(SETTLE, "aria-modal"), 0, 'AC-NB-15 无新增弹窗');
   ok(!/el\('button'/.test(tipLine + tipTake), 'AC-NB-15 策略引导不新增按钮');

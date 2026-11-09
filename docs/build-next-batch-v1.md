@@ -67,6 +67,16 @@
 
 > **R17 是这一轮最值钱的发现**：不是数值调错了，是**规则根本没命中那一类元素**。与 v136「接线断了不报错」、v138「emoji 名次格子按文本采集看不见」同族。
 
+### 追加裁定 R19 / R20 / R21（清 N-1 / N-2 / N-3 时新增，2026-11-09）
+
+| # | 发现 | 裁定 | 证据 |
+|---|---|---|---|
+| **R19** | 结算屏的撤销条**不能用固定 `bottom`**。先把 `[data-undo-screen="screen-settle"]` 写死 `481px`：390 档不再压 `#btn-next`，转而压住 `#settle-wait` 2332px²；320 档压住「改把数」那排。根因是**等待行高度随文案与宽度变**（策略行 390 / 320 都是两行，HOLD 态一行），任何常数值只能对一档正确 | 改为 `game.js` 的 `anchorLeaveBarOnSettle()`：取「`#settle-wait` 顶 / `.room-actions` 顶」中更靠上的那个，再往上留 8 CSS px，按 `#stage` 的 `渲染高/布局高` 换算成设计 px；`resize` 时若还有待撤销的离开则重算。CSS 里**不留这个数值**（同一事实只有一个载体） | `probe-undo` [10]：390 条子 512–574 / 等待行 582–613 → 交集 0；320 条子 311–365 / 等待行 373–399 → 交集 0。写死 481 时的失败现场：390 `#settle-wait` 2332px² |
+| **R20** | 320 档策略行 R11 裁定「不显示」，等于那一档没有策略引导；而「省略号截断」同样被否 —— 两种都是「给了但没给」 | 改判：**允许换行，整句照给**，显式 `white-space: normal` + `text-overflow: clip`（`.settle-wait` 在 style.css 的 nowrap+ellipsis 组里，不覆盖就截断）。行数交给排版，断言上限 3 行 | `probe-undo` [10]：390 与 320 均 2 行；`scrollWidth/Height <= clientWidth/Height`；与 `#btn-next` 间隙 17 / 14 CSS px；不越出 `#stage` |
+| **R21** | `probe-undo` 原来跑 `?mode=local`，而「补 AI」按钮只在 `RoomStore.getMode() === 'ws'` 时出现（`game.js:761`）→ 本地模式凑不够 `MIN_PLAYERS=2`，**对局屏根本进不去**。上一版量到的其实是就绪态那一排，是一条看着全绿的假断言 | 探针改为**双来源**：`[1]–[7]` 仍走 `?mode=local`（战绩种子不会被云端记录顶掉），`[8]–[10]` 切到真实应用服务（探针自起 `server/index.js`、临时 profile）。同时对「页面内 spy 钩子」加存在性守卫 | 改造后 [9] 量到 22 个对局控件（`#btn-submit` / `#btn-leave-game` / 6 张手牌 / 3 个牌位槽），并因此暴露真缺陷（见 R19）与被静默吞掉的 `TypeError: Cannot set properties of undefined (setting 'calls')` |
+
+> **R21 的教训与 R17 同族**：假绿不是「断言写错了」，是**被量的东西压根不在那儿**。判别办法只有一个 —— 先断言「我要量的那个东西真的存在且可见」，再去断言它的性质。
+
 ---
 
 ## 二、文件级改动清单（施工方按此落盘）

@@ -302,7 +302,11 @@
   }
 
   /* ---------------------------- 屏幕切换 ---------------------------- */
+  var lastScreenId = '';   // 当前可见屏的 id（showScreen 唯一写入点）
   function showScreen(id) {
+    /* 「现在露的是哪一屏」的唯一记录点：撤销条的屏级锚点（setLeaveOrigin）需要它。
+     * 只记 id，不另存状态 —— 与下面 screens 循环同源，不会出现两处说法不一致。 */
+    lastScreenId = id;
     /* 离开战绩页时，把「待撤销的清除」结账（v136）。
      * 用户已经换到别的屏，说明他接受了这次清除 —— 不结账的话条子会在
      * 别的页面上继续倒数，5 秒后**在背后**把数据删掉，没有任何人看得见。 */
@@ -3729,11 +3733,41 @@
   var leaveConfirmSnap = null;   // 有待撤销的离开时，确认前的房间快照；提交 / 撤销即清空
   var lastRoomMeta = null;       // 最近一次广播的 meta，供 P4 判「本局结算事件」
 
+  /* 结算页的撤销条锚点必须**算**，不能写死一个数。
+   * 390×844 实测：底部动作区 630–782、等待行 582–613（策略行两行时）、
+   * 结算数字 273–356 —— 竖向没有一处 62px 的空档，而「等待行」的高度会随
+   * 文案和宽度变（策略行 390 两行 / 320 两行 / HOLD 态一行）。
+   * 写死的 bottom 一定会在某一档正好压住它（第一版写 481：390 压等待行 2332px²，
+   * 320 压「改把数」那一排）。这里按**当时的真实矩形**算：把条子底边放到
+   * 「等待行顶 / 动作区顶」中更靠上的那个，再往上留 8 CSS px。
+   * 单位换算：#stage 有 transform 缩放，条子的 bottom 是设计 px，
+   * 所以要除以 scale = 渲染高 / 布局高。 */
+  function anchorLeaveBarOnSettle(bar) {
+    var stage = document.getElementById('stage');
+    var wait = document.getElementById('settle-wait');
+    var actions = document.querySelector('#screen-settle .room-actions');
+    if (!bar || !stage || !wait || !actions) return;
+    var sr = stage.getBoundingClientRect();
+    var scale = stage.offsetHeight ? (sr.height / stage.offsetHeight) : 0;
+    if (!scale) return;
+    var top = Math.min(wait.getBoundingClientRect().top, actions.getBoundingClientRect().top);
+    var bottomCss = sr.bottom - top + 8;
+    bar.style.bottom = Math.max(0, Math.round(bottomCss / scale)) + 'px';
+  }
+
   function setLeaveOrigin(on) {
     var bar = $('#undo-bar');
     if (!bar || !bar.setAttribute) return;   // 旧缓存没条子：靠 no-dom 兜底真离开
-    if (on) bar.setAttribute('data-undo-origin', 'leave');
-    else bar.removeAttribute('data-undo-origin');
+    if (on) {
+      bar.setAttribute('data-undo-origin', 'leave');
+      bar.style.bottom = '';
+      /* 三屏里只有结算屏需要算：房间 / 对局屏用 CSS 的 300 已经实测不压主控件，
+       * 结算屏没有空档，只能按当前高度落。 */
+      if (lastScreenId === 'screen-settle') anchorLeaveBarOnSettle(bar);
+    } else {
+      bar.removeAttribute('data-undo-origin');
+      bar.style.bottom = '';
+    }
   }
 
   /* 单一判据：P1 房间没了 / P2 阶段推进 / P3 已解散或我不在席位 / P4 本局结算事件。
@@ -5359,6 +5393,14 @@
     window.addEventListener('resize', resize);
     window.addEventListener('resize', updateOppScrollHint);
     window.addEventListener('orientationchange', function () { setTimeout(resize, 200); });
+    /* 结算屏撤销条的锚点是按当时矩形算的（anchorLeaveBarOnSettle）：
+     * 窗口在 5 秒窗口内变了尺寸 / 转了屏，就得按新矩形重算，
+     * 否则条子会停在旧位置 —— 那正是 N-1 要防的「压住主控件」。 */
+    window.addEventListener('resize', function () {
+      if (UndoBar && UndoBar.isPending() && lastScreenId === 'screen-settle') {
+        anchorLeaveBarOnSettle($('#undo-bar'));
+      }
+    });
 
     /* 输入框失焦后再量一次。
      *
