@@ -28,6 +28,19 @@
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => Math.round(a + Math.random() * (b - a));
 
+/* 拆牌策略直接复用 `pwa/js/ai.js` —— 单机模式的 AI 就在做这件事（穷举 60 / 6 种分法，
+ * 按引擎口径给每组算强度，加权取最优）。**不另写一套**：另写一套就又有了两份
+ * 「什么算好牌」的定义，改规则时必然漂移。
+ *
+ * 为什么要换掉原来的「按位置拆」：那是**能跑通协议**的最短实现，不是会打牌的实现。
+ * 实测 6 万手牌（`scripts/analyze-bot-split.js`）：
+ *   · 十点半爆点率  31.1%  → 0.5%（AI 会避开爆点）
+ *   · 第二轮牛牛率  13.3%  → 39.7%
+ *   · 单张对随机牌胜率 49.9% → 71.2%
+ * 也就是说机器人原来每把都在系统性自废三组牌里的两组，造出来的数据不能代表真人。 */
+const path = require('path');
+const AI = require(path.join(__dirname, '..', 'pwa', 'js', 'ai.js'));
+
 /** 主动取消。调用方靠 `err.cancelled === true` 区分「取消」与「真失败」。 */
 class CancelledError extends Error {
   constructor(msg) {
@@ -104,6 +117,9 @@ class BotClient {
     this.tag = '[#' + (this.idx + 1) + ' ' + this.name + ']';
     this.log = opt.log || function () {};
     this.register = !!opt.register;
+    /* 'smart' | 'naive'。默认 smart —— 后台模拟的是「真人怎么打」，
+     * 而真人会挑牌。naive 只作对照，见 split() 的注释。 */
+    this.strategy = opt.strategy === 'naive' ? 'naive' : 'smart';
 
     this.api = opt.api || createApi({ base: this.base, code: this.code });
 
@@ -235,18 +251,40 @@ class BotClient {
     throw new Error(this.tag + ' 等超时：' + label + '（' + timeout + 'ms，' + st + '）');
   }
 
-  /** 按当前轮把 6 张牌拆成两组交上去。牌直接用服务端下发的对象，不解释花色点数 ——
-   *  机器人不需要会打牌，只需要拆得合法（张数与手牌一一对应，见 SM.submitGroups 校验）。 */
+  /** 按当前轮把 6 张牌拆成两组交上去。
+   *
+   *  两种打法：
+   *    smart（默认）—— 交给 `pwa/js/ai.js` 穷举最优。它和单机 AI 是同一份实现，
+   *                    所以「机器人打出来的牌」与「真人在单机里遇到的 AI」同源。
+   *    naive        —— 按位置硬拆（[0] / [1,2] / [3,4,5]）。这是最早那版，只保证
+   *                    **协议合法**：张数与手牌一一对应。留着当对照组，用来复现
+   *                    「策略差 → 数据难看」这件事，不再作为默认。
+   *
+   *  无论哪种，都只动**自己的 6 张牌**的分组，不碰发牌、不碰别人 —— 发牌是服务端的，
+   *  客户端连牌序都影响不了（见 card.js 为什么不用 Math.random）。 */
   async submitRound(round) {
     const me = this.me();
     if (!me) throw new Error(this.tag + ' 不在房间名单里');
     if (me.benched) return;                       // 旁听这一把没牌
     const hand = me.hand || [];
     if (hand.length !== 6) throw new Error(this.tag + ' 手牌不是 6 张（实际 ' + hand.length + '）');
-    const groups = round === 1
-      ? { single: [hand[0]], tenhalf: [hand[1], hand[2]], piaosanye: [hand[3], hand[4], hand[5]] }
-      : { single: [hand[0]], douniu: [hand[1], hand[2], hand[3], hand[4], hand[5]] };
+    const groups = this.split(hand, round);
     await this.request('submitGroups', { groups: groups });
+  }
+
+  /** 拆牌：返回**只含本轮合法键**的对象（服务端会拒掉多余的键）。 */
+  split(hand, round) {
+    if (this.strategy === 'naive') {
+      return round === 1
+        ? { single: [hand[0]], tenhalf: [hand[1], hand[2]], piaosanye: [hand[3], hand[4], hand[5]] }
+        : { single: [hand[0]], douniu: [hand[1], hand[2], hand[3], hand[4], hand[5]] };
+    }
+    const d = round === 1 ? AI.decideRound1(hand) : AI.decideRound2(hand);
+    if (round === 1) {
+      /* AI 会返回四个键（douniu 为空数组）；第一轮只准交三个，多交会被校验挡住。 */
+      return { single: d.single, tenhalf: d.tenhalf, piaosanye: d.piaosanye };
+    }
+    return { single: d.single, douniu: d.douniu };
   }
 
   close() {

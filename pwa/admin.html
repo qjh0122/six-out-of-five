@@ -139,8 +139,9 @@ code { padding: 1px 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.0
 .hint { font-size: 12px; line-height: 1.6; color: rgba(184, 192, 204, 0.72); margin: 10px 0 0; }
 
 /* 玩家池：每行一个账号，密码就地填。
- * 密码**只留在内存里**（不进 sessionStorage）—— 后台密钥都只存 session，
- * 账号密码更不该在设备上多留一份；刷新页面要重填，这是刻意的取舍。 */
+ * 密码存 localStorage（可用「在本机记住密码」关掉，关掉就只留内存）。
+ * 这是按使用者要求做的便利性取舍：明文存在本机浏览器里，
+ * 换设备或公用电脑请点「清除已存」。 */
 .pool { margin-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
 .pool-row {
   display: grid; grid-template-columns: 34px 1fr 1fr 180px;
@@ -217,7 +218,7 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
 <body>
 <div class="wrap">
   <h1>六选五 · 管理后台</h1>
-  <p class="sub">需要服务端那把备份密钥。密钥只存在这个标签页里，关掉即失效。</p>
+  <p class="sub">需要服务端那把备份密钥。密钥存在这台设备的浏览器里，下次打开自动载入；公用电脑请点「清掉本页密钥」。</p>
 
   <div class="panel">
     <div class="row">
@@ -282,11 +283,23 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
             <option value="1">自动注册（本地自测用）</option>
           </select>
         </div>
+        <div class="field">
+          <label>打法（决定数据像不像真人）</label>
+          <select id="bot-strategy">
+            <option value="smart" selected>像真人挑牌（穷举最优）</option>
+            <option value="naive">固定按位置拆（对照组）</option>
+          </select>
+        </div>
       </div>
 
       <div class="row" style="justify-content:space-between; margin-bottom:6px;">
         <div class="sub" style="margin:0;">选择对战玩家（<span id="pool-count">0</span> 人已选，需 2～5 人）</div>
         <div class="row" style="gap:8px;">
+          <label class="mini" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input id="pw-remember" type="checkbox" checked style="width:auto; height:auto; margin:0;">
+            在本机记住密码
+          </label>
+          <button id="btn-pw-clear" class="ghost mini">清除已存</button>
           <button id="btn-pool-all" class="ghost mini">全选</button>
           <button id="btn-pool-none" class="ghost mini">清空</button>
         </div>
@@ -295,7 +308,8 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
         <div class="empty">填上密钥并「载入」后，账号会出现在这里。</div>
       </div>
       <p class="hint">
-        密码只留在这个页面里，刷新需要重填 —— 后台密钥都只存 session，账号密码更不该在设备上多留一份。<br>
+        勾了「在本机记住密码」，选过的账号密码会存在<b>这台设备的浏览器</b>里（明文，仅本机），
+        下次打开直接可用；换设备或公用电脑请点「清除已存」。<br>
         含 AI 的局不进排行榜，所以这里必须用<b>真实账号</b>凑人；一个房间打满才落库，「场数」才是榜单上涨的条数。
       </p>
 
@@ -315,6 +329,10 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
         </div>
       </div>
       <div id="job-view"><div class="empty">还没有任务。上面选好玩家就能开始。</div></div>
+      <!-- 逐把流水单独一个容器：任务摘要每次轮询都会整块重绘，
+           如果流水跟摘要挤在同一个 innerHTML 里，用户展开的下拉每 1.5 秒就被
+           重建一次、自动合上（历史 bug：看着像「点了没反应」）。 -->
+      <div id="job-hands"></div>
     </div>
   </section>
 
@@ -358,7 +376,11 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
 (function () {
   'use strict';
 
-  var KEY_STORE = 'lxw_admin_key';
+  /* 密钥与账号密码都存 localStorage（跨刷新、跨标签页存活）。
+   * 旧版密钥存在 sessionStorage，读一次做迁移，免得用户以为要重新输。 */
+  var KEY_STORE = 'lxw_admin_key_v2';
+  var KEY_STORE_LEGACY = 'lxw_admin_key';
+  var PW_STORE = 'lxw_admin_pw_v1';
   var TAB_STORE = 'lxw_admin_tab';
   var list = [];
   var jobs = [];
@@ -366,11 +388,13 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
   var curJob = null;
   var boardList = [];
   var pollTimer = null;
+  var pollTick = 0;
   var poolLoaded = false;
-  /* 详情（含逐把流水）按任务 id 缓存一次，避免每次重绘都再拉一遍 */
+  /* 详情（含逐把流水）只在切任务时拉一次，跑的过程中由轮询按节奏刷新 */
   var detailLoadedFor = '';
-  /* 密码只在内存里，不进 sessionStorage（见页面上那条提示） */
+  /* 账号密码：默认存本机（页面上的「在本机记住密码」可关） */
   var pwMap = {};
+  var pwSaveTimer = null;
   var PACE = {
     fast: [200, 600],
     normal: [900, 2600],
@@ -459,7 +483,37 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     return data;
   }
 
-  function key() { return $('#key').value.trim() || sessionStorage.getItem(KEY_STORE) || ''; }
+  function key() {
+    return $('#key').value.trim()
+      || localStorage.getItem(KEY_STORE)
+      || sessionStorage.getItem(KEY_STORE_LEGACY)   /* 旧版键，迁一次 */
+      || '';
+  }
+
+  /* ---- 本机保存：密钥 + 账号密码 ---- */
+
+  function rememberPw() {
+    var c = $('#pw-remember');
+    return !c || c.checked;
+  }
+
+  function loadPwMap() {
+    try {
+      var raw = localStorage.getItem(PW_STORE);
+      pwMap = raw ? (JSON.parse(raw) || {}) : {};
+    } catch (e) { pwMap = {}; }
+    if (!pwMap || typeof pwMap !== 'object') pwMap = {};
+  }
+
+  function savePwMap() {
+    if (!rememberPw()) { clearPwMap(); return; }
+    try { localStorage.setItem(PW_STORE, JSON.stringify(pwMap)); } catch (e) { /* 存不下就算了，不影响本次任务 */ }
+  }
+
+  function clearPwMap() {
+    pwMap = {};
+    try { localStorage.removeItem(PW_STORE); } catch (e) { /* 忽略 */ }
+  }
 
   /* ---------------------------- 页签 ---------------------------- */
 
@@ -519,7 +573,11 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     var r = await call('GET', '/admin/users');
     if (!r.ok) { setStatus(r.error || '载入失败', true); return; }
     list = r.list || [];
-    sessionStorage.setItem(KEY_STORE, key());
+    /* 载入成功才落盘：密码错了不该把错的值记住，否则下次打开还是错的 */
+    try {
+      localStorage.setItem(KEY_STORE, key());
+      sessionStorage.removeItem(KEY_STORE_LEGACY);
+    } catch (e) { /* 隐私模式可能禁止存储，忽略 */ }
     $('#list-wrap').style.display = 'block';
     $('#users-empty').style.display = 'none';
     setStatus('已载入 ' + list.length + ' 个账号');
@@ -612,7 +670,7 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
         + '<div class="pw"><input type="password" data-pw="' + escAttr(acc) + '" autocomplete="off" placeholder="密码"' + dis + '></div>'
         + '</div>';
     });
-    wrap.innerHTML = '<div class="pool-row head"><div></div><div>账号</div><div>昵称</div><div>密码（本页内存）</div></div>'
+    wrap.innerHTML = '<div class="pool-row head"><div></div><div>账号</div><div>昵称</div><div>密码（勾选后存本机）</div></div>'
       + rows.join('');
     /* 重绘后把内存里的密码填回去 —— 否则点一次「全选」就得重填一遍 */
     var inputs = wrap.querySelectorAll('input[data-pw]');
@@ -760,31 +818,65 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     $('#btn-bot-stop').disabled = !running;
     $('#btn-bot-stop').setAttribute('data-job', j.id);
 
-    /* 逐把流水只在点开时拉一次，不跟着轮询走 */
-    if (curJob && curJob.__id === curJobId && curJob.hands && curJob.hands.length) {
-      renderHands(curJob.hands);
-    } else if (!running && detailLoadedFor !== curJobId) {
-      detailLoadedFor = curJobId;
-      loadJobDetail(curJobId);
-    }
+    /* ★ 结束之后必须把「开始模拟」按当前勾选恢复可用。
+     *   原来它只在 updatePoolCount() 里被启用，而那个函数只在选人/重绘玩家池时调用；
+     *   任务一跑完，按钮就一直停在 disabled —— 表现就是「必须按 F5 才能再跑一次」。
+     *   跑的过程中不碰它（否则会被重新启用，等于允许并发起第二个任务）。 */
+    if (!running) updatePoolCount();
+
+    /* 逐把流水：用详情缓存渲染；跑的过程中由轮询刷新（见 startPoll）。
+     * 这里**不主动拉详情**，避免每 1.5 秒多打一个请求。 */
+    renderHands(curJob && curJob.__id === curJobId ? curJob.hands : [], j);
   }
 
-  function renderHands(hands) {
-    var box = $('#job-view');
-    if (!box || !hands || !hands.length) return;
-    var old = box.querySelector('details');
-    if (old) old.remove();
-    var rows = hands.map(function (h) {
+  /* 逐把流水独立渲染：容器是 #job-hands，与任务摘要分开。
+   *
+   * 两个历史 bug 都出在这里：
+   *   1) 条数少于「已完成的把数」—— 详情只拉了一次，跑的过程中一直显示旧快照；
+   *   2) 展开的下拉每 1.5 秒自己合上 —— 摘要整块 innerHTML 重绘会把 <details> 重建。
+   * 现在：数据由轮询刷新，DOM 复用同一个 <details>，重绘前后把 open 状态搬回去。 */
+  function renderHands(hands, job) {
+    var box = $('#job-hands');
+    if (!box) return;
+    var p = (job && job.progress) || {};
+    var done = Number(p.handsDone) || 0;
+    var arr = Array.isArray(hands) ? hands : [];
+
+    if (!arr.length) {
+      box.innerHTML = done
+        ? '<p class="hint" style="margin-top:12px;">逐把流水：已算完 ' + done + ' 把，正在回填明细…</p>'
+        : '<p class="hint" style="margin-top:12px;">逐把流水：第一把结算后会出现在这里。</p>';
+      return;
+    }
+
+    var rows = arr.map(function (h) {
       var sc = (h.scores || []).map(function (x) {
         return esc(x.nickname) + ' <b class="' + netCls(x.score) + '">' + num(x.score) + '</b>';
       }).join(' / ');
       return '<tr><td class="num">' + h.roomIndex + '</td><td class="num">' + h.handNo + '</td><td>' + sc + '</td></tr>';
     }).join('');
-    var det = document.createElement('details');
-    det.innerHTML = '<summary>逐把流水（' + hands.length + ' 条）</summary>'
+
+    /* 条数与进度对不上时，把原因直接写在标题里，不留悬念：
+     * 上限 800 条（历史裁剪）或「刚结算、下一把还没进来」。 */
+    var label = '逐把流水（' + arr.length + ' 条';
+    if (done > arr.length) label += '，仅保留最近 ' + arr.length + ' 条 / 共 ' + done + ' 把';
+    else if (done && done !== arr.length) label += ' / 已完成 ' + done + ' 把';
+    label += '）';
+
+    var det = box.querySelector('details');
+    var wasOpen = det ? det.open : false;
+    if (!det) {
+      det = document.createElement('details');
+      box.innerHTML = '';
+      box.appendChild(det);
+      /* 首次出现默认展开：用户点开这块就是想看流水，多一次点击没有意义 */
+      wasOpen = true;
+    }
+    det.innerHTML = '<summary>' + esc(label) + '</summary>'
       + '<div class="hands"><table><thead><tr><th>场</th><th>把</th><th>累计净胜</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div>';
-    box.appendChild(det);
+    det.open = wasOpen;
+    det.setAttribute('data-count', String(arr.length));
   }
 
   async function loadJobDetail(id) {
@@ -794,7 +886,7 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     r.job.__id = id;
     curJob = r.job;
     detailLoadedFor = id;
-    if (id === curJobId) renderHands(r.job.hands);
+    if (id === curJobId) renderHands(r.job.hands, r.job);
   }
 
   async function startJob() {
@@ -821,7 +913,10 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
       handsPerRoom: Number($('#bot-hands').value) || 15,
       pace: pace,
       gap: [Math.round(pace[0] * 2.2), Math.round(pace[1] * 2.2)],
-      register: $('#bot-register').value === '1'
+      register: $('#bot-register').value === '1',
+      /* 打法默认 smart（像真人挑牌）。选 naive 是为了对照出「策略差 → 数据难看」，
+       * 不是日常选项 —— 页面上写在选项文字里，免得以后有人误以为那是正常模式。 */
+      strategy: $('#bot-strategy').value === 'naive' ? 'naive' : 'smart'
     });
     if (!r.ok) {
       setBotHint(r.error || '启动失败', true);
@@ -829,9 +924,13 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
       if (r.jobId) { curJobId = r.jobId; loadJobs(); }
       return;
     }
+    /* 密码填对了才落盘（顺带把「记住密码」的开关生效） */
+    savePwMap();
     curJobId = r.job.id;
     curJob = null;
     detailLoadedFor = '';
+    pollTick = 0;
+    $('#job-hands').innerHTML = '';
     setBotHint('已启动：' + r.job.id);
     await loadJobs();
   }
@@ -860,6 +959,13 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
         renderJobPick();
         renderJob();
         var nowRunning = jobs.some(function (j) { return j.status === 'running' || j.status === 'cancelling'; });
+
+        /* 跑的过程中要刷逐把流水 —— 但没必要每 1.5 秒拉一次详情：
+         * 一把牌本身就要几秒，隔一次拉（约 3 秒）足够跟上，
+         * 而且列表接口不带流水（几十场 × 几十把，列表页用不上）。 */
+        pollTick++;
+        if (nowRunning && curJobId && pollTick % 2 === 0) loadJobDetail(curJobId);
+
         if (wasRunning && !nowRunning) {
           /* 刚跑完：把详情（含逐把流水）补上，并刷新一次排行榜 */
           loadJobDetail(curJobId);
@@ -915,14 +1021,15 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
   $('#key').addEventListener('keydown', function (e) { if (e.key === 'Enter') load(); });
   $('#btn-reload').addEventListener('click', load);
   $('#btn-clear').addEventListener('click', function () {
-    sessionStorage.removeItem(KEY_STORE);
+    try { localStorage.removeItem(KEY_STORE); } catch (e) { /* 忽略 */ }
+    sessionStorage.removeItem(KEY_STORE_LEGACY);
     $('#key').value = '';
     list = [];
-    pwMap = {};
+    clearPwMap();
     $('#list-wrap').style.display = 'none';
     $('#users-empty').style.display = 'block';
     $('#pool').innerHTML = '<div class="empty">填上密钥并「载入」后，账号会出现在这里。</div>';
-    setStatus('已清掉本页密钥');
+    setStatus('已清掉本机保存的密钥');
   });
   $('#table-wrap').addEventListener('click', function (e) {
     var btn = e.target.closest('[data-act]');
@@ -941,7 +1048,12 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
   });
   $('#pool').addEventListener('input', function (e) {
     var t = e.target;
-    if (t && t.getAttribute('data-pw')) pwMap[t.getAttribute('data-pw')] = t.value;
+    if (t && t.getAttribute('data-pw')) {
+      pwMap[t.getAttribute('data-pw')] = t.value;
+      /* 打字过程中不必每个字符写一次 localStorage：停顿 400ms 再落盘 */
+      clearTimeout(pwSaveTimer);
+      pwSaveTimer = setTimeout(savePwMap, 400);
+    }
   });
   $('#btn-pool-all').addEventListener('click', function () {
     var boxes = $('#pool').querySelectorAll('input[type="checkbox"]:not([disabled])');
@@ -966,6 +1078,7 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     curJobId = $('#job-pick').value;
     curJob = null;
     detailLoadedFor = '';
+    $('#job-hands').innerHTML = '';
     renderJob();
     loadJobDetail(curJobId);
   });
@@ -980,8 +1093,27 @@ summary { cursor: pointer; font-size: 13px; color: var(--gold-light); padding: 6
     if (e.target === $('#pw-modal')) closeAskPassword(null);   // 点遮罩 = 取消
   });
 
-  // 页面重开时若同一标签页还存着密钥，自动载入一次
-  var saved = sessionStorage.getItem(KEY_STORE);
+  /* 本机保存的密码：先读出来，玩家池渲染时会自动回填。
+   * 没勾「记住密码」的用户，这里读到的是空对象（保存时已经清掉了）。 */
+  loadPwMap();
+  $('#pw-remember').addEventListener('change', function () {
+    if (rememberPw()) {
+      savePwMap();
+      setBotHint('已开启：密码会存在本机浏览器里');
+    } else {
+      clearPwMap();
+      setBotHint('已关闭：密码只留在内存，刷新后需要重填');
+    }
+  });
+  $('#btn-pw-clear').addEventListener('click', function () {
+    clearPwMap();
+    var inputs = document.querySelectorAll('#pool input[data-pw]');
+    for (var i = 0; i < inputs.length; i++) inputs[i].value = '';
+    setBotHint('已清除本机保存的账号密码');
+  });
+
+  // 页面重开时若本机存着密钥（或旧版 session 里还有），自动载入一次
+  var saved = localStorage.getItem(KEY_STORE) || sessionStorage.getItem(KEY_STORE_LEGACY) || '';
   var savedTab = sessionStorage.getItem(TAB_STORE) || 'users';
   if (saved) {
     $('#key').value = saved;

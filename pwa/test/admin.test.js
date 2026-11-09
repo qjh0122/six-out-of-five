@@ -47,7 +47,7 @@ ok(calls.some((c) => c.path === '/admin/delete' && c.method === 'POST'), 'POST /
 console.log('\n[鉴权]');
 ok(/x-backup-key/.test(html), '所有请求都带 x-backup-key');
 ok(/sessionStorage/.test(html), '密钥只存 sessionStorage（关标签页即失效，不长期落在设备上）');
-ok(!/localStorage/.test(html), '不把管理密钥写进 localStorage');
+ok(/KEY_STORE_LEGACY/.test(html), '兼容旧版 sessionStorage 里的密钥（升级不丢登录态）');
 ok(/401|403|无权/.test(html) || /error/.test(html), '有失败态提示，不是静默失败');
 
 console.log('\n[视觉与游戏一致]');
@@ -91,13 +91,25 @@ console.log('\n[排行榜页]');
 ok(calls.some((c) => c.path === '/admin/leaderboard' && c.method === 'GET'), 'GET /admin/leaderboard（完整名次）');
 ok(/名次/.test(html) && /净胜/.test(html), '表头含名次与净胜');
 
-console.log('\n[账号密码不落地]');
-/* 后台密钥本来就只存 sessionStorage；账号密码比密钥更不该在设备上多留一份。
- * 这条一旦被改成 sessionStorage/localStorage，页面看起来一切正常，
- * 但密码就长期留在浏览器存储里了 —— 属于「功能没坏、风险变大」的改动。 */
-ok(/var pwMap = \{\};/.test(html), '密码只放内存变量 pwMap');
+console.log('\n[密钥与密码的存储策略]');
+/* 2026-11-09 起按使用者要求改成「默认记住」：密钥与账号密码都存 localStorage，
+ * 免得每次刷新重填。便利性成了需求，但下面四条是不能丢的底线 ——
+ * 丢了以后页面照样能用，只是密码长期躺在浏览器里、而且没有出口。 */
+ok(/localStorage\.setItem\(KEY_STORE, key\(\)\)/.test(html), '密钥存本机（下次打开自动载入）');
+ok(/localStorage\.setItem\(PW_STORE, JSON\.stringify\(pwMap\)\)/.test(html), '账号密码存本机');
+ok(/function rememberPw/.test(html) && /#pw-remember/.test(html), '有「记住密码」开关（关掉就只留内存）');
+ok(/function clearPwMap/.test(html) && /#btn-pw-clear/.test(html), '有「清除已存」的出口');
 ok(!/sessionStorage\.setItem\([^)]*[Pp]assword/.test(html), '不把密码写进 sessionStorage');
-ok(!/localStorage/.test(html), '整页不用 localStorage');
+ok(!/console\.log\([^)]*password/i.test(html), '不把密码打进控制台');
+
+console.log('\n[跑完能再跑一次 / 流水不丢状态 / 打法可选]');
+/* 这三条对应 2026-11-09 反馈的三个真问题，都是「代码在、行为不对」，
+ * 静态契约先钉住形状，真正的行为由 scripts/probe-admin.js 在浏览器里点。 */
+ok(/if \(!running\) updatePoolCount\(\);/.test(html), '任务结束后按勾选恢复「开始模拟」（不用刷新）');
+ok(/id="job-hands"/.test(html) && /#job-hands/.test(html), '逐把流水有独立容器，不跟摘要一起重绘');
+ok(/det\.open = wasOpen/.test(html), '重绘后保留展开状态（下拉不会自己合上）');
+ok(/pollTick % 2 === 0\) loadJobDetail/.test(html), '跑的过程中定时刷新流水（条数跟得上已完成把数）');
+ok(/#bot-strategy/.test(html) && /strategy: \$\('#bot-strategy'\)/.test(html), '打法可选（smart 挑牌 / naive 按位置）');
 
 console.log('\n[轮询只在需要时开]');
 ok(/function startPoll\(/.test(html) && /function stopPoll\(/.test(html), '有轮询开关');

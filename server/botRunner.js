@@ -110,7 +110,11 @@ class BotRunner {
       handsPerRoom: handsPerRoom,
       pace: pairOf(s.pace, [900, 2600]),
       gap: pairOf(s.gap, [2000, 6000]),
-      register: !!s.register
+      register: !!s.register,
+      /* 打法：smart = 像真人一样挑牌（默认）；naive = 按位置硬拆（对照组）。
+       * 只认这两个值，其余一律落到 smart —— 「模拟真人」是这功能的默认语义，
+       * 不该因为外部传了个没见过的字符串就悄悄退化成一个不会打牌的机器人。 */
+      strategy: s.strategy === 'naive' ? 'naive' : 'smart'
     };
   }
 
@@ -138,6 +142,7 @@ class BotRunner {
         pace: task.pace,
         gap: task.gap,
         register: task.register,
+        strategy: task.strategy,
         playerCount: task.players.length
       },
       players: task.players.map((p) => ({ account: p.name, nickname: '', playerId: '' })),
@@ -247,6 +252,7 @@ class BotRunner {
           account: task.players[i],
           index: i,
           register: task.register,
+          strategy: task.strategy,
           api: api,
           log: (m) => this.log('[bot ' + job.id + '] ' + m)
         });

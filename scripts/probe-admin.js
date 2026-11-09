@@ -254,10 +254,79 @@ function ok(cond, name, extra) {
   ok(/场次 0→2/.test(detail), '榜单增量 0→2（战绩真的落库了）', detail.slice(0, 220));
   ok((detail.match(/完成/g) || []).length >= 2, '逐场明细两场都是「完成」');
 
-  await evaluate('(function(){var d=document.querySelector("#job-view details"); if(d) d.open=true;})()');
-  await sleep(400);
-  ok(await evaluate('document.querySelectorAll("#job-view details tbody tr").length') >= 6, '逐把流水 6 条');
+  /* 逐把流水在**独立容器** #job-hands 里（与任务摘要分开重绘）。
+   * 断言要看「条数 == 已完成的把数」—— 这正是用户报的第三个问题：
+   * 进度走到 8/15，流水却停在 6 条（详情只拉过一次的旧快照）。 */
+  const handRows = await evaluate('document.querySelectorAll("#job-hands details tbody tr").length');
+  const handsDone = await evaluate('(function(){var t=document.querySelector("#job-view").innerText;var m=t.match(/把\\s*(\\d+)\\/(\\d+)/);return m?Number(m[1]):-1;})()');
+  ok(handRows >= 6, '逐把流水 6 条', handRows);
+  ok(handRows === handsDone, '流水条数 == 已完成把数（不再落后于进度）', { handRows, handsDone });
+
+  /* 重绘不能把用户展开的下拉合上：点「刷新」会走一遍 renderJob → renderHands，
+   * 原来那版每次都用新 <details> 覆盖，展开状态当场丢失。 */
+  await evaluate('(function(){var d=document.querySelector("#job-hands details"); if(d) d.open=true;})()');
+  await sleep(300);
+  await evaluate('document.querySelector("#btn-job-refresh").click()');
+  await sleep(1500);
+  const stillOpen = await evaluate('(function(){var d=document.querySelector("#job-hands details"); return d?d.open:null;})()');
+  ok(stillOpen === true, '刷新后展开状态还在（下拉不会自己合上）', stillOpen);
   await shot('03-hands.png');
+
+  /* 跑完不用刷新就能再起一个 —— 原来开始按钮停在 disabled，
+   * 用户只能按 F5。这里先验按钮恢复，再真起一个然后立刻停掉。 */
+  const startEnabled = await evaluate('!document.querySelector("#btn-bot-start").disabled');
+  ok(startEnabled, '任务结束后「开始模拟」自动恢复可用', startEnabled);
+
+  console.log('\n[不刷新就能再跑一次]');
+  await evaluate('document.querySelector("#btn-bot-start").click()');
+  let second = '', secondHint = '';
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    const st = await evaluate(`(function(){
+      var b=document.querySelector('#btn-bot-stop');
+      return {id:b?b.getAttribute('data-job'):'', hint:(document.querySelector('#bot-hint')||{}).textContent||''};
+    })()`);
+    second = st.id; secondHint = st.hint;
+    if (second && second !== newJob) break;
+  }
+  ok(second && second !== newJob, '第二个任务真的起来了（没被旧状态挡住）', { second, first: newJob, hint: secondHint });
+  await evaluate('document.querySelector("#btn-bot-stop").click()');
+  let stopped = false;
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    const t = String(await evaluate("(document.querySelector('#job-view')||{}).innerText||''"));
+    if (/已取消|已中断/.test(t)) { stopped = true; break; }
+  }
+  ok(stopped, '第二个任务能正常停下（不留残局）');
+
+
+  /* 第四条反馈：密码/密钥要默认记住。这条只能靠**真刷新**验 ——
+   * 只看 localStorage 里有值，证明不了「刷新后自动回填」这件事真的接线了。 */
+  console.log('\n[刷新后不用重填]');
+  const stored = await evaluate(`(function(){
+    var pw=null; try{ pw=JSON.parse(localStorage.getItem('lxw_admin_pw_v1')||'{}'); }catch(e){ pw={}; }
+    return { key: !!localStorage.getItem('lxw_admin_key_v2'), pwCount: Object.keys(pw||{}).length };
+  })()`);
+  ok(stored && stored.key, '密钥已存在本机', stored);
+  ok(stored && stored.pwCount >= 3, '三个账号的密码都已存在本机', stored);
+
+  await cdp.send('Page.reload');
+  await sleep(3000);
+  const keyAfter = String(await evaluate('(document.querySelector("#key")||{}).value||""'));
+  ok(keyAfter.length > 0, '刷新后密钥框自动回填（不用再输）', keyAfter.length);
+  const pwAfter = String(await evaluate('(function(){var i=document.querySelector("#pool input[data-pw]");return i?i.value:"";})()'));
+  ok(pwAfter.length > 0, '刷新后账号密码自动回填', pwAfter.length);
+
+  /* 关掉「记住密码」必须立刻把手上的明文清掉 —— 否则开关只是个摆设 */
+  await evaluate(`(function(){
+    var c=document.querySelector('#pw-remember');
+    c.checked=false;
+    c.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await sleep(400);
+  const gone = await evaluate("localStorage.getItem('lxw_admin_pw_v1')===null");
+  ok(gone, '取消勾选后本机保存的密码被清掉');
+  await shot('05-reload.png');
 
   console.log('\n[排行榜回来了]');
   await evaluate('document.querySelector(\'[data-tab="board"]\').click()');

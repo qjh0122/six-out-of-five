@@ -41,6 +41,18 @@ const Store = require(path.join(ROOT, 'pwa', 'js', 'storage.js'));
 const storageSrc = fs.readFileSync(path.join(ROOT, 'pwa', 'js', 'storage.js'), 'utf8');
 
 const CURRENT = new Set(Object.keys(Store.KEYS).map((k) => Store.KEYS[k]));
+
+/* 后台（`pwa/admin.html`）有自己的一组键：它管的是「管理密钥 / 账号密码 / 页签」，
+ * 不属于游戏存档，所以不进 `storage.js` 的 KEYS。
+ * 这里**从页面源码里取**，不在这里再抄一份字面量 —— 抄一份就是又造了一个会漂移的真源，
+ * 而这条守卫存在的理由正是「清单和实际用法漂移了，没人发现」。 */
+{
+  const adminSrc = fs.readFileSync(path.join(ROOT, 'pwa', 'admin.html'), 'utf8');
+  for (const name of ['KEY_STORE', 'PW_STORE', 'TAB_STORE']) {
+    const m = new RegExp('var ' + name + " = '([^']+)'").exec(adminSrc);
+    if (m) CURRENT.add(m[1]);
+  }
+}
 /* LEGACY 没导出，从源码里读 `{ from: 'weile_xxx', to: ... }`。
  * 读不到就红 —— 「解析不出来」不能静默当成「没有老键」。 */
 const LEGACY = new Set();
