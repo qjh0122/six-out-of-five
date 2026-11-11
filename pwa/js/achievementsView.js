@@ -57,24 +57,35 @@
   function seriesHint(key) {
     return {
       type: '每种牌型拿到过几次、占参与的几分之几。分母是「参与该组的次数」，不是打了多少把。大牌小牌都记',
-      vs: '大牌撞大牌算对撞；一桌人全是小牌（爆点 / 散牌 / 没牛）也算，两种分开记',
+      /* 对撞系列的提示要写清两条阈值 —— 卡片上不重复写（否则八张卡各背一串数字，
+       * 而「写门槛」在次数型成就上已经被项目所有者否过一次：会被读成上限）。
+       * 但阈值不写又不能只写一次的话，遇强则强与外强中干会显示同一个胜率、
+       * 一明一暗，玩家会问「40.8% 为什么不亮」。所以把规则集中放在这里。 */
+      vs: '大牌撞大牌算对撞，一桌人全是小牌（爆点 / 散牌 / 没牛）也算，两种分开记。'
+        + '胜率要先攒够次数才算数；46% 以上亮「遇强则强」，34% 以下亮「外强中干」，中间两条都不亮',
       sweep: '一轮里所有组都赢下来算通吃，全输算通赔。第二轮只有两组，所以「双杀 / 双赔」比「一巡」容易',
-      record: '场次与连胜看还差多少，其余成就记的是次数——玩得越久数字越大'
+      record: '场次与连胜看还差多少；其余写的是「已达成 + 累计次数」——那串数字是流水，不是进度'
     }[key] || '';
   }
 
   /**
    * 一张成就卡。
    *
-   * ★ 数字部分分两种（v112 用户裁定）：
+   * ★ 数字部分分三类（v112 用户裁定，2026-11-11 第 3 批补第三类）：
    *   · `mode === 'progress'` → 进度条 + 「7 / 10」。这类成就的语义是「还差多少」，
    *     只有 6 条：常客 / 老油条 / 势不可挡 / 十连胜 / 背到极点 / 衰神附体。
-   *   · 其余 → 只写「37 次」。
-   *     为什么不是都画进度条：遇强则强那种「撞赢 10 次」，玩得久的人早就顶满了，
-   *     之后那个 20 再也不会动 —— 玩家看到停在 20/20 的数字，会以为系统不记了。
-   *     次数可以一直涨，才配得上「我玩得久」这件事。
+   *   · 牌型类（`rateKind === 'type'`）→ 「12 次 · 出现率 3.5‰」。
+   *     次数是战绩流水，出现率才是水平 —— 分母是「参与该组的次数」，不是打了多少把。
+   *   · 对撞胜率类（`rateKind === 'vs' | 'sm'`）→ 「胜率 40.8% · 对撞 1996 次」。
+   *     样本不够时先报样本进度：「对撞 37 / 100 次 · 胜率 70.0%」——
+   *     让他知道自己撞得挺准，只是还没撞够次数。
+   *   · 其余 → 「已达成 · 累计 37 次」/「还差 3 次」。
    *
-   * 牌型成就还会带上出现率（同一条分母，见 achievements.js 的 TYPE_MODE）。
+   * ★ 为什么「已达成」要写在数字前面（第 3 批的核心改动）：
+   *   以前这条只写「277 次」，玩家会把它读成**进度** ——
+   *   于是产生「我打了两百多场，这个成就的进度怎么是 277」这种疑问。
+   *   次数本身没有错，错在它长得像进度条上的数字。把「已达成」放在前面，
+   *   那串数字就退回它本来的身份：流水账。
    */
   function cardHtml(it) {
     /* 未解锁的卡片**照样显示名字与描述**（用户裁定）：
@@ -85,14 +96,24 @@
     if (isProgress) {
       foot = '<div class="ach-bar"><i style="width:' + pct + '%"></i></div>'
         + '<span class="ach-progress">' + it.cur + ' / ' + it.need + '</span>';
-    } else if (it.rate != null) {
-      /* 牌型：次数 + 出现率。分母为 0 时 rateText 会给「—」，
+    } else if (it.rateKind === 'type') {
+      /* 牌型：次数 + 出现率。分母为 0 时 rateText 给「—」，
        * 意思是「还没打过这个牌组」，不是「一次没拿到」。 */
-      foot = '<span class="ach-progress">' + it.raw + ' 次 · ' + rateText(it.rate) + '</span>';
+      foot = '<span class="ach-progress">' + it.raw + ' 次 · 出现率 ' + rateText(it.rate) + '</span>';
+    } else if (it.rateKind) {
+      /* 对撞：样本没攒够时，进度条的意义在「还差多少次对撞」而不是胜率。
+       * 胜率照样写出来 —— 让人看见自己其实撞得不错，只是样本还薄，这比藏起来好。 */
+      foot = '<span class="ach-progress">'
+        + (it.raw < it.need
+          ? '对撞 ' + it.raw + ' / ' + it.need + ' 次 · 胜率 ' + rateText(it.rate)
+          : '胜率 ' + rateText(it.rate) + ' · 对撞 ' + it.raw + ' 次')
+        + '</span>';
+    } else if (it.ok) {
+      foot = '<span class="ach-progress">已达成 · 累计 ' + it.raw + ' 次</span>';
+    } else if (it.need > 1 && it.raw > 0) {
+      foot = '<span class="ach-progress">还差 ' + (it.need - it.raw) + ' 次</span>';
     } else {
-      foot = it.ok
-        ? '<span class="ach-progress">' + it.raw + ' 次</span>'
-        : '<span class="ach-progress">' + (it.raw > 0 ? it.raw + ' 次' : '未达成') + '</span>';
+      foot = '<span class="ach-progress">未达成</span>';
     }
     return '<li class="ach-card' + (it.ok ? ' is-ok' : '') + '" data-rarity="' + esc(it.rarity) + '">'
       + '<div class="ach-card-top">'

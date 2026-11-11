@@ -24,6 +24,7 @@
    * 但调用点仍判空：老客户端缓存的 index.html 里没有这个脚本。 */
   var Hints = window.LXW.nextRoundHints;
   var AVATAR_COLORS = U.AVATAR_COLORS, colorFor = U.colorFor, short = U.short;
+  var fitFont = U.fitFont;
   var netText = U.netText, netCls = U.netCls, pad2 = U.pad2, fmtTime = U.fmtTime;
   var SUIT_CHAR = U.SUIT_CHAR, cardText = U.cardText;
 
@@ -1288,7 +1289,7 @@
         + ' title="' + esc((p.nickname || '') + ' · ' + p.score + ' 分 · ' + st) + '">'
         + oppAvatarHtml(p, badge)
         + '<div class="opp-main">'
-        + '<span class="opp-name">' + esc(short(p.nickname)) + '</span>'
+        + '<span class="opp-name">' + esc(p.nickname) + '</span>'
         + '<span class="opp-score">' + p.score + '</span>'
         + '</div>'
         + '</div>';
@@ -1301,6 +1302,48 @@
   /* 顶栏收尾：写 DOM（内容不变就跳过）+ 分数滚动 + 渐隐提示 + 倒计时。
    * 抽出来是因为「旧顶栏」和「圆桌环」是两套 html，收尾必须**逐字一致**。
    * 复制一份的后果：以后只改了一处，另一处就悄悄少一样（比如分数不滚了）。 */
+  /* 座位名 / 对战条昵称：**一行放不下就缩字号**，不截字、不换行。
+   *
+   * 上一版靠 `short()` 在渲染前预估宽度截断（上限 12 个等效半角 ≈ 6 个中文），
+   * 于是 7 个中文的名字仍会被截掉尾巴 —— 而座位到底多宽，估算算不准：
+   * 圆桌的昵称块 `--nmw` 在 80~132 之间随半径变，非圆桌那条走 flex 自适应。
+   * 这里改成渲染后**实测**：`scrollWidth`（文字真实宽）> `clientWidth`（这一格
+   * 真实宽）才缩，按比例一步到位，缩到下限还不行才让 CSS 的省略号收尾。
+   *
+   * 为什么不换行：两行名字会让座位块变高，圆桌环上相邻座位的块高是算好的
+   *（seatRing 的 topPad / meGap 都按单行 22px 估），换行就会顶到毡面外。
+   *
+   * 下限是**物理**约束，不是审美：字号 = 设计px × scale，10.4 设计px 在
+   * 800×360 横屏（scale 0.48）只有 5 CSS px。所以下限按「屏幕上至少 7.5 CSS px」
+   * 反算，并且不高于原字号的 90%（否则等于没缩，只是把 ellipsis 提前）。
+   * 取 7.5 而不是 8：8 个中文在 120px 的昵称块里恰好要 7.9 CSS px，
+   * 卡在 8 会「缩到下限仍差 1px 溢出」—— 白缩一场，还是省略号。
+   * 到下限仍放不下（比如 5 人局 80px 窄座位里的 10 个中文）就保留省略号 ——
+   * 那是「一个中文 5px」的物理极限，任何做法都读不出来。
+   */
+  var FIT_MIN_CSS = 7.5;
+  function fitLongNames(root) {
+    if (!root) return;
+    var list = root.querySelectorAll('.opp-name, .gt-vs .vs-side i');
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i];
+      /* 先退回 CSS 给的字号（圆桌是 --seat-name，随 scale 变），
+       * 否则上一轮 resize 写进去的内联值会一直压着新 scale。 */
+      if (n.style.fontSize) n.style.fontSize = '';
+      var baseFs = parseFloat(getComputedStyle(n).fontSize);
+      if (!(baseFs > 0)) continue;
+      var avail = n.clientWidth;
+      if (!(avail > 0)) continue;                 // 还没布局（display:none / 未挂载）
+      var textW = n.scrollWidth;
+      /* scrollWidth / clientWidth 都是取整后的整数，±1 的死区不缩 ——
+       * 否则「刚好放下」的名字会被反复缩 0.1px，字号看着像随机数。 */
+      if (textW <= avail + 1) continue;
+      var scale = lastStageScale > 0 ? lastStageScale : 1;
+      var floorFs = Math.min(baseFs * 0.9, Math.max(FIT_MIN_CSS / scale, baseFs * 0.5));
+      n.style.fontSize = Math.round(fitFont(baseFs, avail, textW, floorFs) * 10) / 10 + 'px';
+    }
+  }
+
   function finishTopBar(room, me, html, submitted) {
     var top = $('#game-top');
     if (!top) return;
@@ -1311,6 +1354,9 @@
     if (html !== lastTopHtml) {
       top.innerHTML = html;
       lastTopHtml = html;
+      /* 昵称缩字号：必须放在 innerHTML 之后 —— 上一次渲染写进去的内联
+       * font-size 已经随节点一起被替换掉了，此刻量到的是 CSS 的原始字号。 */
+      fitLongNames(top);
 
       // 我的分数字滚动（涨红跌绿闪色一次）
       var scoreEl = top.querySelector('.gt-score');
@@ -1630,7 +1676,7 @@
       + ' style="left:' + g.vs.x + 'px;top:' + g.vs.y + 'px;height:' + g.vs.h + 'px">'
       + '<span class="vs-side"><i>你</i><b>' + ms + '</b></span>'
       + '<span class="vs-mid">分差 <b>' + diff + '</b></span>'
-      + '<span class="vs-side vs-opp"><i>' + esc(short(opp.nickname) || '对手') + '</i><b>' + os + '</b></span>'
+      + '<span class="vs-side vs-opp"><i>' + esc(opp.nickname || '对手') + '</i><b>' + os + '</b></span>'
       + '</div>';
   }
 
@@ -1652,7 +1698,7 @@
         + ' style="left:' + s.x + 'px;top:' + s.y + 'px;--nmw:' + s.nmw + 'px"'
         + ' title="' + esc((p.nickname || '') + ' · ' + p.score + ' 分 · ' + stt.text) + '">'
         + oppAvatarHtml(p, stt.badge)
-        + '<span class="opp-name">' + esc(short(p.nickname)) + '</span>'
+        + '<span class="opp-name">' + esc(p.nickname) + '</span>'
         + '<span class="opp-score">' + p.score + '</span>'
         + '</div>';
     });
@@ -4530,6 +4576,12 @@
       /* 表情按钮的半径：与 CSS 的 max(88|92, --tap-min) 同一套规则。
        * 两边必须同步 —— 一处写了 max() 另一处写死，按下去就会跳（见 emoji.css 那条注释）。 */
       stage.style.setProperty('--emo-half', (Math.max(cpt ? 92 : 88, tapMin) / 2) + 'px');
+      /* 昵称缩字号要跟着一起重算：这里改的是 --seat-name，而 fitLongNames
+       * 写的内联 font-size 优先级比它高。转屏 / 改窗口时 html 未必变
+       *（座位和分数都没动），finishTopBar 就不会重建 DOM，内联值会一直是
+       * 上一档 scale 算出来的那个 —— 于是小屏上的名字比该有的大一号、
+       * 继续溢出，却再也没人重算。这里先清内联再按新 scale 重新量一遍。 */
+      fitLongNames($('#game-top'));
     })();
     /* 圆桌多吃的高度只对竖屏成立：横屏的桌子在左栏，组槽仍是右栏那一条，
      * 高度一分不少（v88 的「左桌右盘」）。这里不减，横屏组槽预算才不会被算小。 */

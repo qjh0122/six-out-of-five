@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v139';
+const CACHE_NAME = 'weile-liuxuanwu-v145';
 
 /* network-first 的超时上限。
  *
@@ -173,6 +173,14 @@ const PRECACHE = [
   '/assets/home_bg.webp',
   '/assets/table_bg.webp',
   '/assets/card_back.webp',
+/* 5 张指定头像（共约 15 KB）：同样是「预缓存」。
+ * 它们是某个玩家在牌桌上的唯一标识 —— 断网时按需缓存的失败结果是
+ * 那一格空着，别人认不出是谁；而这几张加起来还没一张表情大。 */
+  '/assets/avatar-custom/pierrec.webp',
+  '/assets/avatar-custom/shahuo.webp',
+  '/assets/avatar-custom/pokergod.webp',
+  '/assets/avatar-custom/daniuge.webp',
+  '/assets/avatar-custom/will.webp',
   '/assets/audio/sfx_deal.mp3',
   '/assets/audio/sfx_select.mp3',
   '/assets/audio/sfx_submit.mp3',

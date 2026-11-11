@@ -89,7 +89,7 @@
 | 0 | **文档检查**：把 `docs/` 过一遍，该改的改、不需要的跳过 | 见下表「哪些文档会因为什么变」 |
 | 1 | 全量验收 | `npm test` + `node scripts/journey.js`（UI 有改动再加 `probe-ui-flow` 单档） |
 | 2 | 提交 + **推私库** | `git push origin main`，然后 `git ls-remote origin main` 比对 HEAD —— 光看 `git status -sb` 不够 |
-| 3 | **推公库** | `bash scripts/publish-public.sh`（`git archive` 导出 + 敏感检查 + LF 归一） |
+| 3 | **推公库** | `bash scripts/publish-public.sh`（`git archive` 导出 + 敏感检查 + 头像/昵称脱敏 + LF 归一；该脚本只存在于私有仓库） |
 | 4 | **发布上线** | `workbuddy_sites_deploy` → 再跑 `probe-online-smoke`（关键是「页面版本号 == 本地版本」）→ **直抓线上 `sw.js`** 确认 `CACHE_NAME` 已 bump |
 | 5 | 回填文档里的版本事实 | 部署成功后把「待发布」改成线上事实（**先部署、再写已发布**） |
 

@@ -27,6 +27,13 @@ const SM = require('../../pwa/js/stateMachine.js');
 const Ach = require('../../pwa/js/achievements.js');
 const { Hub } = require('../hub.js');
 const { ProfileStore } = require('../profile.js');
+const EventLog = require('../eventLog.js');
+const Replay = require('../achReplay.js');
+
+/* 事件日志开到一个临时目录：这里要验的是「真的跑一局之后，原始观测有没有落下来」，
+ * 而 eventLog 默认关闭（见 eventLog.js 头部约束 2），不显式打开就什么都测不到。 */
+const EVT_DIR = path.join(os.tmpdir(), 'lxw-ach-e2e-evt-' + Date.now());
+EventLog.configure({ dir: EVT_DIR, enabled: true });
 
 let pass = 0, fail = 0;
 function ok(cond, name, extra) {
@@ -160,12 +167,21 @@ function mk(id, nick) {
   const self = profiles.getSelf(A.playerId);
   ok(!!self.ach, 'getSelf 带完整桶');
   eq(self.ach.sa, 1, '明细里五子登科 1 次');
-  ok(self.achCount >= 5, '解锁数 ≥ 5（十点半 / 豹子 / 牛牛 / 一巡清场 / 五子登科 …）');
+  /* v116 起「打完一把能亮几条」是被刻意压缩的：
+   *   · 一巡清场 / 五子登科的门槛 1 → 3，一把不亮；
+   *   · 牌型类门槛 5~30，一把只有 1 次，不亮；
+   *   · 你咋这幸要求 ≥3 人，这是两人局，不亮。
+   * 剩下就只有「第一次」。**这是有意的**：以前一把能亮 5~6 条，
+   * 那等于注册礼包；现在第一条真正的成就要打几把才出来，曲线才有东西可爬。 */
+  const litA = Ach.evaluate(self.ach, self).list.filter(function (x) { return x.ok; });
+  eq(litA.length, 1, '★★ 打完一把只亮 1 条（第一次）—— 以前是 5 条起，等于白送');
+  eq(litA[0].id, 'first', '亮的就是「第一次」');
+  eq(self.achCount, 1, '对外计数一致');
 
   const pub = profiles.get(A.playerId);
   eq(pub.ach, undefined, '★ 对外档案不带明细');
   eq(pub.achCount, self.achCount, '但数量一致（信息档显示 12 / 34 靠它）');
-  eq(pub.achTotal, 35, '总数 35（v114 去重 + 通赔；v115 对撞重排成 8 条）');
+  eq(pub.achTotal, 39, '总数 39（v116 补熟面孔 / 铁人 / 十五连胜 / 单场之王）');
 
   const pubB = profiles.get(B.playerId);
   const selfB = profiles.getSelf(B.playerId);
@@ -196,6 +212,53 @@ function mk(id, nick) {
   const runAnew = Ach.runOf(room2.achRun, A.playerId);
   eq(runAnew.t.th, 1, '★ 新房间的桶从 0 开始（不是接着上一局的 1）');
   eq(runAnew.s1, 1, '通吃也从 0 开始');
+
+  /* ================================================================
+   * 7. 原始观测落盘 + 重放能否复现线上结果
+   *
+   * 这一段是整个「改口径能不能重算历史」的最终证据：
+   * 跑一局真牌 → 事件写进文件 → 拿重放器折一遍 → 必须等于档案里的 ach。
+   * 对不上，就说明重放器抄错了 record/accumulate 的逻辑，或者接线断了一环。
+   * ================================================================ */
+  console.log('\n[7] 原始观测落盘 + 重放复现');
+  const evts = EventLog.readAll({ dir: EVT_DIR });
+  const evtA1 = evts.filter(function (e) { return e.r === 'R-ACH'; });
+  eq(evtA1.filter(function (e) { return e.k === 'g'; }).length, 2,
+    '★ 第一局两轮各一条轮级事件');
+  const settles = evtA1.filter(function (e) { return e.k === 's'; });
+  eq(settles.length, 1, '★ 一条场级事件');
+  ok(settles[0] && settles[0].p.length === 2, '场级事件带的是全场两个人');
+  const g1 = evtA1.filter(function (e) { return e.k === 'g'; })[0];
+  const tenhalfGroup = (g1.g || []).filter(function (x) { return x[0] === 'tenhalf'; })[0];
+  ok(!!tenhalfGroup, '事件里有十点半这一组');
+  const aEntry = tenhalfGroup[2].filter(function (e) { return e[0] === A.playerId; })[0];
+  eq(aEntry[1], '10.5点', '★ 牌型存的是原文（10.5点），不是映射后的短键');
+
+  /* 用空白基线重放：档案里此刻的 ach 就是这一局算出来的，两者必须一致 */
+  const replayed = Replay.replay(evtA1, { baseByPid: new Map([
+    [A.playerId, { at: 0, counts: {}, currentStreak: 0 }],
+    [B.playerId, { at: 0, counts: {}, currentStreak: 0 }]
+  ]) });
+  const liveA = profiles.data.get(A.playerId).ach;
+  const rrA = replayed.byPid.get(A.playerId).counts;
+  eq(rrA.t.th, liveA.t.th, '★★ 重放出来的十点半次数 == 线上（' + liveA.t.th + '）');
+  eq(rrA.t.lp, liveA.t.lp, '★★ 豹子次数一致');
+  eq(rrA.s1, liveA.s1, '★★ 一巡清场一致');
+  eq(rrA.sa, liveA.sa, '★★ 五子登科一致');
+  eq(rrA.sw, liveA.sw, '通吃总数一致');
+  eq(rrA.vsn || 0, liveA.vsn || 0, '对撞分母一致（这一局本来就该是 0）');
+  const liveB = profiles.data.get(B.playerId).ach;
+  const rrB = replayed.byPid.get(B.playerId).counts;
+  eq(rrB.t.th || 0, liveB.t.th || 0, '★ 乙那边也一致（甲拿的没记到乙头上）');
+
+  /* 反向验证：把轮级事件拿掉，重放结果必须塌成 0 —— 证明上面的相等不是巧合 */
+  const onlySettle = evtA1.filter(function (e) { return e.k === 's'; });
+  const rNoRounds = Replay.replay(onlySettle, { baseByPid: new Map([
+    [A.playerId, { at: 0, counts: {}, currentStreak: 0 }]
+  ]) });
+  const rrNo = rNoRounds.byPid.get(A.playerId).counts;
+  eq(rrNo.t.th || 0, 0, '★ 只留场级事件时牌型计数为 0（轮级事件确实是唯一来源）');
+  eq(rrNo.sa || 0, 0, '五子登科也归 0');
 
   /* ================================================================
    * 汇总

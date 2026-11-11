@@ -79,11 +79,23 @@ function main() {
     totalFail += c.fail;
 
     const timedOut = r.error && r.error.code === 'ETIMEDOUT';
-    const bad = timedOut || r.status !== 0 || c.fail > 0;
+    /* 「一条断言都没数到」本身就是缺陷，不能算通过。
+     *
+     * 这个坑真踩过：五个文件把汇总写成「N 项通过」，而 parseCounts 的正则是
+     * 「通过 N 项，失败 M 项」，于是它们各自几十条断言在总账里一直是 0。
+     * 每一行都显示绿，总数看起来也合理，只是「163 文件 / N 断言」这句话
+     * 一直在少算整整一百多条。
+     *
+     * 没有合法的「0 断言测试文件」—— 那它就不是测试。所以直接判红。 */
+    const noCount = r.status === 0 && c.pass === 0 && c.fail === 0;
+    const bad = timedOut || r.status !== 0 || c.fail > 0 || noCount;
 
     if (bad) {
       failed.push({ rel: rel, out: out, status: r.status, timedOut: !!timedOut });
-      console.log('  ✗ ' + label + '  (' + (timedOut ? '超时 ' + PER_FILE_TIMEOUT_MS + 'ms' : 'exit ' + r.status) + ')');
+      const why = timedOut ? '超时 ' + PER_FILE_TIMEOUT_MS + 'ms'
+        : (noCount ? '一条断言都没数到（汇总行格式不对？应为「通过 N 项，失败 M 项」）'
+          : 'exit ' + r.status);
+      console.log('  ✗ ' + label + '  (' + why + ')');
     } else {
       console.log('  ✓ ' + label + '  ' + c.pass + ' 项');
     }

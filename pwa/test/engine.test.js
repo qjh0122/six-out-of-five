@@ -8,7 +8,7 @@
  * 设计原则：
  *   - 能用「独立实现」算期望值的地方，绝不拿引擎自己验自己
  *     （例如十点半总点数用 rank 直接算、斗牛牛几用总点数取模算）
- *   - 能穷举的地方穷举（53 张牌的两两组合全部跑一遍）
+ *   - 能穷举的地方穷举（54 张牌的两两组合全部跑一遍）
  *   - 比较器必须满足反对称与传递，否则 settleGroup 选出的赢家会依赖数组顺序
  */
 'use strict';
@@ -36,14 +36,16 @@ console.log('[发牌] 牌堆构成');
 
 {
   const deck = Card.createDeck();
-  ok(deck.length === 53, '一副牌 53 张', 'got ' + deck.length);
-  ok(deck.filter(Card.isJoker).length === 1, '有且只有 1 张大王');
+  ok(deck.length === 54, '一副牌 54 张（52 + 大王 + 小王）', 'got ' + deck.length);
+  ok(deck.filter(Card.isJoker).length === 2, '有且只有 2 张王');
+  ok(deck.filter(Card.isBigJoker).length === 1, '大王 1 张');
+  ok(deck.filter(Card.isSmallJoker).length === 1, '小王 1 张');
 
   const normal = deck.filter(function (c) { return !Card.isJoker(c); });
   ok(normal.length === 52, '常规牌 52 张');
 
   const ids = new Set(deck.map(Card.cardId));
-  ok(ids.size === 53, '没有重复的牌');
+  ok(ids.size === 54, '没有重复的牌');
 
   let missing = 0;
   for (const s of SUITS4) {
@@ -65,12 +67,12 @@ console.log('\n[发牌] 洗牌');
   const deck = Card.createDeck();
   const before = deck.map(Card.cardId).sort().join(',');
   Card.shuffle(deck);
-  ok(deck.length === 53, '洗牌后仍是 53 张');
+  ok(deck.length === 54, '洗牌后仍是 54 张');
   ok(deck.map(Card.cardId).sort().join(',') === before, '洗牌只换顺序，不增不减');
 
   /* 洗牌有效性：1000 次洗牌里，大王出现在首位的次数应该远大于 0 且远小于全部 */
   let topJoker = 0;
-  const positions = new Array(53).fill(0);
+  const positions = new Array(54).fill(0);
   for (let i = 0; i < 1000; i++) {
     Card.shuffle(deck);
     const p = deck.findIndex(Card.isJoker);
@@ -79,7 +81,7 @@ console.log('\n[发牌] 洗牌');
   }
   ok(topJoker > 0 && topJoker < 200, '大王不会固定在某一位（1000 次里首位 ' + topJoker + ' 次）');
   ok(positions.filter(function (n) { return n > 0; }).length > 30, '大王能落到大多数位置（覆盖 ' +
-    positions.filter(function (n) { return n > 0; }).length + '/53）');
+    positions.filter(function (n) { return n > 0; }).length + '/54）');
 }
 
 console.log('\n[发牌] 房间开局发牌');
@@ -187,7 +189,7 @@ console.log('\n[牌型] 十点半：点数计算（对照独立实现）');
 }
 
 {
-  /* 穷举 53 张牌的所有 2 张组合（1378 种），逐条核对 */
+  /* 穷举 54 张牌的所有 2 张组合（C(54,2) = 1431 种），逐条核对 */
   const deck = Card.createDeck();
   let illegalTotal = 0, jokerMax = 0;
   const jokerTops = new Set();
@@ -204,8 +206,10 @@ console.log('\n[牌型] 十点半：点数计算（对照独立实现）');
       }
     }
   }
-  ok(illegalTotal === 0, '1378 种两张组合的点数都是合法的 5 的倍数', illegalTotal + ' 组异常');
-  ok(jokerMax === 16, '含王的组合里 10/J/Q/K（16 张）都能靠王凑到 10.5', 'got ' + jokerMax);
+  ok(illegalTotal === 0, '1431 种两张组合的点数都是合法的 5 的倍数', illegalTotal + ' 组异常');
+  /* 加了小王之后从 16 变 33：大王 + 10/J/Q/K = 16，小王同样 16，再加「大小王」这一组自己就是 10.5。
+   * 三个数必须同时成立 —— 少算双王会得到 32，少算小王会退回 16，都是漏了东西的信号。 */
+  ok(jokerMax === 33, '含王的组合里有 33 组能凑到 10.5（16 + 16 + 双王）', 'got ' + jokerMax);
   ok(!jokerTops.has(110) && !jokerTops.has(115), '含王的组合永远不会爆出 11 点以上（王会自己退到合适点数）');
 }
 
@@ -221,7 +225,7 @@ console.log('\n[牌型] 十点半：大王取值');
   ok(E.tenHalfTotal([C('spade', 2), JOKER]) === 100, '2 + 王 = 10（王当 8）');
   ok(E.tenHalfTotal([C('spade', 9), JOKER]) === 100, '9 + 王 = 10（王当 1）');
   ok(E.tenHalfDisplay([C('spade', 13), JOKER]) === '10.5点', '★ K + 王 显示 10.5点');
-  ok(typeof E.tenHalfDisplay([JOKER, JOKER]) === 'string', '双王（牌堆只有一张，防御分支）不崩');
+  ok(E.tenHalfDisplay([JOKER, JOKER]) === '10.5点', '双王（两张大王，只可能来自构造数据）当作 10.5，不崩');
 }
 
 console.log('\n[牌型] 十点半：爆牌与比大小');

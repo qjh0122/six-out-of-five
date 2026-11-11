@@ -17,7 +17,11 @@
     "docs:check": "node scripts/check-docs.js",
     "qa:geom": "node tools/qa/geometry-selftest.js",
     "backup": "node scripts/backup-leaderboard.js",
-    "audit:comments": "node scripts/audit-comments.js"
+    "audit:comments": "node scripts/audit-comments.js",
+    "ach:baseline": "node scripts/ach-baseline.js",
+    "ach:replay": "node scripts/replay-achievements.js",
+    "ach:reset": "node scripts/reset-ach-keys.js",
+    "ach:unlock-stats": "node scripts/ach-unlock-stats.js"
   },
   "engines": {
     "node": ">=18"

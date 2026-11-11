@@ -20,6 +20,7 @@ const { AvatarStore, MAX_BYTES: AVATAR_MAX_BYTES } = require('./avatars');
 const { Hub } = require('./hub');
 const { BotRunner, HAND_LIMITS, MIN_PLAYERS, MAX_PLAYERS, MAX_ROOMS } = require('./botRunner');
 const auth = require('./auth');
+const EventLog = require('./eventLog.js');
 const { cleanNickname } = require('./text');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -108,6 +109,46 @@ const avatars = new AvatarStore({
   dir: process.env.AVATAR_DIR || undefined,
   log: log
 });
+
+/* 成就原始观测日志（append-only JSONL）。
+ *
+ * **只在这里打开**。`eventLog.js` 默认关闭，测试里 require 到它也只是空转 ——
+ * 单测会 new 几百次 Hub，每轮都往真实数据目录写一条日志是不可接受的。
+ * 目录跟着 profiles.json 走（同一个 DATA_DIR / 同一个家目录）：
+ * 主档案和它的重放依据必须同生共死，分开放早晚会一边有一边没有。
+ *
+ * EVENT_LOG 环境变量可以指到别处（测试、演练）。设成 off 就整个关掉。 */
+const EVENT_LOG_DIR = process.env.EVENT_LOG_DIR
+  || (String(process.env.EVENT_LOG || '').toLowerCase() === 'off'
+    ? ''
+    : path.join(path.dirname(profiles.file), 'events'));
+if (EVENT_LOG_DIR) {
+  const on = EventLog.configure({ dir: EVENT_LOG_DIR, enabled: true });
+  log(on ? '[eventLog] 原始观测落盘 → ' + EVENT_LOG_DIR
+    : '[eventLog] 目录不可写，本次运行不记事件：' + EVENT_LOG_DIR);
+
+  /* 基线在这里冻，不靠人工跑脚本 —— 线上是容器部署，没有远程 shell，
+   * 而 `scripts/ach-baseline.js` 要在真实档案上跑才有意义。
+   * 基线缺失时重放器会**跳过这些人**（宁可不动，也不从 0 起算），
+   * 于是整套基础设施对真实玩家等于不存在，而且没有任何症状 —— 这种「做好了但没接上」
+   * 比做错更难发现，所以必须自动。
+   *
+   * 为什么「现在才冻」不会重复计数：重放器会把 `t <= 基线时刻` 的事件全部跳过
+   * （那些已经算进基线 counts 里了）。所以基线晚于事件只是重复一段、不会双计；
+   * 真正危险的只有反过来的情况 —— 基线早于日志，中间那段牌既不在基线、也没有事件，
+   * 重放时会被抹掉。启动这一课不可能早于本进程自己打开的日志。
+   *
+   * 幂等：已经有 `achBase.at` 的跳过（`stampAchBase` 自己判），
+   * 所以每次重启只对**新出现的档案**补一次，老档案的快照永远不动。 */
+  if (on) {
+    const frozen = profiles.stampAchBase(Date.now());
+    if (frozen) log('[eventLog] 成就基线冻结 ' + frozen + ' 份（已有基线的跳过）');
+  }
+} else {
+  EventLog.configure({ enabled: false });
+}
+
+/* ---------------- AI 对局不计战绩，判定得看人头数 ---------------- */
 
 /* 备份导出密钥：?full=1 会吐出全部玩家档案（含近 20 场流水），
  * 不能裸奔给外网。密钥放在 server/ 目录里——pwa 才是静态根，
@@ -793,6 +834,43 @@ async function handleRequest(req, res) {
     return;
   }
 
+  /* 成就原始观测导出（P3）：给 scripts/backup-leaderboard.js 把事件日志拉回本地。
+   *
+   * 为什么不塞进 ?full=1 的那个响应里：事件日志是**逐轮**的，量级比档案大两个
+   * 数量级（当前 1.6 MB vs 档案几十 KB），而绝大多数拿 full=1 的场景只想看档案。
+   * 分开以后，两者可以各自演进：事件可以按 since 增量拉，档案永远是全量。
+   *
+   * since：只要 t 严格大于它的。备份脚本记下上次拉到的最大 t，下次接着拉，
+   * 不必每次搬全量。不带就是全量。
+   *
+   * 鉴权与 full=1 同一把钥匙 —— 它能读走全部档案，事件日志并不比档案更敏感，
+   * 但也不该裸奔给外网。
+   */
+  if (urlPath === '/api/backup/events' || urlPath.startsWith('/api/backup/events?')) {
+    const expected = readBackupKey();
+    if (!expected) {
+      sendJson(res, 403, {
+        ok: false,
+        error: '备份导出未启用：服务端缺少 server/backup-key.txt，或未设置 BACKUP_KEY'
+      });
+      return;
+    }
+    if (!sameSecret(req.headers['x-backup-key'], expected)) {
+      sendJson(res, 403, { ok: false, error: '无权导出：缺少或错误的 x-backup-key' });
+      return;
+    }
+    if (!EventLog.isEnabled()) {
+      /* 明确回一个「没开」，不要回空数组 —— 脚本拿到空数组会以为「线上就这么多」，
+       * 然后照常把备份标记成成功。 */
+      sendJson(res, 200, { ok: false, error: '事件日志未启用（EVENT_LOG=off 或目录不可写）', events: [] });
+      return;
+    }
+    const since = Number(queryParam(urlPath, 'since')) || 0;
+    const events = EventLog.readAll({ after: since });
+    sendJson(res, 200, { ok: true, since: since, count: events.length, events: events });
+    return;
+  }
+
   // 运维清空：人机测试跑出来的榜单要能一键抹掉。
   // 线上主数据文件在项目目录之外，改种子文件清不掉它（主文件「存在即权威」），
   // 所以必须有一个能在运行时真正落空的入口。
@@ -1203,6 +1281,11 @@ async function handleRequest(req, res) {
     '/api/admin/mark-ai-games': true,
     '/api/admin/unmark-ai-games': true,
     '/api/admin/restore': true,
+    /* 成就键定点清零：判定写错攒下的「不可能成立的数字」（r9/r10/r12 那一批）
+     * 要能一次抹掉，而且必须**同时抹掉基线里的那份**，否则下次重放又叠回来。
+     * 和 restore 的区别：restore 是整份覆盖（会顺带把窗口期内的新战绩冲掉），
+     * 这条只动指定的计数器，别的一个字节都不碰。默认 dryRun。 */
+    '/api/admin/ach-reset': true,
     /* 后台「模拟对战」与「排行榜」：同样是管理动作，沿用同一把密钥。
      * 为什么单独开接口而不是让页面直接打 /api/leaderboard：
      * 页面要的是**全部名次 + 名次序号 + 谁在打**，公开接口只给 top50 摘要。 */
@@ -1366,6 +1449,39 @@ async function handleRequest(req, res) {
       if (!rr.ok) return sendJson(res, 400, { ok: false, error: rr.error || '恢复失败' });
       log('admin restore: ' + rr.count + ' 份档案（跳过 ' + rr.skipped + '）');
       return sendJson(res, 200, { ok: true, count: rr.count, skipped: rr.skipped });
+    }
+
+    /* 成就键定点清零（历史修正）：默认 dryRun，必须显式 `"dryRun": false` 才写。
+     *
+     * 为什么要两段式：这条会**真的删掉计数**，而且删的是全服每一个人的。
+     * 给一次「看一眼原值对不对」的机会，比事后 restore 便宜得多 ——
+     * 上一次 mark-ai-games 连着 POST 两次就误伤了 4 条真实战绩，
+     * 那个教训写在 ai-fix-route.test.js 开头。 */
+    if (adminPath === '/api/admin/ach-reset') {
+      if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只接受 POST' });
+      if (!requireJson(req, res)) return;
+      const arBody = await readJsonBody(req);
+      if (!arBody) return sendJson(res, 400, { ok: false, error: '请求格式不正确' });
+      const arKeys = Array.isArray(arBody.keys) ? arBody.keys : [];
+      if (!arKeys.length) {
+        return sendJson(res, 400, {
+          ok: false,
+          error: '必须显式给 keys（白名单：r7 / r8 / r9 / r10 / r12）'
+        });
+      }
+      const dryRun = arBody.dryRun !== false;
+      const ar = profiles.resetAchKeys(arKeys, { dryRun: dryRun });
+      if (!ar.keys.length) {
+        return sendJson(res, 400, { ok: false, error: 'keys 全在白名单外', skipped: ar.skipped });
+      }
+      if (!dryRun) {
+        log('admin ach-reset: ' + ar.keys.join(',') + ' → ' + ar.profiles + ' 份档案 / '
+          + ar.cells + ' 格（基线 ' + ar.baseCells + ' 格）');
+      }
+      return sendJson(res, 200, {
+        ok: true, dryRun: dryRun, keys: ar.keys, skipped: ar.skipped,
+        profiles: ar.profiles, cells: ar.cells, baseCells: ar.baseCells, detail: ar.detail
+      });
     }
 
     if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只接受 POST' });

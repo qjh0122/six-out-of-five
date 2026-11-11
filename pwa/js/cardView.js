@@ -61,7 +61,7 @@
      * 桌带吃满宽度之后右边本来是一片没来由的空白，用「这组怎么算赢」填上 ——
      * 新玩家不用翻规则页，老玩家也当提醒。文案与规则页保持一致，只取最短的一句。 */
     var SLOT_HINT = {
-      single: '大王最大 · 同点比花色',
+      single: '大王 > 小王 > K · 同点比花色',
       tenhalf: '最接近 10.5 · 超了爆牌',
       piaosanye: '豹子 > 同花顺 > 同花 > 顺子',
       douniu: '三张凑 10 · 五花牛最大'
@@ -147,7 +147,7 @@
       img.style.width = w + 'px';
       img.style.height = h + 'px';
       img.dataset.cardId = card.suit + '-' + card.rank;
-      if (Card.isJoker(card)) img.classList.add('joker-glow'); // 大王牌自带微光
+      if (Card.isJoker(card)) img.classList.add('joker-glow'); // 王牌自带微光（大小王都算）
       return img;
     };
     /* 槽位整块用字符串拼（配合「内容没变就不重写 innerHTML」），牌面也走字符串版本 */

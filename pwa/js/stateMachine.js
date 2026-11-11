@@ -45,6 +45,32 @@
 })(typeof self !== 'undefined' ? self : this, function (Card, Engine, CONFIG, Ach) {
   'use strict';
 
+  /* ---------------------------- 轮结算钩子 ----------------------------
+   *
+   * 服务端用它把**每一轮的原始分组**追加到 append-only 事件日志
+   * （见 server/eventLog.js）。有了这份日志，成就才算得动历史 ——
+   * 之前只存聚合计数器，改一次口径就永远重算不了过去。
+   *
+   * 为什么是模块级钩子而不是写进 settleRound 里直接 require fs：
+   * 这个文件浏览器也在跑（index.html 里是 <script>，服务端是 require），
+   * 往里塞 fs 会让整个 PWA 直接崩。所以这里只留一个「可以挂一个回调」的缝，
+   * 谁来挂、挂什么，是宿主的事。**没挂就是 null，一行都不执行。**
+   *
+   * 回调必须自己吞异常：日志写失败不能影响这一轮结算 ——
+   * 玩家的分数对不对，永远比「以后能不能重算成就」重要。
+   */
+  var _roundSettledHook = null;
+
+  function setRoundSettledHook(fn) {
+    _roundSettledHook = (typeof fn === 'function') ? fn : null;
+    return _roundSettledHook;
+  }
+
+  function fireRoundSettled(room, round, results) {
+    if (!_roundSettledHook) return;
+    try { _roundSettledHook(room, round, results); } catch (e) { /* 钩子自己的问题，不往上抛 */ }
+  }
+
   var PHASE = {
     WAITING: 'WAITING',          // 等待中（可加入/准备）
     ROUND1_SPLIT: 'ROUND1_SPLIT', // 第一轮分牌
@@ -1051,6 +1077,11 @@
       }
     }
 
+    /* 原始观测落日志（服务端注册的钩子；浏览器里没有钩子，等于空转）。
+     * 放在成就累加之后：两者看的是同一份 `results`，
+     * 只要顺序固定，「线上算出来的」和「以后重放出来的」就是同一条路径。 */
+    fireRoundSettled(room, round, results);
+
     room.results['round' + round] = results;
     room.lastResult = { round: round, groups: results };
     room.resultSeq = (room.resultSeq || 0) + 1;
@@ -2047,6 +2078,8 @@
     voteDissolve: voteDissolve,
     markDisconnected: markDisconnected,
     reconnect: reconnect,
-    finalizeLeave: finalizeLeave
+    finalizeLeave: finalizeLeave,
+    /* 轮结算钩子（服务端挂事件日志用；浏览器不挂） */
+    setRoundSettledHook: setRoundSettledHook
   };
 });

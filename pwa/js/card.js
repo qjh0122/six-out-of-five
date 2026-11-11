@@ -1,8 +1,17 @@
 /**
- * 牌模型工具：一副 53 张牌（52 + 1 张大王）、洗牌、发牌、Canvas 绘制牌面（牌背）。
+ * 牌模型工具：一副 54 张牌（52 + 大王 + 小王）、洗牌、发牌、Canvas 绘制牌面（牌背）。
  * 与 engine.js 共享同一牌数据结构：
- *   card = { suit: 'spade'|'heart'|'club'|'diamond'|'joker', rank: 2..15 }
+ *   card = { suit: 'joker', rank: 15 | 14.5 }        ← 大王 / 小王
+ *   card = { suit: 'spade'|'heart'|'club'|'diamond', rank: 2..14 }
  *   rank: 11=J, 12=Q, 13=K, 14=A, 15=大王(suit='joker')
+ *
+ * ★ 小王为什么用 rank 14.5 而不是新花色：两张王的功能完全一样（都是万能牌），
+ *   引擎里所有「这是不是王」的判断都写成 `suit === 'joker'`，加起来二十多处。
+ *   给小王另起一个花色（joker2）意味着每一处都要拆成两个判断，漏一处就是
+ *   「小王当不了赖子」的静默 bug。共用一个花色、只让 rank 差半个点，
+ *   则「是不是王」的判定一个字都不用动 —— **大小王都在 14 以上时功能自动一致**。
+ *   14.5 这半个点也不是随手取的：A 占着 14、大王占着 15，小王必须严格落在
+ *   两者之间（用 14 会和 A 撞，比花色时 joker 不在 SUIT_ORDER 里，反而比真牌小）。
  */
 (function (global, factory) {
   var mod = factory();
@@ -19,8 +28,14 @@
   var SUIT_COLOR = { spade: '#1A1D23', heart: '#D62828', club: '#1A1D23', diamond: '#D62828' };
   var RANK_LABEL = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
 
+  /* 大小王的 rank：两个都 > 14，靠大小分先后 */
+  var BIG_JOKER_RANK = 15;
+  var SMALL_JOKER_RANK = 14.5;
+
   function rankLabel(rank) { return RANK_LABEL[rank] || String(rank); }
   function isJoker(card) { return card.suit === 'joker'; }
+  function isBigJoker(card) { return isJoker(card) && card.rank >= BIG_JOKER_RANK; }
+  function isSmallJoker(card) { return isJoker(card) && card.rank < BIG_JOKER_RANK; }
 
   function createDeck() {
     var deck = [];
@@ -29,7 +44,8 @@
         deck.push({ suit: SUITS[s], rank: r });
       }
     }
-    deck.push({ suit: 'joker', rank: 15 }); // 大王
+    deck.push({ suit: 'joker', rank: BIG_JOKER_RANK });     // 大王
+    deck.push({ suit: 'joker', rank: SMALL_JOKER_RANK });   // 小王
     return deck;
   }
 
@@ -78,7 +94,7 @@
   function sortCardsDesc(cards) {
     var ORDER = { spade: 4, heart: 3, club: 2, diamond: 1 };
     return cards.slice().sort(function (a, b) {
-      if (a.rank !== b.rank) return b.rank - a.rank; // 大王 rank 15 自然排最前
+      if (a.rank !== b.rank) return b.rank - a.rank; // 大王 15 / 小王 14.5，自然排最前
       return (ORDER[b.suit] || 0) - (ORDER[a.suit] || 0);
     });
   }
@@ -97,7 +113,27 @@
   /* 大王牌面：暖白纸底 + 中央彩色小丑 + 左上/右下红黑 JOKER 角标。
    * 尽量贴近现实扑克的大王：尖顶铃铛帽 + 圆脸彩妆小丑 + 彩色衣服，
    * 左上「JOKER」红字、右下「JOKER」黑字（斜对角，符合常见牌面）。 */
-  function drawJoker(ctx, w, h) {
+  /* 大王 / 小王共用一套画法，只换调色板。
+   * 大王 = 彩色（红蓝 + 金铃铛），小王 = 黑白（墨黑 + 中灰）—— 这是现实扑克的区分方式，
+   * 也是玩家一眼能认出来的方式。牌面尺寸只有 96~140px，再塞「大王/小王」四个字会糊，
+   * 所以身份靠配色 + 结算面板上的牌名（cardLabel）两处一起交代。 */
+  var JOKER_PALETTE_BIG = {
+    main: '#D62828', alt: '#1A6BB0', gold: '#F5C15C', goldLine: '#B47F22',
+    dark: '#7A4B00', face: '#FFF8EE', faceLine: '#C9B28A'
+  };
+  var JOKER_PALETTE_SMALL = {
+    main: '#2E2E2E', alt: '#8C8C8C', gold: '#C4C4C4', goldLine: '#9A9A9A',
+    dark: '#5A5A5A', face: '#FAFAFA', faceLine: '#C0C0C0'
+  };
+  function drawJoker(ctx, w, h, small) {
+    var P = small ? JOKER_PALETTE_SMALL : JOKER_PALETTE_BIG;
+    var cMain = P.main, cAlt = P.alt, cGold = P.gold, cGoldLine = P.goldLine;
+    var cDark = P.dark, cFace = P.face, cFaceLine = P.faceLine;
+    var cInk = '#1A1D23';
+    /* 腮红 / 嘴 / 鼻只有大王上色：小王是黑白牌，带红点会立刻「认错牌」。 */
+    var cCheek = small ? 'rgba(90,90,90,0.30)' : 'rgba(214,40,40,0.5)';
+    var cMouth = small ? '#555555' : '#BB3333';
+    var cNose = small ? '#777777' : '#E0563E';
     var r = Math.max(4, Math.round(w * 0.08));
     roundRect(ctx, 0, 0, w, h, r);
 
@@ -116,7 +152,7 @@
 
     /* ---- 中央彩色小丑 ---- */
     // 身体：彩色上衣（红蓝对半，与帽子呼应）
-    ctx.fillStyle = '#D62828';
+    ctx.fillStyle = cMain;
     ctx.beginPath();
     ctx.moveTo(cx - 26 * u, h * 0.86);
     ctx.lineTo(cx - 14 * u, cy + 6 * u);
@@ -124,7 +160,7 @@
     ctx.lineTo(cx, h * 0.86);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = '#1A6BB0';
+    ctx.fillStyle = cAlt;
     ctx.beginPath();
     ctx.moveTo(cx, h * 0.86);
     ctx.lineTo(cx, cy + 6 * u);
@@ -134,34 +170,34 @@
     ctx.fill();
 
     // 上衣下摆横条装饰
-    ctx.fillStyle = '#7A4B00';
+    ctx.fillStyle = cDark;
     ctx.fillRect(cx - 26 * u, h * 0.80, 52 * u, 3 * u);
 
     // 头：白脸圆
-    ctx.fillStyle = '#FFF8EE';
+    ctx.fillStyle = cFace;
     ctx.beginPath();
     ctx.arc(cx, cy - 2 * u, 20 * u, 0, Math.PI * 2);
     ctx.fill();
     ctx.lineWidth = 1.5 * u;
-    ctx.strokeStyle = '#C9B28A';
+    ctx.strokeStyle = cFaceLine;
     ctx.stroke();
 
     // 眼睛：两个黑点
-    ctx.fillStyle = '#1A1D23';
+    ctx.fillStyle = cInk;
     ctx.beginPath();
     ctx.arc(cx - 7 * u, cy - 6 * u, 2.4 * u, 0, Math.PI * 2);
     ctx.arc(cx + 7 * u, cy - 6 * u, 2.4 * u, 0, Math.PI * 2);
     ctx.fill();
 
     // 腮红：两团红
-    ctx.fillStyle = 'rgba(214,40,40,0.5)';
+    ctx.fillStyle = cCheek;
     ctx.beginPath();
     ctx.arc(cx - 11 * u, cy + 1 * u, 3.5 * u, 0, Math.PI * 2);
     ctx.arc(cx + 11 * u, cy + 1 * u, 3.5 * u, 0, Math.PI * 2);
     ctx.fill();
 
     // 嘴巴：上翘微笑弧线
-    ctx.strokeStyle = '#B33';
+    ctx.strokeStyle = cMouth;
     ctx.lineWidth = 2 * u;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -169,20 +205,20 @@
     ctx.stroke();
 
     // 鼻子：小红圆
-    ctx.fillStyle = '#E0563E';
+    ctx.fillStyle = cNose;
     ctx.beginPath();
     ctx.arc(cx, cy - 2 * u, 2.6 * u, 0, Math.PI * 2);
     ctx.fill();
 
     // 尖顶帽：左红右蓝，帽顶一个铃铛球
-    ctx.fillStyle = '#D62828';
+    ctx.fillStyle = cMain;
     ctx.beginPath();
     ctx.moveTo(cx - 20 * u, cy - 14 * u);
     ctx.lineTo(cx, cy - 38 * u);
     ctx.lineTo(cx + 20 * u, cy - 14 * u);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = '#1A6BB0';
+    ctx.fillStyle = cAlt;
     ctx.beginPath();
     ctx.moveTo(cx, cy - 38 * u);
     ctx.lineTo(cx + 20 * u, cy - 14 * u);
@@ -191,20 +227,20 @@
     ctx.fill();
 
     // 帽顶铃铛球（一个，挂在帽尖正中）
-    ctx.fillStyle = '#F5C15C';
+    ctx.fillStyle = cGold;
     ctx.beginPath();
     ctx.arc(cx, cy - 40 * u, 4.5 * u, 0, Math.PI * 2);
     ctx.fill();
     ctx.lineWidth = 1 * u;
-    ctx.strokeStyle = '#B47F22';
+    ctx.strokeStyle = cGoldLine;
     ctx.stroke();
 
     // 帽檐
-    ctx.fillStyle = '#7A4B00';
+    ctx.fillStyle = cDark;
     ctx.fillRect(cx - 21 * u, cy - 15 * u, 42 * u, 3 * u);
 
     // 领结（下巴下方，蓝色蝴蝶结）
-    ctx.fillStyle = '#1A6BB0';
+    ctx.fillStyle = cAlt;
     ctx.beginPath();
     ctx.moveTo(cx, cy + 8 * u);
     ctx.lineTo(cx - 6 * u, cy + 5 * u);
@@ -222,7 +258,7 @@
     ctx.fill();
 
     /* ---- 左上角标：红色 JOKER ---- */
-    ctx.fillStyle = '#D62828';
+    ctx.fillStyle = cMain;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.font = 'bold ' + Math.round(w * 0.15) + 'px system-ui, sans-serif';
@@ -234,7 +270,7 @@
     ctx.rotate(Math.PI);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = '#1A1D23';
+    ctx.fillStyle = cInk;
     ctx.font = 'bold ' + Math.round(w * 0.15) + 'px system-ui, sans-serif';
     ctx.fillText('JOKER', w * 0.06, h * 0.05);
     ctx.restore();
@@ -262,7 +298,7 @@
     var ctx = canvas.getContext('2d');
 
     if (isJoker(card)) {
-      drawJoker(ctx, w, h);
+      drawJoker(ctx, w, h, isSmallJoker(card));
       return canvas.toDataURL('image/png');
     }
 
@@ -374,6 +410,10 @@
     RANK_LABEL: RANK_LABEL,
     rankLabel: rankLabel,
     isJoker: isJoker,
+    isBigJoker: isBigJoker,
+    isSmallJoker: isSmallJoker,
+    BIG_JOKER_RANK: BIG_JOKER_RANK,
+    SMALL_JOKER_RANK: SMALL_JOKER_RANK,
     createDeck: createDeck,
     shuffle: shuffle,
     cardId: cardId,

@@ -334,5 +334,5 @@ console.log('\n[性质] 斗牛比较器：反对称 + 传递（随机抽样）')
 
 console.log('\n========================================');
 console.log(fail === 0 ? '全部通过' : '有失败');
-console.log('结果: ' + pass + ' 通过, ' + fail + ' 失败');
+console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
 process.exit(fail === 0 ? 0 : 1);

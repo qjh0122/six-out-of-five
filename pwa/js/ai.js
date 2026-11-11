@@ -29,7 +29,10 @@
   /* 单张大小顺序：A 当 1 最小，2..K 递增，大王最大 */
   function singleOrder(card) {
     if (!card) return 0;
-    if (card.suit === 'joker' || Engine.isJoker(card)) return 13;
+    /* 大王 13（最大）、小王 12.5（只输大王、赢 K）。
+     * 这里必须给小数：都给 13 的话 AI 会把小王当成和大王等价的好牌，
+     * 单张轮次里就会拿小王去和别人硬碰。 */
+    if (card.suit === 'joker' || Engine.isJoker(card)) return card.rank >= 15 ? 13 : 12.5;
     var r = Number(card.rank);
     if (r === 14) return 0;   // A
     return r - 1;             // 2 → 1 ... K → 12

@@ -85,67 +85,49 @@ console.log('\n[2] 小牌对撞：全场都是小牌才算');
   eq(Ach.runOf(wide, 'a').n.tenhalf, 1, '弃权的人不进分母，我也不多算');
 }
 
-console.log('\n[3] 整把三条：你咋这幸 / 我咋这霉 / 一夜暴富');
+console.log('\n[3] 场级三条：口径已于 2026-11-11 从「把」改为「场」');
 {
-  /* 甲 +10，乙 -5，丙 -5：只有甲正分；sumNeg = 10，10*2 >= 10 → 暴富 */
+  /* 这三条（你咋这幸 / 我咋这霉 / 一夜暴富）原来在这里按**把**统计，
+   * 现已移到 server/profile.js 的 record()，按**整场**统计。
+   * 本文件保留的只是「计数 → 成就」的映射断言；
+   * 统计本身的正确性由 server/test/achievements-room-level.test.js 守着。
+   *
+   * 为什么改：玩家把「277 次」读成「277 场」，而全操总共只有 235 场，
+   * 怎么算都对不上 —— 见 achievements.js 里 accumulateHand 的废弃说明。 */
+  const ach = Ach.blank();
+  ach.r9 = 3; ach.r10 = 2; ach.r12 = 5;
+  const res = Ach.evaluate(ach, { games: 100 });
+  const lucky = res.list.filter(function (x) { return x.name === '你咋这幸'; })[0];
+  const unlucky = res.list.filter(function (x) { return x.name === '我咋这霉'; })[0];
+  const rich = res.list.filter(function (x) { return x.name === '一夜暴富'; })[0];
+  eq(lucky.raw, 3, '你咋这幸读 r9');
+  eq(unlucky.raw, 2, '我咋这霉读 r10');
+  eq(rich.raw, 5, '一夜暴富读 r12');
+}
+{
+  /* accumulateHand 已空转：调用它不应再产生任何计数。
+   * 保留这条断言是为了锁住「不许再把场级统计塞回把级」这件事。 */
   const run = Ach.accumulateHand(null, [
     { id: 'a', score: 10 }, { id: 'b', score: -5 }, { id: 'c', score: -5 }
   ]);
-  eq(Ach.runOf(run, 'a').r9, 1, '★ 全场只有甲正分 → 你咋这幸 +1');
-  eq(Ach.runOf(run, 'a').r12, 1, '★ 甲 10 分 ≥ 输家负分总和 10 的一半 → 一夜暴富 +1');
-  eq(Ach.runOf(run, 'a').r10 || 0, 0, '甲不是唯一负分的人（他是正分）');
-  eq(Ach.runOf(run, 'b').r9 || 0, 0, '乙没赢，拿不到你咋这幸');
-  eq(Ach.runOf(run, 'b').r10 || 0, 0, '负分的有两个人 → 谁都不是「唯一负分」');
-}
-{
-  /* 甲 -4，乙 +2，丙 +2：只有甲负分；两个赢家 → 谁都不是「唯一赢家」 */
-  const run = Ach.accumulateHand(null, [
-    { id: 'a', score: -4 }, { id: 'b', score: 2 }, { id: 'c', score: 2 }
-  ]);
-  eq(Ach.runOf(run, 'a').r10, 1, '★ 全场只有甲负分 → 我咋这霉 +1');
-  eq(Ach.runOf(run, 'b').r9 || 0, 0, '两个赢家时没有「唯一赢家」');
-  eq(Ach.runOf(run, 'a').r12 || 0, 0, '负分的人拿不到暴富');
-}
-{
-  /* 暴富的边界：净胜 4、输家合计 10 → 4*2=8 < 10，不算 */
-  const no = Ach.accumulateHand(null, [
-    { id: 'a', score: 4 }, { id: 'b', score: -5 }, { id: 'c', score: -5 }
-  ]);
-  eq(Ach.runOf(no, 'a').r12 || 0, 0, '★ 净胜不到输家合计一半 → 不算暴富（4 < 10/2）');
-  const yes = Ach.accumulateHand(null, [
-    { id: 'a', score: 5 }, { id: 'b', score: -5 }, { id: 'c', score: -5 }
-  ]);
-  eq(Ach.runOf(yes, 'a').r12, 1, '正好一半也算（5 ≥ 10/2）');
-}
-{
-  /* 没人输（全平）时不算暴富；只有一个人时不算 */
-  const flat = Ach.accumulateHand(null, [{ id: 'a', score: 0 }, { id: 'b', score: 0 }]);
-  eq(Ach.runOf(flat, 'a').r12 || 0, 0, '全平不算暴富（分母 0）');
-  const solo = Ach.accumulateHand(null, [{ id: 'a', score: 9 }]);
-  eq(Ach.runOf(solo, 'a') === null || Ach.runOf(solo, 'a').r9 === undefined, true, '一个人的房间不算（没有「全场」可言）');
-}
-{
-  /* 退房的人不参与：他的分数是冻结的，不能拿来做「唯一负分」的判断 */
-  const left = Ach.accumulateHand(null, [
-    { id: 'a', score: -3 }, { id: 'b', score: 0, left: true }, { id: 'c', score: 0, left: true }
-  ]);
-  eq(Ach.runOf(left, 'a'), null, '★ 只剩我一个人在场 → 不算任何整把成就');
+  eq(Ach.runOf(run, 'a'), null, '★ accumulateHand 不再统计任何东西（口径已移到场级）');
 }
 
 console.log('\n[4] 展示口径：只有六条画进度条');
 {
   const res = Ach.evaluate(null, { games: 40, longestStreak: 6, longestLoseStreak: 3, bestNet: 12 });
   const prog = res.list.filter(function (x) { return x.mode === 'progress'; }).map(function (x) { return x.name; });
-  eq(prog.join(','), '常客,老油条,势不可挡,十连胜,背到极点,衰神附体', '进度条成就正好这六条（顺序也钉住）');
+  eq(prog.join(','), '常客,熟面孔,老油条,铁人,势不可挡,十连胜,十五连胜,背到极点,衰神附体',
+    '进度条成就正好这九条（v116 补了 50 场 / 200 场 / 十五连胜；顺序也钉住）');
   const counts = res.list.filter(function (x) { return x.mode === 'count'; });
-  eq(counts.length, 35 - 6, '其余 29 条都是次数口径（v114 去重 + 通赔；v115 对撞重排成 8 条）');
+  eq(counts.length, Ach.TOTAL - 9, '其余全部是次数口径（v116 扩到 39 条、其中 9 条画进度条）');
   ok(counts.every(function (x) { return x.need >= 1; }), '次数口径的成就都有解锁门槛');
   /* 用户点名的例子：门槛 10 次，但**展示**的是累计次数，不是 0/10 的进度。
    * 门槛和展示是两件事 —— 门槛决定星亮不亮，展示决定玩家看到什么数字。
    * （v115 换了例子：原例「牌桌屠夫」重排后门槛降到 1，已经说明不了这件事了。） */
   var strong = res.list.filter(function (x) { return x.name === '遇强则强'; })[0];
-  ok(strong && strong.mode === 'count' && strong.need === 10,
-    '★ 遇强则强：门槛 10 次但按次数展示（不是 0 / 10 的进度）');
+  ok(strong && strong.mode === 'count' && strong.need === 100,
+    '★ 遇强则强：门槛 100 次对撞但按次数展示（不是 0 / 100 的进度）');
 }
 {
   /* 牌型卡带出现率：十点半 3 次 / 20 次参与 = 15% */

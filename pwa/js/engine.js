@@ -9,12 +9,23 @@
  * 规则遵循《六选五》策划文档 3.2 / 3.4 节，并按 v0.2 规则变更调整了大王的用法。
  *
  * 牌数据结构约定（与 card.js 一致）：
- *   card = { suit: 'spade'|'heart'|'club'|'diamond'|'joker', rank: 2..15 }
- *   rank: 11=J, 12=Q, 13=K, 14=A, 15=大王(suit='joker')
- *   花色大小：黑桃(spade) > 红桃(heart) > 梅花(club) > 方片(diamond)；大王无花色、最高
+ *   card = { suit: 'joker', rank: 15 | 14.5 }        ← 大王 / 小王（都是万能牌）
+ *   card = { suit: 'spade'|'heart'|'club'|'diamond', rank: 2..14 }
+ *   rank: 11=J, 12=Q, 13=K, 14=A, 15=大王, 14.5=小王（suit 都是 'joker'）
+ *   花色大小：黑桃(spade) > 红桃(heart) > 梅花(club) > 方片(diamond)；王无花色、最高
+ *
+ * ★ 大小王的共同点与唯一的区别（2026-11-12 加小王）：
+ *   **功能完全一样** —— 四种玩法里都是万能牌，能替代任何真牌，双王也能同时当赖子。
+ *   所以「这是不是万能牌」的判断一律只写 `isJoker()`（判 suit），**不要**去区分大小王，
+ *   否则每加一个玩法就要记得处理两次。
+ *   唯一需要区分的地方只有「王和王直接比大小」：单张（rank 15 > 14.5）、
+ *   十点半同点数时比花色（王压真花色，大王压小王）。斗牛和飘三叶里
+ *   **王根本不参与比大小**（斗牛比的是除王以外最大的那张；飘三叶比的是王替身后的牌），
+ *   所以那两种玩法里「小王打不过大王」不生效 —— 用户 2026-11-12 明确的口径：
+ *   「只有需要用王比大小的时候才由王决胜」。
  *
  * 注意（规则要点，v0.2 起）：
- *   - 单张比大小：大王 > K > Q > J > 10 > … > 2 > A（A 当 1，最小）
+ *   - 单张比大小：大王 > 小王 > K > Q > J > 10 > … > 2 > A（A 当 1，最小）
  *   - 十点半：A=1、J/Q/K=0.5；**大王完全万能，可以当 10**；按点数比大小，
  *              同点数比「把点数做大的那张」（10.5 就比那张 10 的花色），
  *              **王比 10 大**：王撑出来的 10 压过任何真 10；
@@ -41,7 +52,11 @@
   var SUIT_SYMBOL = { spade: '\u2660', heart: '\u2665', club: '\u2663', diamond: '\u2666' };
   var SUIT_CN = { spade: '黑桃', heart: '红桃', club: '梅花', diamond: '方片' };
   var RANK_LABEL = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+  /* 两张王共用 suit='joker'，只靠 rank 分先后：15 = 大王、14.5 = 小王。
+   * 14.5 必须严格夹在 A(14) 和 大王(15) 之间 —— 用 14 会和 A 撞点数，
+   * 而 joker 不在 SUIT_ORDER 里（花色算 0），撞上之后小王反而比任何真牌都小。 */
   var JOKER = { suit: 'joker', rank: 15 };
+  var SMALL_JOKER = { suit: 'joker', rank: 14.5 };
 
   /* 飘三叶大王万能枚举用：52 张具体牌（点数 2~14 × 4 花色） */
   var SUITS_ALL = ['spade', 'heart', 'club', 'diamond'];
@@ -87,9 +102,21 @@
 
   /* ---------------------------- 基础工具 ---------------------------- */
   function isJoker(card) { return !!card && card.suit === 'joker'; }
+  /* 大小王只在**两者互相比较**时才需要区分（单张比大小、十点半比花色）。
+   * 判断「是不是万能牌 / 要不要解析成替身」一律用 isJoker —— 两条路走错一边，
+   * 就会变成「小王能凑牌型但不算王」这种半残状态，而那种 bug 只在拿到小王时才出现。 */
+  function isBigJoker(card) { return isJoker(card) && card.rank >= JOKER.rank; }
+  function isSmallJoker(card) { return isJoker(card) && card.rank < JOKER.rank; }
   function hasJoker(hand) {
     for (var i = 0; i < hand.length; i++) if (isJoker(hand[i])) return true;
     return false;
+  }
+  /* 手上有几张王（0~2）。只有斗牛需要问「是不是双王」——
+   * 两张王同时在手时那边恒为牛牛，不必逐张试。 */
+  function jokerCount(hand) {
+    var n = 0;
+    for (var i = 0; i < hand.length; i++) if (isJoker(hand[i])) n++;
+    return n;
   }
   function containsJoker(hand) { return hasJoker(hand); }
   function replaceJoker(hand, card) {
@@ -100,22 +127,25 @@
   function suitSymbol(suit) { return SUIT_SYMBOL[suit] || '?'; }
   function cardLabel(card) {
     if (!card) return '—';
-    if (isJoker(card)) return '大王';
+    if (isJoker(card)) return card.rank >= JOKER.rank ? '大王' : '小王';
     return rankLabel(card.rank) + suitSymbol(card.suit);
   }
   function suitRank(suit) { return SUIT_ORDER[suit] || 0; }
 
-  /* 单张比大小点数：大王(15) > K > Q > J > 10 > … > 2 > A(1 最小) */
+  /* 单张比大小点数：大王(15) > 小王(14.5) > K > Q > J > 10 > … > 2 > A(1 最小)
+   *
+   * 王直接返回自己的 rank（15 / 14.5）—— 「小王打不过大王」在这一行就成立了，
+   * 不需要额外分支，也不会因为「只加了一种王」而在某处漏判。 */
   function singleRank(card) {
     if (!card) return -1;          // 空/异常入参：按“最小”处理，避免 undefined 静默比平
-    if (isJoker(card)) return 15;
+    if (isJoker(card)) return card.rank;
     if (card.rank === 14) return 1; // A 当 1
     return card.rank;
   }
 
-  /* 高牌点数（用于同点/同型 tie-break 的“最大单张”）：大王最高，A 保持 14 最大 */
+  /* 高牌点数（用于同点/同型 tie-break 的“最大单张”）：大王 > 小王 > A(14) */
   function highRank(card) {
-    if (isJoker(card)) return 15;
+    if (isJoker(card)) return card.rank;
     return card.rank; // 2..14
   }
 
@@ -193,14 +223,29 @@
   }
   function tenHalfBustResolved(hand) { return tenHalfTotalResolved(hand) > 105; }
 
-  /* 王在比牌里的花色：**比任何真花色都大**。
+  /* 王牌在比牌里的花色：**比任何真花色都大**。
    *
    * 规则来源（用户 2026-10-29 确认，群里「十点半 是最大的 10 / 十点半不比半点，比 10 / 王比 10 大」）：
    *   十点半之间不比那张半点牌，比的是**把点数做到 10 的那张 10**；而王比 10 大。
    * 所以王不论撑的是 10 还是半点，比花色时都算最大。
-   * 单独用一个常量而不是塞进 SUIT_ORDER —— 那个表被单张/飘三叶/斗牛共用，
-   * 把王塞进去会连带改掉那三种玩法。 */
-  var JOKER_SUIT_RANK = 5;
+   * 单独用常量而不是塞进 SUIT_ORDER —— 那个表被单张/飘三叶/斗牛共用，
+   * 把王塞进去会连带改掉那三种玩法。
+   *
+   * ★ 两张王分两档（2026-11-12）：真花色最大是黑桃 4，所以小王 5、大王 6。
+   *   这是「小王打不过大王」在十点半里**唯一**的落点 —— 两家都是 10.5、
+   *   都是王撑出来的那张 10 时，谁的王大谁赢。十点半的王要参与比花色，
+   *   所以这里必须分；而斗牛/飘三叶的王不参与比大小，那边就不该分（见 compareDouNiu / resolvePiaoSanYe）。 */
+  var JOKER_SUIT_RANK = 5;          // 小王（也压任何真花色）
+  var BIG_JOKER_SUIT_RANK = 6;      // 大王
+  function tenHalfSuitRank(card) {
+    if (!card) return 0;
+    if (isJoker(card)) {
+      /* 入参常常是**替身**（suit='joker'、rank 已换成 10 之类），
+       * 所以大小王要靠替身带过来的 jk 字段认，看 rank 会把大王认成小王。 */
+      return card.jk >= JOKER.rank ? BIG_JOKER_SUIT_RANK : JOKER_SUIT_RANK;
+    }
+    return suitRank(card.suit);
+  }
 
   /* 同点数时的比牌材料：**保留王**，但把王换成「它解析后充当的那张牌」。
    *
@@ -208,12 +253,13 @@
    * 那条在旧规则下自洽，但新规则要求「王比 10 大」，于是会出反效果：
    *   「10♠ + 王」摘掉王只剩 1 张，牌少判负 → 输给「10♠ + K♣」，
    *   跟「王比 10 大」正好相反（实测过）。
-   * 现在改成：点数按解析结果算（王当 10 就按 10 点），花色按最大算。 */
+   * 现在改成：点数按解析结果算（王当 10 就按 10 点），花色按最大算。
+   * jk 留着原始 rank（15 / 14.5），花色档位靠它分大小王。 */
   function tenHalfSideCards(hand, resolved) {
     var r = resolved || resolveTenHalf(hand);
     var out = [];
     for (var i = 0; i < hand.length; i++) {
-      out.push(isJoker(hand[i]) ? { suit: 'joker', rank: r[i].rank } : hand[i]);
+      out.push(isJoker(hand[i]) ? { suit: 'joker', rank: r[i].rank, jk: hand[i].rank } : hand[i]);
     }
     return out;
   }
@@ -232,8 +278,7 @@
   function compareTenHalfCard(a, b) {
     var ta = tenthsOfRank(a.rank), tb = tenthsOfRank(b.rank);
     if (ta !== tb) return ta < tb ? -1 : 1;
-    var sa = isJoker(a) ? JOKER_SUIT_RANK : suitRank(a.suit);
-    var sb = isJoker(b) ? JOKER_SUIT_RANK : suitRank(b.suit);
+    var sa = tenHalfSuitRank(a), sb = tenHalfSuitRank(b);
     if (sa === sb) return 0;
     return sa < sb ? -1 : 1;
   }
@@ -288,15 +333,54 @@
     return ta > tb;
   }
 
-  /* 大王万能（含 10，见上面 JOKER_TENHALF_CARDS 的口径变迁）：枚举王可充当的点数，取最优解析 */
+  /* 王万能（含 10，见上面 JOKER_TENHALF_CARDS 的口径变迁）：枚举王可充当的点数，取最优解析。
+   *
+   * ★ 大小王同时在一个人手里时，**两张必须分别替换**（2026-11-12）。
+   *   `replaceJoker()` 会把所有王换成同一张牌 —— 只适合「一张王」和飘三叶
+   *   （那边凑豹子要的正是三张同点，统一替换恰好是正解）。但十点半是**点数相加**：
+   *   「9 + 大王 + 小王」统一替换成 A 得 9+1+1 = 11 爆，正确解是一张当 A(1)、
+   *   一张当 K(0.5) = 10.5。所以这里退化成两两组合的枚举。
+   *
+   *   枚举空间用「按点数去重后的候选」（13 种而非 52 张）：双王只看总点数，
+   *   王的花色档位由 jk 决定、与替成哪张牌无关，所以同一 rank 的四个花色等价。
+   *   169 次替代 + 每次 6 张求和，比 2704 次省一个数量级，结果完全一致。
+   *   每人最多 6 张牌、全副牌也只有两张王，所以分支最多到两张。 */
+  var JOKER_TENHALF_POINTS = (function () {
+    var seen = {}, out = [];
+    for (var i = 0; i < JOKER_TENHALF_CARDS.length; i++) {
+      var r = JOKER_TENHALF_CARDS[i].rank;
+      if (seen[r]) continue;
+      seen[r] = 1;
+      out.push(JOKER_TENHALF_CARDS[i]);
+    }
+    return out;
+  })();
+
   function resolveTenHalf(hand) {
     if (!hasJoker(hand)) return hand;
-    var best = null;
-    for (var i = 0; i < JOKER_TENHALF_CARDS.length; i++) {
-      var h = replaceJoker(hand, JOKER_TENHALF_CARDS[i]);
-      if (best === null || tenHalfResolvedBetter(h, best)) best = h;
+    var idx = [];
+    for (var i = 0; i < hand.length; i++) if (isJoker(hand[i])) idx.push(i);
+
+    if (idx.length === 1) {
+      var best = null;
+      for (var j = 0; j < JOKER_TENHALF_CARDS.length; j++) {
+        var h = replaceJoker(hand, JOKER_TENHALF_CARDS[j]);
+        if (best === null || tenHalfResolvedBetter(h, best)) best = h;
+      }
+      return best;
     }
-    return best;
+
+    /* 双王（大小王各一张）：两张各自选点数，取总点数最优的组合 */
+    var best2 = null;
+    for (var a = 0; a < JOKER_TENHALF_POINTS.length; a++) {
+      for (var b = 0; b < JOKER_TENHALF_POINTS.length; b++) {
+        var h2 = hand.slice();
+        h2[idx[0]] = JOKER_TENHALF_POINTS[a];
+        h2[idx[1]] = JOKER_TENHALF_POINTS[b];
+        if (best2 === null || tenHalfResolvedBetter(h2, best2)) best2 = h2;
+      }
+    }
+    return best2;
   }
 
   /* 手牌比较：未爆 > 爆；都不爆比点数（10.5 最大）；同点数比「把点数做大的那些牌」。
@@ -400,10 +484,40 @@
     return best;
   }
 
+  /* 一手牌里最大的王等级：0 = 没有王，1 = 有小王，2 = 有大王。
+   * 只在「牌型与牌力完全相同时」用来决胜（见 comparePiaoSanYe）。 */
+  function jokerLevelOf(hand) {
+    var lv = 0;
+    if (!hand) return lv;
+    for (var i = 0; i < hand.length; i++) {
+      if (!isJoker(hand[i])) continue;
+      var l = isBigJoker(hand[i]) ? 2 : 1;
+      if (l > lv) lv = l;
+    }
+    return lv;
+  }
+
   function piaoSanYeType(hand) { return piaoSanYeTypeResolved(resolvePiaoSanYe(hand)); }
   function piaoSanYeTypeName(hand) { return PSY_NAME[piaoSanYeType(hand).type]; }
   function comparePiaoSanYe(a, b) {
-    return comparePiaoSanYeResolved(resolvePiaoSanYe(a), resolvePiaoSanYe(b));
+    var c = comparePiaoSanYeResolved(resolvePiaoSanYe(a), resolvePiaoSanYe(b));
+    if (c !== 0) return c;
+    /* ★ 牌型 + 点数 + 花色全平之后，才轮到王（用户 2026-11-12 明确要求：
+     *   「飘三叶也需要看王大小，比如大王加俩7的豹子比小王加俩7的豹子大」）。
+     *
+     *   为什么必须放在最后而不是跟牌型一起比：飘三叶的王是**替身**，
+     *   一旦参与前面的比较，「王 + 7♠7♦」就不再是「7 的豹子」而是「王压一切」，
+     *   连豹子比豹子的点数规则都会被架空。放在最后，只有「替完身还完全一样」才由王说话 ——
+     *   而那种情形本来只能在两家都有王、或王的替身恰好补成对方那张牌时出现。
+     *
+     *   大小：大王 > 小王 > 无王。王比任何真牌大，所以「小王 + 7♠7♦」的豹子
+     *   压过「真 7♠7♦7♣」的豹子 —— 这与十点半「王比 10 大」是同一个口径，
+     *   而不是「只有两家都有王时才比」。
+     *
+   *   斗牛不套用这条：那边的王不参与比大小（用户同一天强调「都是牛牛就用 10JQK 比」），
+   *   而且那边**平局在单副牌里不可达**（同型比到花色就已分胜负），见 compareDouNiuHands 的注释。 */
+    var la = jokerLevelOf(a), lb = jokerLevelOf(b);
+    return la === lb ? 0 : (la < lb ? -1 : 1);
   }
 
   /* ---------------------------- D. 斗牛（5 张） ---------------------------- */
@@ -524,6 +638,22 @@
     var others = douNiuSideCards(hand);
     if (others.length < 3) return { type: -1, niu: null, name: '没牛', compareCards: others };
 
+    /* ★ 大小王同时在手：**恒为牛牛**（2026-11-12）。
+     *
+     * 为什么不用枚举验证：5 张里 2 王 + 3 张真牌。取「2 王 + 1 张真牌 p」这组去凑十 ——
+     * 两张王各能当 0.5 / 1 / 2~10，其和可覆盖 1~20 之间的任意 0.5 倍数，
+     * 所以总能取到 x+y 使 (x + y + p) 是 10 的倍数。剩下两张是「1 张真牌 + 1 张王」，
+     * 王补成任意点数即可让这两张也成 10 的倍数 —— 那就是牛牛。
+     * 也就是说双王下**真牌是什么都不影响结果**，写死在 9 档不是偷懒，是结论本身。
+     *
+     * 比牌材料仍然剔除王（王不参与比大小，与单王口径一致）：
+     * 双王手只剩 3 张真牌，逐张比时按少的张数比。 */
+    if (jokerCount(hand) >= 2) {
+      var nn = douNiuNiuOf(0);          // { niu: 0, type: 9, name: '牛牛' }
+      nn.compareCards = others;
+      return nn;
+    }
+
     /* ① 三张真牌自己成十 → 王去补剩下的那张，牛牛。 */
     if (douNiuHasThreeTens(others)) {
       var niuniu = douNiuNiuOf(0);          // { niu: 0, type: 9, name: '牛牛' }
@@ -556,7 +686,16 @@
   /* 比大小：先比牛型；同型比 compareCards——
    *   一律是「五张里最大的那张」，点数一样再比花色（K 最大、A 只算 1）。
    *   有大王的手牌 compareCards 已剔除王，所以取的是「除王以外最大的那张」。
-   *   两侧张数不同（王手 4 张 vs 无王 5 张）时按少的逐张比，逐张只在最大牌完全相同时才用到。 */
+   *   两侧张数不同（王手 4 张 vs 无王 5 张）时按少的逐张比，逐张只在最大牌完全相同时才用到。
+   *
+   * ★ 这里**没有**王决胜分支，也**不需要**加（2026-11-12 复核，用户指出）。
+   *   逐张比到「点数 + 花色」全等，等价于「两边拿到同一张牌」；判平至少需要 4 张牌
+   *   被两家各拿一份 —— 单副 54 张里发不出来。所以「其余四张完全一样、只差大小王」
+   *   这个场景本身不存在：两手含王牛牛的最大牌必然不同，一定分得出胜负。
+   *   实测：单副牌里含王能成牛牛的 4 张真牌组合共 188,093 个，签名相同的对 100% 共用真牌；
+   *   20 万局真实发牌里斗牛平局 0 次（见 pwa/test/douniu-tie-unreachable.test.js）。
+   *   别为了「万一平局」在这里加 jokerLevelOf —— 那会给飘三叶 / 十点半的口径
+   *   制造第二套解释，而它保护的是一条走不到的路。 */
   function compareDouNiuHands(a, b) {
     var ia = douNiuInfo(a), ib = douNiuInfo(b);
     if (ia.type !== ib.type) return ia.type < ib.type ? -1 : 1;
@@ -745,6 +884,11 @@
     isJoker: isJoker,
     hasJoker: hasJoker,
     containsJoker: containsJoker,
+    isBigJoker: isBigJoker,
+    isSmallJoker: isSmallJoker,
+    jokerCount: jokerCount,
+    jokerLevelOf: jokerLevelOf,
+    SMALL_JOKER: SMALL_JOKER,
     rankLabel: rankLabel,
     suitSymbol: suitSymbol,
     cardLabel: cardLabel,

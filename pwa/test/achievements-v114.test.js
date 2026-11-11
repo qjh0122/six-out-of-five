@@ -96,7 +96,7 @@ console.log('\n[2] 目录去重：同一牌型只留一条计数成就');
   });
   const types = Ach.CATALOG.filter(function (x) { return x.series === 'type'; });
   eq(types.length, 8, '牌型系列 8 条（5 大 + 3 小）');
-  eq(Ach.CATALOG.length, 35, '总数 35（v115 对撞重排成对称 8 条）');
+  eq(Ach.CATALOG.length, 39, '总数 39（v116 补熟面孔 / 铁人 / 十五连胜 / 单场之王）');
 }
 
 console.log('\n[3] 文案：描述不许写门槛，牌张数要写对');
@@ -124,7 +124,8 @@ console.log('\n[4] 通赔四条与通吃一一对应');
 
 console.log('\n[5] 对撞八条：对称口径 + 两条胜率互斥（v115）');
 {
-  /* 八条对称表：大牌 / 小牌 各自的 赢次数 · 输次数 · 胜率≥50% · 胜率<50%。
+  /* 八条对称表：大牌 / 小牌 各自的 赢次数 · 输次数 · 胜率≥46% · 胜率<34%。
+   * 中间 34%~46% 是真空区（2026-11-11 第 3 批），两条都不亮。
    * 顺序就是目录顺序，钉住它 —— 以后谁插一条、删一条，这里立刻红。 */
   const vs = Ach.CATALOG.filter(function (x) { return x.series === 'vs'; });
   eq(vs.map(function (x) { return x.name; }).join(','),
@@ -145,38 +146,53 @@ console.log('\n[5] 对撞八条：对称口径 + 两条胜率互斥（v115）');
     };
   }
   {
-    const r = evalWith(7, 10, 4, 5);
+    const r = evalWith(70, 100, 24, 30);
     ok(r.strong.ok === true && r.bluff.ok === false, '★ 大牌胜率 70% → 遇强则强亮，外强中干不亮');
     ok(r.tall.ok === true && r.short.ok === false, '★ 小牌胜率 80% → 矮子里拔将军亮，矬子里垫底不亮');
-    ok(r.hard.ok === true && r.softy.ok === true, '★ 赢次数与输次数同时成立（70% 也是输过 3 次的）');
-    eq(r.hard.raw, 7, '硬茬子的次数 = 赢的次数 7');
-    eq(r.softy.raw, 3, '软脚虾的次数 = 输的次数 3');
+    ok(r.hard.ok === true && r.softy.ok === true, '★ 赢次数与输次数同时成立（70% 也是输过 30 次的）');
+    eq(r.hard.raw, 70, '硬茬子的次数 = 赢的次数 70');
+    eq(r.softy.raw, 30, '软脚虾的次数 = 输的次数 30');
   }
   {
-    const r = evalWith(3, 10, 1, 5);
-    ok(r.strong.ok === false && r.bluff.ok === true, '★ 大牌胜率 30% → 外强中干亮，遇强则强不亮');
-    ok(r.tall.ok === false && r.short.ok === true, '★ 小牌胜率 20% → 矬子里垫底亮');
+    const r = evalWith(33, 100, 9, 30);
+    ok(r.strong.ok === false && r.bluff.ok === true, '★ 大牌胜率 33% < 34% → 外强中干亮，遇强则强不亮');
+    ok(r.tall.ok === false && r.short.ok === true, '★ 小牌胜率 30% < 34% → 矬子里垫底亮');
   }
   {
-    /* v115 口径变更：正好五成归「≥50%」那一条。
-     * 上一版是「五成两边都不亮」，用户拍的是「赢多输少」的说法 ——
-     * 五五开不算输多，所以归赢家；这样也不会出现两条都不亮的空档。 */
-    const r = evalWith(5, 10, 0, 0);
-    ok(r.strong.ok === true && r.bluff.ok === false,
-      '★ 正好五成 → 遇强则强亮、外强中干不亮（五五开不算输多）');
-    eq(r.tall.rate, null, '小牌没打过时胜率是 null（显示「—」而不是 0%）');
+    /* 2026-11-11 第 3 批：34%~46% 是**真空区**，两条都不亮。
+     * 上一版是「≥50% / <50% 互补」，五五开必归一边；现在中间留了空档 ——
+     * 略高于均值不是本事，略低于均值也不算倒霉。 */
+    const r = evalWith(40, 100, 12, 30);
+    ok(r.strong.ok === false && r.bluff.ok === false,
+      '★ 大牌 40% 落在真空区 → 两条都不亮');
+    ok(r.tall.ok === false && r.short.ok === false,
+      '★ 小牌 40% 落在真空区 → 两条都不亮');
+    ok(Math.abs(r.strong.rate - 0.4) < 1e-9, '真空区里胜率照样算出来（卡片要显示，不是藏起来）');
+    ok(Math.abs(r.tall.rate - 0.4) < 1e-9, '小牌真空区同理');
+    const none = evalWith(0, 0, 0, 0);
+    eq(none.tall.rate, null, '小牌没打过时胜率是 null（显示「—」而不是 0%）');
+    eq(none.strong.rate, null, '大牌没打过时胜率同样是 null');
   }
   {
-    const r = evalWith(9, 9, 0, 0);
-    ok(r.strong.ok === false, '★ 只撞 9 次、胜率 100% 也不亮（门槛是 10 次）');
+    /* 边界：46% 归正向（≥ 含等号），34% 归真空区（< 34% 才反向） */
+    const atFwd = evalWith(46, 100, 0, 0);
+    ok(atFwd.strong.ok === true, '★ 边界 46% → 遇强则强亮');
+    const atRev = evalWith(34, 100, 0, 0);
+    ok(atRev.bluff.ok === false, '★ 边界 34% → 外强中干不亮（要严格小于）');
+    const belowRev = evalWith(33, 100, 0, 0);
+    ok(belowRev.bluff.ok === true, '★ 33% → 外强中干亮');
+  }
+  {
+    const r = evalWith(99, 99, 0, 0);
+    ok(r.strong.ok === false, '★ 只撞 99 次、胜率 100% 也不亮（门槛是 100 次）');
     ok(r.bluff.ok === false, '★ 分母不够时对手那条也不亮');
-    eq(r.strong.raw, 9, '卡片上的次数仍然是 9');
+    eq(r.strong.raw, 99, '卡片上的次数仍然是 99');
   }
   {
-    const r = evalWith(7, 10, 0, 0);
+    const r = evalWith(70, 100, 0, 0);
     eq(r.strong.rate, 0.7, '硬碰硬卡片的出现率就是胜率');
-    ok(!(r.strong.ok && r.bluff.ok), '★ 互斥：不可能同时点亮');
-    ok(!(r.tall.ok && r.short.ok), '★ 小牌那两条同样互斥');
+    ok(!(r.strong.ok && r.bluff.ok), '★ 两条不会同时点亮（46% 与 34% 不重叠）');
+    ok(!(r.tall.ok && r.short.ok), '★ 小牌那两条同样不会同时亮');
   }
   {
     /* 描述里不许出现门槛数字（用户裁定：卡片展示次数，写门槛会让人以为停在 10） */

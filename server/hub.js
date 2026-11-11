@@ -24,6 +24,19 @@ const CONFIG = require(path.join(__dirname, '..', 'pwa', 'js', 'config.js'));
 /* 表情/短语白名单。**不在这里再抄一份**：与前端是同一个文件，
  * 少了这一条，加一张新表情就会变成「前端能点、服务端静默丢弃」。 */
 const Emoji = require(path.join(__dirname, '..', 'pwa', 'js', 'emoji.js'));
+/* 成就原始观测日志（append-only）。默认关闭，只有 server/index.js 会 configure，
+ * 所以测试里挂上去也只是空转 —— 见 eventLog.js 头部约束 2。 */
+const EventLog = require('./eventLog.js');
+
+/* 把状态机的「轮结算」接到事件日志上。
+ *
+ * 为什么挂在这里而不是 hub 的构造里：钩子是**模块级**的（stateMachine 是单例），
+ * 每 new 一次 Hub 就挂一次会在测试里叠成一条长链（几百个 hub 实例串起来，
+ * 一次结算触发几百次 append）。模块加载只发生一次，这里最干净。
+ *
+ * 顺序也有依赖：hub.js 的 require 早于任何一次 settleRound，
+ * 所以第一轮就能被记下来。 */
+SM.setRoundSettledHook(EventLog.appendRound);
 
 /* 断线宽限：90 秒。20 秒对移动网络太苛刻——切 WiFi/4G、
  * 进电梯、地铁过隧道都很容易超过，人被踢出这局就白打了。
@@ -1374,6 +1387,29 @@ class Hub {
      * 口径由用户定：**含 AI 的对局不计入战绩、不影响积分与排行榜**，
      * 只进 player.aiRecent 供战绩页标注。所以它必须跟着 meta 一起落到 record。 */
     const hasBot = !!room.handHadBot || room.players.some(function (p) { return !!p.isBot; });
+    /* 场级成就（你咋这幸 / 我咋这霉）要的是「这一场全场」有几正几负，
+     * 而 record() 每人只收到自己的 net，看不到别人 —— 所以必须在这里算好传下去。
+     * 统计的是**整场打完**的终分（p.score 已经在 room 里累计了全部把数），
+     * 不是某一把的分数：这正是 2026-11-11 那次口径纠错的核心。 */
+    const roomNets = room.players.map(function (p) {
+      return (Number(p.score) || 0) - CONFIG.INITIAL_SCORE;
+    });
+    const posCount = roomNets.filter(function (v) { return v > 0; }).length;
+    const negCount = roomNets.filter(function (v) { return v < 0; }).length;
+
+    /* 原始观测存档：全场每人的净胜，**含 AI**。
+     *
+     * 为什么必须含 AI：posCount / negCount 是拿全场所有人算的，AI 也占一个名额。
+     * 少存一个 bot，「你咋这幸」（全场只有我一个人正分）的重放结果就会和线上对不上 ——
+     * 重放器的第一职责是和线上对得上，其次才是按新口径重算。
+     *
+     * 为什么放在这里：上面已经过了 `room.voided` 那道门。
+     * 作废的场不落档案，也不该落事件，否则重放会凭空多出一场。
+     * 放在 forEach 之前：那一圈里有人会被 `continue` 掉（AI / 已注销账号），
+     * 但事件要的是「全场」，不是「落档的那几个」。 */
+    EventLog.appendSettlement(room, room.players.map(function (p) {
+      return { id: p.id, net: (Number(p.score) || 0) - CONFIG.INITIAL_SCORE, bot: !!p.isBot };
+    }), endedAt);
     const meta = {
       playerCount: room.players.length,
       hasBot: hasBot,
@@ -1388,6 +1424,15 @@ class Hub {
        * 取不到（这一局没人拿大牌型、或老客户端没加载成就模块）就是 null，
        * record 会跳过成就部分，战绩照记。 */
       ach: null,
+      /* 全场正分/负分人数（场级成就用，见 profile.record 里的 r9/r10 判定）。
+       * 与 ach 分开传：ach 是「这一局的把级累计桶」，这两个数是「这一场的结果」。 */
+      posCount: posCount,
+      negCount: negCount,
+      /* 这一场一共几个人（**含 AI**，与 posCount / negCount 同一口径）。
+       * 「全场只有我一个人正分」在两人局里等于「我赢了」，所以 r9/r10 要求 ≥3 人，
+       * 见 profile.record 里的说明。少传这一项 → Number(undefined)=0 → 这两条永远不亮，
+       * 而且是静默的（没有断言会红），所以这里必须与上面两个数放在一起。 */
+      playerCount: room.players.length,
       /* 建房时选的把数：判「打满 30 把」这类成就用（R8 人间清醒）。
        * 不传的话 record 里 Number(undefined) 得 0，那条成就永远拿不到。 */
       handLimit: Number(room.handLimit) || 0

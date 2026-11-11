@@ -41,6 +41,7 @@ function ok(cond, label) {
 }
 
 const ACCOUNT = 'huizhang';
+const BASE_AT = 1700000000000;   // 固定的基线时间戳，不用 Date.now()（断言才好写死）
 const PASSWORD = 'correct-horse-9';
 
 async function main() {
@@ -53,11 +54,19 @@ async function main() {
   ok(created.ok, '账号建好了');
   const pid = created.playerId;
 
-  live.record(pid, '会飞的长颈鹿', 7, Date.now(), '654321', 1);
+  /* 第一场带上成就增量：备份漏字段这种事已经发生过三次（account、ai*、
+   * 以及 ach —— 漏了 ach，容器一重建所有人成就归零，而账号、战绩、榜单全好着，
+   * 最容易归因成「成就功能有 bug」）。所以从这一场开始就让它非空。 */
+  live.record(pid, '会飞的长颈鹿', 7, Date.now(), '654321', 1, {
+    playerCount: 3, endReason: 'handLimit', posCount: 1, negCount: 2,
+    ach: { vs: 3, vsn: 5, v: 1, t: { th: 2 }, n: { tenhalf: 6 } }
+  });
   /* 一场人机局：aiGames / aiRecent 也必须过一遍备份脚本。
    * 白名单逐字段复制的漏字段已经发生过两次（account、ai*），这里各留一条断言。 */
   live.record(pid, '会飞的长颈鹿', 30, Date.now() + 1000, '654322', 2,
     { playerCount: 3, endReason: 'scoreZero', hasBot: true });
+  /* 冻一份成就基线（重放起点）。发布时的顺序就是：先开事件日志，再冻基线。 */
+  live.stampAchBase(BASE_AT);
   live.flush();
   ok(fs.existsSync(LIVE_FILE), '主文件已落盘');
   ok(!!live.accountOf(pid), '主文件里账号在（salt/hash 齐全）');
@@ -82,6 +91,11 @@ async function main() {
   ok(row.aiRecent && row.aiRecent.length === 1, '★ aiRecent 流水一并备份');
   ok(row.aiRecent && row.aiRecent[0] && row.aiRecent[0].ai === true, 'aiRecent 里带 ai 标记');
   ok(typeof row.longestLoseStreak === 'number', 'longestLoseStreak 也在（同一类白名单漏字段）');
+  ok(row.ach && row.ach.vs === 3, '★ 成就桶跟着备份走了（漏了它 = 重建后所有人成就归零）');
+  ok(row.ach && row.ach.t && row.ach.t.th === 2, '★ 牌型命中也在（嵌套结构整份带上）');
+  ok(row.achBase && row.achBase.at === BASE_AT, '★ 成就基线（重放起点）也备份了');
+  ok(row.achBase && row.achBase.counts && row.achBase.counts.vs === 3,
+    '基线里是冻结的计数快照');
 
   fs.writeFileSync(SEED_OK, JSON.stringify(map), 'utf8');
 
@@ -98,6 +112,12 @@ async function main() {
   ok(!!acct, '★ 恢复出来的档案带着账号（以前这里是 null）');
   ok(acct && acct.name === ACCOUNT, '账号名正确');
   ok(restored.get(pid).games === 1, '战绩也恢复了');
+  /* 用 data.get 而不是 get()：后者返回的是 _public（对外视图，不含原始 ach 桶） */
+  const restRaw = restored.data.get(pid);
+  ok(restRaw.ach && restRaw.ach.vs === 3,
+    '★ 成就也恢复了（不是「账号在、成就是 0」的半截恢复）');
+  ok(restRaw.achBase && restRaw.achBase.at === BASE_AT,
+    '★ 成就基线也恢复了 —— 没有它，重放器只能从 0 起算');
 
   console.log('\n[4] 关键一步：恢复之后还能不能登录');
   const login = await restored.login(ACCOUNT, PASSWORD);
@@ -125,6 +145,21 @@ async function main() {
   const lostLogin = await lost.login(ACCOUNT, PASSWORD);
   ok(!lostLogin.ok, '没有 account 时登录失败 —— 与"全员登不进来"的现场一致');
   ok(lost.get(pid) && lost.get(pid).games === 1, '战绩还在，但没人认领它（孤儿档案）');
+
+  /* 反向：把 ach 拿掉，恢复出来的成就必须是空的 —— 证明上面那条断言不是空转 */
+  const noAch = buildSeedMap(dumped);
+  Object.keys(noAch).forEach(function (k) { delete noAch[k].ach; delete noAch[k].achBase; });
+  const wipedFile = path.join(TMP, 'seed-no-ach.json');
+  fs.writeFileSync(wipedFile, JSON.stringify(noAch), 'utf8');
+  const wiped = new ProfileStore({
+    file: path.join(TMP, 'gone3', 'profiles.json'),
+    seedFile: wipedFile,
+    log: quiet
+  });
+  const wipedRaw = wiped.data.get(pid);
+  ok(!!wipedRaw && ((wipedRaw.ach && wipedRaw.ach.vs) || 0) === 0,
+    '★ 种子不带 ach → 恢复后成就归零（这正是「备份漏 ach」的现场）');
+  ok(!!wipedRaw && !wipedRaw.achBase, '★ 种子不带 achBase → 恢复后没有重放起点');
 
   /* ---------------------------------------------------------------
    * 6. 种子文件本身的自洽性

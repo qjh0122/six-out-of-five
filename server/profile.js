@@ -139,6 +139,15 @@ function defaultSeedFile() {
   return process.env.SEED_FILE ? path.resolve(process.env.SEED_FILE) : DEFAULT_SEED_FILE;
 }
 
+/**
+ * `resetAchKeys` 的白名单：只放「战绩类」计数键。
+ *
+ * 为什么不是「传什么都清」：`t.*`（牌型）与 `vs` / `vsn`（对撞）是**比率的分母**。
+ * 清掉分母，出现率与胜率一起变成 0/0，那条成就不再是「错」，而是「没了」——
+ * 那种改动只能整份重放，不能定点清。白名单是这里唯一能挡住手滑的东西。
+ */
+const ACH_RESETTABLE = ['r7', 'r8', 'r9', 'r10', 'r12'];
+
 class ProfileStore {
   constructor(options) {
     const opts = options || {};
@@ -524,13 +533,26 @@ class ProfileStore {
     /* ---- 成就累加（口径见 pwa/js/achievements.js 顶部） ----
      *
      * 放在 p.games / currentStreak 更新**之前**：R7「翻身农奴」判的是
-     * 「这一把之前已连败 ≥5 把，而这一把赢了」—— 条件依赖更新前的连败计数。
+     * 「这一场之前已连败 ≥5 场，而这一场赢了」—— 条件依赖更新前的连败计数。
      * 挪到后面，连败计数已经被清零，永远判不到 ——
      * 这类「顺序错了就静默失效」的判定，测试里有一条专门盯着它。
      *
-     * v112 改口径（用户裁定）：原来是「连败 ≥3 且这一把刷新个人单场最高」，
-     * 现在只要「连败 ≥5 之后赢一把」。理由：连败时状态本来就差，
-     * 还要求刷新最高，等于让最需要被承认的人拿不到；而「终于赢了一把」才是那一刻。
+     * v112 改口径（用户裁定）：原来是「连败 ≥3 且这一场刷新个人单场最高」，
+     * 现在只要「连败 ≥5 之后赢一场」。
+     *
+     * 2026-11-11 口径纠错（用户裁定）：r9 / r10 / r12 三条从**把**改成**场**。
+     * 它们原来在 achievements.accumulateHand 里每把判一次，名字和文案却写着
+     * 「结算时」，玩家读成「整场」——表现为全操 235 场却有 277 次 r9，
+     * 怎么算都对不上。现在统一到场级，判据也一并重写：
+     *
+     *   · r9（你咋这幸）：这一场只有我一个人正分
+     *   · r10（我咋这霉）：这一场只有我一个人负分
+     *   · r12（一夜暴富）：这一场净胜 > 100
+     *
+     * r12 的旧判据是 `net*2 >= sumNeg`，在零和计分下独赢时恒成立，
+     * 等于「你独赢了一把」的免费成就（质量监管实测三种局型全部点亮）。
+     * 用户同时裁定：旧的 r9/r10/r12 全部清零重记 —— 因为口径换了，
+     * 旧的把级数字留在整场口径下会自相矛盾（277 次 > 235 场）。
      *
      * AI 局在上面就 return 了，所以这里天然不记人机局，
      * 与「人机局不影响任何统计」的口径一致。
@@ -539,16 +561,48 @@ class ProfileStore {
     if (run) {
       const loseBefore = Math.abs(Math.min(0, Number(p.currentStreak) || 0));
       /* 浅拷贝一份再改：run 是 room.achRun 的引用，
-       * 直接往上写 r7/r8 会污染房间对象（虽然整局结束就废了，但别留这种依赖）。 */
+       * 直接往上写 r7 会污染房间对象（虽然整局结束就废了，但别留这种依赖）。 */
       const delta = Object.assign({}, run);
-      /* n > 0 是硬条件：这条成就的语义是「终于赢了一把」，
+      /* n > 0 是硬条件：这条成就的语义是「终于赢了一场」，
        * 一个全负的人把 -5 打成 -4 不算 —— 玩家看到的是「还是输了」，
        * 给他发「翻身农奴」等于嘲讽。 */
       if (loseBefore >= 5 && n > 0) delta.r7 = 1;
+
       /* R8（人间清醒）v112 删除：它与「把数上限」这条规则重复表达同一件事，
        * 而且只有选 30 把房才拿得到 —— 属于「给一个特定设置发奖」，不是成就。
        * 字段保留在桶里只为老档案不丢（见 achievements.js 的 blankCounts）。 */
       p.ach = Ach.mergeInto(p.ach || Ach.blank(), delta);
+    }
+
+    /* ---- 场级三条（2026-11-11 从「把」改到「场」）----
+     *
+     * **必须放在 `if (run)` 外面**：run 是「这一局的把级桶」，
+     * 一局里如果一个人都没拿牌型（或老客户端没加载成就模块），它就是 null ——
+     * 而这三条判的是整场结果，跟牌型一点关系都没有。放在里面会被连带漏记，
+     * 而且漏得毫无痕迹（那一场永远是 0）。
+     *
+     * posCount / negCount 由 hub 在结算时算好传进来，是「这一场全场」
+     * 正分 / 负分的人数（平局者两边都不算）。
+     * 传不进来（老调用方）就是 undefined → Number→NaN → 判定为 false，
+     * 宁可少记也不误记 —— 与 _residual 的「宁少不多」同一个取向。 */
+    if (meta) {
+      const roomDelta = {};
+      /* ★ 两人局不算「只有我一个人正分」（v116）。
+       *
+       * 零和计分下，两人局里赢的那个人**天然**就是全场唯一正分 ——
+       * 这条成就于是退化成「赢了一把」，线上表现为 235 场里有 777 次。
+       * 三人以上才有「一桌人都没赢到，只有我」的那层意思，也就是名字里的「幸」。
+       * 门槛改成 ≥3 人，与 2026-11-11 那次「从把改到场」是同一类修正：
+       * 判据要能表达成就名字在说的事，而不是碰巧成立。 */
+      const enough = Number(meta.playerCount) >= 3;
+      if (enough && Number(meta.posCount) === 1 && n > 0) roomDelta.r9 = 1;
+      if (enough && Number(meta.negCount) === 1 && n < 0) roomDelta.r10 = 1;
+      /* 净胜超过 100：用户定的绝对阈值（「单场结算后分数大于100」）。
+       * 严格大于 —— 100 整不算，这是用户原话的边界。 */
+      if (n > 100) roomDelta.r12 = 1;
+      if (roomDelta.r9 || roomDelta.r10 || roomDelta.r12) {
+        p.ach = Ach.mergeInto(p.ach || Ach.blank(), roomDelta);
+      }
     }
 
     /* 这一把之后的所有计数都由 Stats.apply 算（含「第一场直接取初值」那条）：
@@ -1118,9 +1172,122 @@ class ProfileStore {
       /* 成就桶必须跟着备份走：漏了它，发布前跑一次 backup-leaderboard.js
        * 就所有人的成就清零，而且 restoreFrom 也救不回来（快照里本来就没有）。 */
       o.ach = p.ach || Ach.blank();
+      /* 成就基线也要跟着备份：它是「事件日志起点之前那一段历史」的冻结快照，
+       * 丢了就等于把重放器的起点抹掉 —— 之后每次重放都只能从 0 算起，
+       * 老玩家的历史进度会全部消失。 */
+      if (p.achBase) o.achBase = p.achBase;
       if (p.account) o.account = p.account;
       out.push(o);
     });
+    return out;
+  }
+
+  /* ============================ 成就基线（重放起点） ============================
+   *
+   * 事件日志只从「开启那天」开始有数据，之前的历史**追不回来**（聚合不可逆）。
+   * 所以把开启那一刻的 `ach` 冻一份下来，作为重放的起点：
+   *
+   *     当前值 = 基线 + fold(基线之后的所有事件)
+   *
+   * 为什么不直接把 `ach` 当基线：`ach` 还在被 record() 持续写入，
+   * 它既是「起点」又是「结果」，重放时就会把基线之后的部分算两遍。
+   * 必须是一份**不再变化的快照**。
+   *
+   * currentStreak 也要存：R7「翻身农奴」判的是「这一场之前已连败 ≥5」，
+   * 是个有状态的判定。重放从半山腰开始，就必须知道半山腰那一刻的连胜数，
+   * 否则基线之后的第一场永远判不对。
+   *
+   * 幂等：已经有 achBase 的不覆盖。覆盖会让「已经重放过的结果」被二次冻进基线，
+   * 再重放一次就是双倍 —— 这种错没有任何症状，只会让数字悄悄变大。
+   */
+  stampAchBase(now) {
+    const at = Number(now) || Date.now();
+    let n = 0;
+    this.data.forEach((p) => {
+      if (p.achBase && Number(p.achBase.at) > 0) return;
+      if (!p.ach || typeof p.ach !== 'object') return;
+      p.achBase = {
+        at: at,
+        /* 记录基线是由哪个代码版本冻的，将来排查「为什么这个人的历史对不上」时，
+         * 至少能知道该拿哪一版逻辑去对。 */
+        achv: Number(p.ach.v) || 0,
+        counts: JSON.parse(JSON.stringify(p.ach)),
+        currentStreak: Number(p.currentStreak) || 0
+      };
+      n += 1;
+    });
+    /* ★ 必须**主动排队落盘**，只置 dirty 是不够的。
+     *
+     * 服务刚启动、还没人注册/开局时，除了这一次冻结之外没有任何写操作会
+     * 顺带把 dirty 刷下去 —— 于是这份基线只活在内存里。等到进程重启，
+     * 磁盘上根本没有 achBase，启动逻辑就会再冻一次，**时刻变成新的**。
+     * 后果不是数据错，而是更阴的：重放器的 cutoff 跟着往后跑，
+     * 「重启之前的历史」永远落在 cutoff 之前，永远重算不了 ——
+     * 功能看着在跑，其实每次都只剩最后一小段可算。
+     * 线上复现过：两次发布间隔 9 分钟，18 份档案的基线时刻整体后移了 9 分钟。 */
+    if (n) { this.dirty = true; this._scheduleFlush(); }
+    return n;
+  }
+
+  /* ============================ 成就键定点清零（历史修正） ============================
+   *
+   * 用在「某个判定写错了，攒了一批**不可能成立**的数字」这种场合。
+   * 实例：r9 / r10 / r12 的判据写错过，全操一个人的「你咋这幸」有 801 次 ——
+   * 那条要求「全场只有我一个人正分」，他的场次才两百多。
+   *
+   * ★ **必须同时清 `ach` 和 `achBase.counts`**。
+   *   只清 `ach`：下次重放会以基线为起点重新 fold，基线里那个 801 又被叠回来，
+   *   而且没有任何报错 —— 看起来像是「修了没用」。
+   *   只清基线不清 ach：当前页面上还是错的，下次重放才对。
+   *
+   * ★ **只允许清战绩类计数器**（`r7`~`r12` 的计数键）。牌型键 `t.*` 与对撞键
+   *   `vs` / `vsn` 一旦清零，出现率和胜率的**分母**跟着没了，整条成就的判据
+   *   一起作废 —— 那不叫修正，叫删数据。要动那些只能整份重放。
+   *
+   * 返回一份「回执」：清了哪些人、哪些格子、每格原值。运维要能事后对账。
+   */
+  resetAchKeys(keys, opts) {
+    const dryRun = !!(opts && opts.dryRun);
+    const want = [];
+    (Array.isArray(keys) ? keys : []).forEach((k) => {
+      const key = String(k);
+      if (ACH_RESETTABLE.indexOf(key) < 0) return;      // 白名单外的一律不收
+      if (want.indexOf(key) < 0) want.push(key);
+    });
+    const out = { keys: want, skipped: [], profiles: 0, cells: 0, baseCells: 0, detail: [] };
+    (Array.isArray(keys) ? keys : []).forEach((k) => {
+      const key = String(k);
+      if (ACH_RESETTABLE.indexOf(key) < 0 && out.skipped.indexOf(key) < 0) out.skipped.push(key);
+    });
+    if (!want.length) return out;
+
+    this.data.forEach((p, pid) => {
+      const row = { id: pid, keys: {} };
+      want.forEach((k) => {
+        const v = Number(p.ach && p.ach[k]) || 0;
+        if (v !== 0) row.keys[k] = v;
+      });
+      if (Object.keys(row.keys).length) {
+        out.profiles += 1;
+        out.cells += Object.keys(row.keys).length;
+        out.detail.push(row);
+      }
+      /* 基线那半边单独记账：它可能和 ach 不一样（重放过的档案两者本来就该相等，
+       * 没重放过的会差一段增量），两边都清才算真的回到 0。 */
+      want.forEach((k) => {
+        const bv = Number(p.achBase && p.achBase.counts && p.achBase.counts[k]) || 0;
+        if (bv !== 0) out.baseCells += 1;
+      });
+      if (dryRun) return;
+
+      if (p.ach && typeof p.ach === 'object') {
+        want.forEach((k) => { if (Number(p.ach[k]) || 0) p.ach[k] = 0; });
+      }
+      if (p.achBase && p.achBase.counts && typeof p.achBase.counts === 'object') {
+        want.forEach((k) => { if (Number(p.achBase.counts[k]) || 0) p.achBase.counts[k] = 0; });
+      }
+    });
+    if (!dryRun && (out.cells || out.baseCells)) { this.dirty = true; this._scheduleFlush(); }
     return out;
   }
 

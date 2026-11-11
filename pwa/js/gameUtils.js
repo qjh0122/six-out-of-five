@@ -59,7 +59,52 @@
     for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
     return AVATAR_COLORS[h % AVATAR_COLORS.length];
   };
-  function short(name) { return name.length > 4 ? name.slice(0, 4) + '…' : name; }
+  /* 昵称截断：只防「真的放不下」，正常长度一律完整显示。
+   *
+   * 原来是 `name.length > 4` 就截成 4 个字 —— 按**字符数**算，对一个 8 个半角字母的
+   * 英文名是误伤：座位名块有 80~132px（seatRing 的 nmw），20px 字号下
+   * 8 个半角完全放得下，却被截成「Playe…」。
+   * 中文名同样吃亏：5 个中文 = 100px，也在 112px 之内，同样被截。
+   *
+   * 改成按**显示宽度**估算（全角 2、半角 1），上限 12 个等效半角 ——
+   * 约等于 6 个中文或 12 个英文。超过才截，且保留 CSS 的 ellipsis 兜底：
+   * 容器更窄时（窄屏 / 人多）它按真实像素收尾，这里只管「别没事就截」。
+   * 按码点迭代，emoji 不会被切成两个问号。 */
+  var SHORT_W = 12;
+  function short(name) {
+    var chars = Array.from(String(name == null ? '' : name));
+    var w = 0, out = '';
+    for (var i = 0; i < chars.length; i++) {
+      var cw = chars[i].codePointAt(0) > 0x2e7f ? 2 : 1;   // 0x2E7F 之后基本是 CJK / 全角 / emoji
+      if (w + cw > SHORT_W) return out + '…';
+      w += cw;
+      out += chars[i];
+    }
+    return out;
+  }
+
+  /* 一行放不下时**缩字号**，而不是截字。返回目标字号（设计 px）。
+   *
+   * 为什么要有这个函数：`short()` 只能按「估算的字宽」决定截不截，它没有
+   * 真实像素 —— 同样 6 个字，在 132px 的座位里富余、在 80px 的座位里溢出，
+   * 它算不出来。座位名的真正约束是「这一格到底有多宽」，只能实测。
+   *
+   * 缩字号比截字好在：**名字是身份**。「示例玩家…」和「示例玩家甲」在牌桌上
+   * 是两个人还是一人被判错，代价比字小一号大得多。所以能缩就缩，缩到底
+   * （floorFs）还放不下才交给 CSS 省略号 —— 那是物理极限，不是懒得做。
+   *
+   * 线性近似：字宽 ∝ 字号，所以 `baseFs × avail / textW` 一步就到位。
+   * 三个入参只要有一个非正（还没布局 / 没量到）就原样返回，绝不猜。
+   */
+  function fitFont(baseFs, availW, textW, floorFs) {
+    var b = Number(baseFs), a = Number(availW), t = Number(textW), f = Number(floorFs);
+    if (!(b > 0)) return 0;
+    if (!(a > 0) || !(t > 0)) return b;       // 没量到：保持原字号
+    if (t <= a) return b;                     // 放得下：一个像素都不动
+    if (!(f > 0) || f > b) f = b * 0.5;       // 没给下限 / 下限比原字号还大：按半号保底
+    var want = b * a / t;
+    return want < f ? f : want;
+  }
 
   /* ---------------------------- 数值与时间格式 ---------------------------- */
   function netText(n) {
@@ -85,7 +130,9 @@
   var SUIT_CHAR = { spade: '\u2660', heart: '\u2665', club: '\u2663', diamond: '\u2666' };
   function cardText(c) {
     if (!c) return '?';
-    if (c.suit === 'joker' || c.rank === 15) return '大王';
+    /* 两张王同为 suit='joker'，靠 rank 分：15 = 大王、14.5 = 小王。
+     * 判据写成 rank >= 14.5（而不是 === 15）是为了兜住『suit 丢了但 rank 还在』的脏数据。 */
+    if (c.suit === 'joker' || c.rank >= 14.5) return c.rank >= 15 ? '大王' : '小王';
     var r = c.rank === 14 ? 'A'
       : c.rank === 13 ? 'K'
       : c.rank === 12 ? 'Q'
@@ -105,6 +152,7 @@
   api.AVATAR_COLORS = AVATAR_COLORS;
   api.colorFor = colorFor;
   api.short = short;
+  api.fitFont = fitFont;
   api.netText = netText;
   api.netCls = netCls;
   api.pad2 = pad2;

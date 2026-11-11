@@ -222,10 +222,10 @@ eq(st2.types.filter(function (t) { return t.label === '十点半'; })[0].rate, 1
  * ================================================================ */
 /* v114：去掉 5 条「首次拿到」的重复成就（与「N 次」那条重复）+ 补 4 条通赔
  * v115：对撞从 7 条重排成对称的 8 条（大牌 4 + 小牌 4） */
-eq(Ach.TOTAL, 35, '成就总数 35（牌型 8 + 对撞 8 + 通吃通赔 8 + 战绩 11）');
+eq(Ach.TOTAL, 39, '成就总数 39（牌型 8 + 对撞 8 + 通吃通赔 8 + 战绩 15）');
 
 var emptyEval = Ach.evaluate(Ach.blank(), { games: 0, longestStreak: 0, bestNet: 0 });
-eq(emptyEval.total, 35, 'evaluate 返回全部条目（未解锁也要返回，页面要显示名字）');
+eq(emptyEval.total, 39, 'evaluate 返回全部条目（未解锁也要返回，页面要显示名字）');
 eq(emptyEval.unlocked, 0, '空档案一个都没解锁');
 ok(emptyEval.list.every(function (i) { return typeof i.name === 'string' && i.name.length > 0; }),
   '未解锁条目也带名字（用户裁定：不做 ??? 猜谜）');
@@ -234,7 +234,7 @@ var byS = emptyEval.bySeries;
 eq(byS.type.total, 8, '牌型系列 8 条（5 种大牌各一条「N 次」+ 3 种小牌）');
 eq(byS.vs.total, 8, '对撞系列 8 条（大牌 4 + 小牌 4，一一对称）');
 eq(byS.sweep.total, 8, '通吃 / 通赔各 4 条');
-eq(byS.record.total, 11, '战绩系列 11 条（含两条连败、两条新整把成就；人间清醒已删）');
+eq(byS.record.total, 15, '战绩系列 15 条（v116 补熟面孔 / 铁人 / 十五连胜 / 单场之王；人间清醒已删）');
 
 /* 单条判定：拿到 1 次十点半 → h2 还没解锁（门槛 10 次），但**次数已经记上** */
 var oneTh = Ach.evaluate({ t: { th: 1 } }, { games: 1, longestStreak: 0, bestNet: 0 });
@@ -245,51 +245,64 @@ eq(findEval(oneTh, 'h2').raw, 1, '拿到 1 次，raw 就是 1（卡片展示的�
 eq(findEval(oneTh, 'h2').ok, false, '十点半成瘾：需要 10 次');
 eq(findEval(oneTh, 'h2').cur, 1, '进度条显示 1 / 10');
 
-/* ---- 对撞四条胜率 / 次数（v115 对称口径） ----
+/* ---- 对撞八条胜率 / 次数（2026-11-11 第 3 批：比率口径） ----
  *
- * 大牌：c4 硬茬子(赢次数) c8 软脚虾(输次数) c3 遇强则强(胜率≥50%) c7 外强中干(胜率<50%)
- * 小牌：c5 宁为鸡头(赢次数) c6 鸡飞蛋打(输次数) c9 矮子里拔将军(≥50%) c10 矬子里垫底(<50%)
+ * 大牌：c4 硬茬子(赢次数) c8 软脚虾(输次数) c3 遇强则强(胜率≥46%) c7 外强中干(胜率<34%)
+ * 小牌：c5 宁为鸡头(赢次数) c6 鸡飞蛋打(输次数) c9 矮子里拔将军(≥46%) c10 矬子里垫底(<34%)
  *
- * 两条胜率成就**互斥**：≥50% 与 <50% 不可能同时成立。正好 50% 归前者 ——
- * 这样「五五开」也有一个明确归属，不会两边都不亮。 */
-var vsWin = Ach.evaluate({ vsn: 10, vs: 6, vsl: 4 }, {});
-eq(findEval(vsWin, 'c4').ok, true, '硬茬子：撞 10 次赢 6 次 → 赢的次数够了就亮');
-eq(findEval(vsWin, 'c8').ok, true, '软脚虾：输 4 次 → 也亮（一输一赢互不排斥）');
-eq(findEval(vsWin, 'c3').ok, true, '遇强则强：60% → 亮');
-eq(findEval(vsWin, 'c7').ok, false, '外强中干：60% → 不亮（与 c3 互斥）');
+ * 为什么不是 50%：对撞是 N 人对赌，必然 1 赢 N−1 输，个人胜率上限 = 1/N。
+ * 线上实测平均 2.38 人 → 上限 42.1%，全局胜率 42.06%。50% 是数学不可达。
+ *
+ * 34%~46% 是**真空区**：两条都不亮。略高于均值不是本事，略低于均值也不算倒霉，
+ * 给徽章就等于又发了一枚「参与即得」。这是第 3 批的故意设计，不是漏判。
+ *
+ * 门槛也变了（大牌 100 / 小牌 30）：没有样本量，比率只是运气的一次快照。 */
+var vsWin = Ach.evaluate({ vsn: 100, vs: 60, vsl: 40 }, {});
+eq(findEval(vsWin, 'c4').ok, true, '硬茬子：撞 100 次赢 60 次 → 赢的次数够 1 就亮');
+eq(findEval(vsWin, 'c8').ok, true, '软脚虾：输 40 次 → 也亮（一输一赢互不排斥）');
+eq(findEval(vsWin, 'c3').ok, true, '★ 遇强则强：60% ≥ 46% → 亮');
+eq(findEval(vsWin, 'c7').ok, false, '外强中干：60% → 不亮');
 
-var vsEven = Ach.evaluate({ vsn: 10, vs: 5, vsl: 5 }, {});
-eq(findEval(vsEven, 'c3').ok, true, '★ 正好 50% → 遇强则强亮（≥ 的一半归赢家）');
-eq(findEval(vsEven, 'c7').ok, false, '★ 正好 50% → 外强中干不亮');
+var vsEdge = Ach.evaluate({ vsn: 100, vs: 46, vsl: 54 }, {});
+eq(findEval(vsEdge, 'c3').ok, true, '★ 边界 46% → 遇强则强亮（≥ 含等号）');
+eq(findEval(vsEdge, 'c7').ok, false, '★ 边界 46% → 外强中干不亮');
 
-var vsLose = Ach.evaluate({ vsn: 10, vs: 4, vsl: 6 }, {});
-eq(findEval(vsLose, 'c3').ok, false, '40% → 遇强则强不亮');
-eq(findEval(vsLose, 'c7').ok, true, '40% → 外强中干亮');
+var vsDead = Ach.evaluate({ vsn: 100, vs: 40, vsl: 60 }, {});
+eq(findEval(vsDead, 'c3').ok, false, '★ 40% 在真空区 → 遇强则强不亮');
+eq(findEval(vsDead, 'c7').ok, false, '★ 40% 在真空区 → 外强中干也不亮（略输不算「干」）');
 
-/* 次数门槛：胜率再高，分母不够也不给。
+var vsLose = Ach.evaluate({ vsn: 100, vs: 33, vsl: 67 }, {});
+eq(findEval(vsLose, 'c3').ok, false, '33% → 遇强则强不亮');
+eq(findEval(vsLose, 'c7').ok, true, '★ 33% < 34% → 外强中干亮');
+
+/* 样本门槛：胜率再高，分母不够也不给。
  * 不设门槛的话「撞一次赢一次」就是 100%，一局点亮 —— 那不叫运强，叫运气好一次。 */
-var vsFew = Ach.evaluate({ vsn: 9, vs: 9 }, {});
-eq(findEval(vsFew, 'c3').ok, false, '★ 胜率 100% 但只撞了 9 次 → 不解锁');
+var vsFew = Ach.evaluate({ vsn: 99, vs: 99 }, {});
+eq(findEval(vsFew, 'c3').ok, false, '★ 胜率 100% 但只撞了 99 次 → 不解锁（门槛 100）');
 eq(findEval(vsFew, 'c7').ok, false, '★ 分母不够时 c7 也不亮（门槛是两边共同的前提）');
 
-/* 小牌同构：门槛 5 次 */
-var smWin = Ach.evaluate({ smn: 5, smv: 3, sml: 2 }, {});
-eq(findEval(smWin, 'c5').ok, true, '宁为鸡头：小牌局赢 3 次 → 亮');
-eq(findEval(smWin, 'c6').ok, true, '鸡飞蛋打：小牌局输 2 次 → 亮');
-eq(findEval(smWin, 'c9').ok, true, '矮子里拔将军：60% → 亮');
-eq(findEval(smWin, 'c10').ok, false, '矬子里垫底：60% → 不亮');
+/* 小牌同构：门槛 30 次（可遇性低，见 achievements.js 的 SM_MIN） */
+var smWin = Ach.evaluate({ smn: 30, smv: 15, sml: 15 }, {});
+eq(findEval(smWin, 'c5').ok, true, '宁为鸡头：小牌局赢 15 次 → 亮');
+eq(findEval(smWin, 'c6').ok, true, '鸡飞蛋打：小牌局输 15 次 → 亮');
+eq(findEval(smWin, 'c9').ok, true, '★ 矮子里拔将军：50% ≥ 46% → 亮');
+eq(findEval(smWin, 'c10').ok, false, '矬子里垫底：50% → 不亮');
 
-var smLose = Ach.evaluate({ smn: 5, smv: 2, sml: 3 }, {});
-eq(findEval(smLose, 'c9').ok, false, '小牌 40% → 矮子里拔将军不亮');
-eq(findEval(smLose, 'c10').ok, true, '小牌 40% → 矬子里垫底亮');
+var smDead = Ach.evaluate({ smn: 30, smv: 12, sml: 18 }, {});
+eq(findEval(smDead, 'c9').ok, false, '★ 小牌 40% 在真空区 → 矮子里拔将军不亮');
+eq(findEval(smDead, 'c10').ok, false, '★ 小牌 40% 在真空区 → 矬子里垫底也不亮');
 
-var smFew = Ach.evaluate({ smn: 4, smv: 4 }, {});
-eq(findEval(smFew, 'c9').ok, false, '★ 小牌 100% 但只 4 次 → 不解锁（门槛 5 次）');
+var smLose = Ach.evaluate({ smn: 30, smv: 9, sml: 21 }, {});
+eq(findEval(smLose, 'c9').ok, false, '★ 小牌 30% → 矮子里拔将军不亮');
+eq(findEval(smLose, 'c10').ok, true, '★ 小牌 30% < 34% → 矬子里垫底亮');
+
+var smFew = Ach.evaluate({ smn: 29, smv: 29 }, {});
+eq(findEval(smFew, 'c9').ok, false, '★ 小牌 100% 但只 29 次 → 不解锁（门槛 30）');
 eq(findEval(smFew, 'c10').ok, false, '★ 小牌分母不够时 c10 也不亮');
 
-/* 互斥性地毯检查：任意一组计数值，两条胜率成就都不能同时亮 */
+/* 空窗地毯检查：任意一组计数值，两条胜率成就都不能同时亮（46% 与 34% 不重叠） */
 var badPairs = [];
-[[0, 0], [5, 0], [5, 2], [5, 3], [5, 5], [10, 4], [10, 5], [10, 6], [10, 10], [37, 18]]
+[[0, 0], [30, 0], [30, 14], [30, 15], [100, 33], [100, 34], [100, 46], [100, 60], [370, 180]]
   .forEach(function (p) {
     var e = Ach.evaluate({ vsn: p[0], vs: p[1], vsl: p[0] - p[1] }, {});
     if (findEval(e, 'c3').ok && findEval(e, 'c7').ok) badPairs.push('vs ' + p.join('/'));
@@ -297,7 +310,7 @@ var badPairs = [];
 eq(badPairs.length, 0, '★ 大牌胜率两条永远不会同时亮：' + (badPairs.join(', ') || '无冲突'));
 
 var badSm = [];
-[[0, 0], [5, 0], [5, 2], [5, 3], [9, 9], [20, 11]].forEach(function (p) {
+[[0, 0], [30, 0], [30, 10], [30, 14], [29, 29], [30, 30]].forEach(function (p) {
   var e = Ach.evaluate({ smn: p[0], smv: p[1] }, {});
   if (findEval(e, 'c9').ok && findEval(e, 'c10').ok) badSm.push('sm ' + p.join('/'));
 });
@@ -312,22 +325,22 @@ eq(vsNames.filter(function (n, i) { return vsNames.indexOf(n) !== i; }).length, 
 
 /* 战绩系列靠档案里已有的字段，不需要新采集 */
 var vet = Ach.evaluate({}, { games: 100, longestStreak: 10, bestNet: 15 });
-eq(findEval(vet, 'r1').ok, true, '第一次：games ≥ 1');
-eq(findEval(vet, 'r3').ok, true, '老油条：games ≥ 100');
-eq(findEval(vet, 'r5').ok, true, '十连胜：longestStreak ≥ 10');
+eq(findEval(vet, 'first').ok, true, '第一次：games ≥ 1');
+eq(findEval(vet, 'veteran').ok, true, '老油条：games ≥ 100');
+eq(findEval(vet, 'streak10').ok, true, '十连胜：longestStreak ≥ 10');
 /* v112 改口径：一夜暴富不再看「单把 15 分」这个绝对阈值，
  * 而是「我的净胜 ≥ 在场所有输家负分总和的一半」（由 accumulateHand 计数 r12）。 */
-eq(findEval(vet, 'r9').ok, false, '只靠 bestNet 拿不到一夜暴富（它看的是 r12 计数）');
+eq(findEval(vet, 'windfall').ok, false, '只靠 bestNet 拿不到一夜暴富（它看的是 r12 计数）');
 
 /* 边界：差一点点就不解锁 */
 var justUnder = Ach.evaluate({}, { games: 99, longestStreak: 9, bestNet: 14 });
-eq(findEval(justUnder, 'r3').ok, false, '99 场拿不到老油条');
-eq(findEval(justUnder, 'r5').ok, false, '9 连胜拿不到十连胜');
-eq(findEval(justUnder, 'r9').ok, false, '没有 r12 计数就拿不到一夜暴富');
+eq(findEval(justUnder, 'veteran').ok, false, '99 场拿不到老油条');
+eq(findEval(justUnder, 'streak10').ok, false, '9 连胜拿不到十连胜');
+eq(findEval(justUnder, 'windfall').ok, false, '没有 r12 计数就拿不到一夜暴富');
 
 /* 传 null / 缺字段不能抛 */
 var nullEval = Ach.evaluate(null, null);
-eq(nullEval.total, 35, 'ACH 为 null 时按空桶处理，不抛');
+eq(nullEval.total, 39, 'ACH 为 null 时按空桶处理，不抛');
 eq(nullEval.unlocked, 0, '仍然是 0 解锁');
 
 /* sinceText */
@@ -345,5 +358,9 @@ ok(!!b1.t && !!b2.t, '两者都有 t / n');
 /* ================================================================
  * 汇总
  * ================================================================ */
-console.log('\n' + (fail === 0 ? '全部通过' : '有失败') + '：' + pass + ' 项通过，' + fail + ' 项失败');
+/* 汇总格式必须能被 scripts/run-tests.js 的 `通过 N 项，失败 M 项` 正则取到。
+ * 写成「N 项通过」的话，这个文件的几十条断言在总账里一直是 0 —— 数字小看不出来，
+ * 但「131 文件 / N 断言」这句话会悄悄少算一整个文件。 */
+console.log('\n' + (fail === 0 ? '全部通过' : '有失败'));
+console.log('通过 ' + pass + ' 项，失败 ' + fail + ' 项');
 if (fail) process.exit(1);

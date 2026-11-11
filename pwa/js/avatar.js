@@ -116,9 +116,47 @@
     return CACHE[i];
   }
 
+  /* 指定头像：这五位玩家用自己的图，不走 48 款预设。
+   *
+   * 为什么写死在代码里，而不是让他们各自去「我的账号」上传：
+   * 上传接口 /api/me/avatar/photo 认的是**本人登录态**，而这是运营直接指定的图，
+   * 没有理由为了换一张头像让他们各登一次；而且上传通道留着举报/审核流程，
+   * 用一个绕过它的后门反而更麻烦。
+   *
+   * 键是 playerId（档案里 p 开头的那个），不是昵称 —— 昵称随时能改，改了头像就丢。
+   * 图片在 pwa/assets/avatar-custom/，128×128 webp，单张 1~5 KB。
+   *
+   * ★ 这里**不写昵称**（2026-11-12）：昵称属于玩家数据，代码要能公开。
+   *   playerId 是随机串，反推不出任何个人信息；文件名也只是个代号。
+   *   想知道某张图是谁的，看线上档案，不靠源码里的注释。
+   */
+  var CUSTOM = {
+    'pb1a18d33e7234197': 'pierrec',
+    'pb56846c003429a5d': 'shahuo',
+    'pb99796cf5f4474f9': 'pokergod',
+    'p393a86f81f69ade3': 'daniuge',
+    'p930128601ab8e6f8': 'will'
+  };
+  var CUSTOM_DIR = './assets/avatar-custom/';
+
+  /* 这个玩家有没有指定头像。没有返回 ''。 */
+  function customOf(pid) {
+    var k = String(pid == null ? '' : pid);
+    return Object.prototype.hasOwnProperty.call(CUSTOM, k) ? CUSTOM[k] : '';
+  }
+
   /* 直接可用的 <img>。cls 用来挂尺寸类（.av-68 / .av-44 …）。
-   * alt 留空：头像是装饰，名字就在旁边（读屏不该重复念一遍）。 */
+   * alt 留空：头像是装饰，名字就在旁边（读屏不该重复念一遍）。
+   *
+   * 指定头像**优先于** chosen：那是玩家自己在设置页挑的预设款，
+   * 而指定头像是运营换上的图，两者并存时以指定为准（否则改一次预设就把它顶掉了）。 */
   function img(pid, chosen, cls) {
+    var c = customOf(pid);
+    if (c) {
+      return '<img class="avatar-img is-custom' + (cls ? ' ' + cls : '') + '"'
+        + ' src="' + CUSTOM_DIR + c + '.webp" data-custom="' + c + '"'
+        + ' alt="" aria-hidden="true" draggable="false">';
+    }
     var id = forPlayer(pid, chosen);
     return '<img class="avatar-img' + (cls ? ' ' + cls : '') + '"'
       + ' src="' + dataUri(id) + '" data-avatar="' + id + '" alt="" aria-hidden="true" draggable="false">';
@@ -187,6 +225,7 @@
     valid: valid,
     indexOf: indexOf,
     forPlayer: forPlayer,
+    customOf: customOf,
     dataUri: dataUri,
     img: img,
     photoUrl: photoUrl,
