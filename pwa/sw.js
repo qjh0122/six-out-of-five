@@ -10,7 +10,7 @@
  *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v145';
+const CACHE_NAME = 'weile-liuxuanwu-v146';
 
 /* network-first 的超时上限。
  *
@@ -274,6 +274,40 @@ function networkFirst(req, timeoutMs) {
   return Promise.race([netP, timeoutP]);
 }
 
+/* 脚本/样式的兜底匹配：**版本号不同的缓存一律不复用**。
+ *
+ * 为什么不能只写 `caches.match(req, { ignoreSearch: true })`：
+ * ignoreSearch 会把 `?v=`（app-version）一起忽略 —— 而那正是「这份 JS 属于哪一版」
+ * 的唯一标记。于是只要网络慢过一次、命中兜底，页面就会拿到上一版的 card.js / game.js：
+ * HTML 是新的、JS 是旧的、版本号看着也一致，行为却是旧的。这种「混版本」最难查。
+ *
+ * 实测代价（2026-11-12，加小王那天）：服务端已经发 54 张牌（含 rank 14.5 的小王），
+ * 旧版 drawJoker 只画彩色、不认 small 参数 —— 两张王长得一模一样，玩家看到的是
+ * 「规则没区分大小王」，实际是客户端跑着旧代码。断点单测（v144 的 card.js
+ * 对 rank 15 / 14.5 的绘制调用序列完全相同）确认了这条链。
+ *
+ * 两个刻意的取舍：
+ *   ① 缓存条目**没有 v** 视为可用。PRECACHE 写的是裸路径（withShare 只拼 sharecode），
+ *      那批文件是**本次 install** 写的，一定同期；不放行会把离线能力整片废掉。
+ *   ② 有 v 但不一致 → 返回 null（这次请求就失败了）。宁可让控制台明确报一个缺失，
+ *      也不静默跑旧代码 —— 静默跑旧代码的代价是「已经修好的 bug 在用户那边原样复现」，
+ *      而且没有任何人看得出来。
+ */
+function vOf(u) {
+  try { return new URL(u, self.location.href).searchParams.get('v') || ''; } catch (e) { return ''; }
+}
+function matchSameVersion(req) {
+  return caches.match(req).then(function (exact) {
+    if (exact) return exact;
+    return caches.match(req, { ignoreSearch: true }).then(function (loose) {
+      if (!loose) return null;
+      const want = vOf(req.url);
+      const got = vOf(loose.url || '');
+      return (!got || want === got) ? loose : null;
+    });
+  });
+}
+
 self.addEventListener('fetch', function (event) {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -303,8 +337,7 @@ self.addEventListener('fetch', function (event) {
     // 脚本/样式：network-first（改完即生效，无需 bump 版本）+ 超时兜底
     event.respondWith(networkFirst(req, ASSET_TIMEOUT_MS).then(function (res) {
       if (res) return res;
-      return caches.match(req, { ignoreSearch: true })
-        .then(function (r) { return r || caches.match(req); })
+      return matchSameVersion(req)
         .then(function (r) { return r || Response.error(); });
     }));
     return;

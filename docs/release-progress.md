@@ -37,15 +37,15 @@
 
 | 项 | 现在的值 | 怎么复算 |
 |---|---|---|
-| 线上版本 | `20261112a` / sw `v145` | `grep -o '2026111[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
+| 线上版本 | `20261112b` / sw `v146` | `grep -o '2026111[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
 | 线上核对 | **15/15 通过**（2026-11-11 指定头像版 `20261111c` 发布后实跑；版本号回读 = `20261111c`，无 JS 异常 / 无 console.error / 无 HTTP≥400 / SW 已接管 / installability 0 错） | `node scripts/probe-online-smoke.js <url>` |
-| 指定头像 | **5 人**（PlayerAA / 示例玩家甲 / DemoUser / 示例丙 / will）。`pwa/assets/avatar-custom/` 下 5 张 128×128 webp，线上逐个 200 `image/webp`、体积与本地一致；映射键是 playerId 不是昵称。其余玩家仍走 48 款预设 | `curl -o /dev/null -w '%{http_code} %{size_download}' "<url>/assets/avatar-custom/will.webp?sharecode=<sc>"` |
+| 指定头像 | **5 人**（playerId → 文件名见 `pwa/js/avatar.js` 的 CUSTOM 表；仓库里不写昵称）。`pwa/assets/avatar-custom/` 下 5 张 128×128 webp，线上逐个 200 `image/webp`、体积与本地一致；映射键是 playerId 不是昵称。其余玩家仍走 48 款预设 | `curl -o /dev/null -w '%{http_code} %{size_download}' "<url>/assets/avatar-custom/will.webp?sharecode=<sc>"` |
 | 牌堆 | **54 张**（52 真牌 + 大王 + 小王）。小王 2026-11-12 加入，rank 14.5；两张王功能完全一样（都万能），只有「该比王的地方」大王才压小王 | `node -e "console.log(require('./pwa/js/card.js').createDeck().length)"` |
 | 成就目录 | **39 条**（牌型 8 / 对撞 8 / 通吃通赔 8 / 战绩 15）。稀有度按线上实测标定，不是拍的：legend 12 · epic 3 · rare 8 · normal 18 | `npm run ach:unlock-stats` |
 | 成就事件日志 | **已启用**：`/api/backup/events` 回 `ok:true`；18 份档案全部冻上基线，时刻**同一个** `2026-11-11T13:20:03Z`，`20261111b` 重启后**未移动**（第一版漏了排队落盘，见十二） | `curl -H 'x-backup-key: <key>' "<url>/api/backup/events?since=0&sharecode=<sc>"` |
 | r9/r10/r12 历史错数 | **已清零且仍是 0**（9 份档案 / 27 格 + 基线 27 格；`20261111b` 发布后预演回读 `cells: 0`、`baseCells: 0`）。原值：全操 235 场却 `r12=777`、`r10=234`、`r9=271`；最大一档 `r12=801` | `npm run ach:reset -- --keys r9,r10,r12`（预演，应回 0 格） |
 | 管理后台 | 线上 `/admin.html` 可用（三页签：用户管理 / 模拟对战 / 排行榜）；真浏览器登录 **12/12**，错误密钥反向 **8 条全红**。密钥取自 `server/backup-key.txt`（gitignore，未入库），旧值备份在本机 `.workbuddy/` | `curl -H 'x-backup-key: <key>' "<url>/api/admin/users?sharecode=<sc>"` |
-| 全量回归 | **168 文件 / 7002 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项、`bot-runner.test.js` 28 项、`bot-split.test.js` 11 项、`bot-hand-delta.test.js` 12 项、`admin.test.js` 59 项、`achievements-catalog.test.js` 17 项、`achievements-room-level.test.js` 19 项） | `npm test` |
+| 全量回归 | **169 文件 / 7024 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项、`bot-runner.test.js` 28 项、`bot-split.test.js` 11 项、`bot-hand-delta.test.js` 12 项、`admin.test.js` 59 项、`achievements-catalog.test.js` 17 项、`achievements-room-level.test.js` 19 项） | `npm test` |
 | 探针台账 | **42 条**（`ci` 5 / `manual` 18 / `oneshot` 19） | `npm run probes:check`；真源 `scripts/probes.json` |
 | 几何判定工具自验 | **10/10**（6 组已知答案样本 + 2 个采集器合规），M8 变异下退出码 1 | `npm run qa:geom` |
 | CSS 规模 | 6888 行（style 5645 / records 1243） | `wc -l pwa/css/style.css pwa/css/records.css` |
@@ -4974,3 +4974,66 @@ if (on) {
 免得下次有人照着它去实现一个「真实平局」的处理。
 
 
+
+### 2026-11-12 半夜：两张王「看起来一样」的真因是客户端混版本（20261112b / sw v146）
+
+用户截图：结算面板里两张 JOKER 都是彩色，问「规则上区分大小王了吗」。
+第一反应会去查绘制代码 —— 但代码是对的。以下是实际排查顺序与结论，留给下次。
+
+**① 先证明线上代码是对的**（全新浏览器 / 无旧缓存）：
+
+| 项 | 结果 |
+|---|---|
+| 牌堆 | `Card.createDeck().length === 54`，两张王 rank `[15, 14.5]` |
+| 两张王的 dataURL | 不相同（21730 vs 21122 字节） |
+| 大王牌的彩色像素占比 | **17.9%** |
+| 小王牌的彩色像素占比 | **0%**（纯灰） |
+
+**② 再证明「旧代码画出来必然一样」**：取 v144 的 `card.js` 做绘制桩测试（记录
+`fillStyle/strokeStyle` 调用序列），`rank 15` 与 `rank 14.5` 的**序列完全相同**。
+原因：v144 的 `drawJoker(ctx, w, h)` 只有 3 个参数，`isSmallJoker` 也还不存在。
+
+**③ 于是链条闭合**：服务端（磁盘上的新代码）发 54 张牌、含 `rank 14.5`；
+客户端跑着 v144 的 JS，两张王都走彩色分支。**服务端是对的，客户端是旧的。**
+
+**为什么客户端会一直停在旧代码** —— 两条机制，各自独立成立：
+
+| 机制 | 问题 | 后果 |
+|---|---|---|
+| 版本自检只在 `load` 后 500ms 跑一次 | PWA 挂后台一晚上不关 = 永远不再检查 | 服务端换了代码它不知道；对局中 `LXWBusy()` 为真时本来就不刷 |
+| SW 脚本/样式兜底 `caches.match(req, { ignoreSearch: true })` | `ignoreSearch` 把 `?v=`（app-version）一起忽略 —— 而那是「这份 JS 属于哪一版」的唯一标记 | 网络慢过一次（3 秒超时兜底）就拿到上一版 JS：HTML 新、JS 旧、版本号看着也一致 |
+
+这类 bug 的共同特征是**没有报错**：请求全 200、界面正常、只有行为是旧的。
+所以它不是「小王没实现」，而是「改了代码、用户拿不到」。
+
+**修复**：
+
+- `index.html`：版本自检改成 `setInterval(..., 90000)` + `visibilitychange` 变可见时查一次
+  （后台定时器会被浏览器节流到分钟级，而玩家切回前台正是该对齐版本的时刻）。
+  保留 `LXWBusy()` 与 `sessionStorage` 防死循环：分牌阶段不刷、同一版本只刷一次。
+- `sw.js`：js/css 兜底改走 `matchSameVersion(req)` —— 先精确匹配，再 `ignoreSearch` 兜底，
+  但**缓存条目的 `v` 与请求的 `v` 不一致就丢弃**。
+  两个取舍写进注释：缓存条目**没有 v** 视为可用（PRECACHE 写的是裸路径，不放行会废掉离线）；
+  有 v 但不一致宁可让这次请求失败，也不静默跑旧代码。
+
+**测试** `pwa/test/version-refresh.test.js` 22 项：周期调用、`visibilitychange`、
+忙时重试、js/css 分支内部不许出现 `ignoreSearch`；并把 `matchSameVersion` 从 sw.js
+抽出来注入假 `caches` 跑 6 种情形（精确命中 / 同版本不同 sharecode / **旧版本必须丢弃** /
+无 v 放行 / 无缓存 / 请求无 v）。红→绿：把两处修复分别改回旧写法，各自报红 2~4 项。
+
+**一个必须说清的限制**：已经开着旧页面的客户端，任何前端修复都追不回去 ——
+它跑的那份 JS 里没有这些逻辑。所以这次发布后，手上开着旧页面的玩家**需要刷新一次**；
+之后 90 秒心跳与「切回前台检查」会接管，不会再出现「改了代码、用户拿不到」。
+
+#### 发布后核对（20261112b / sw v146）
+
+| 项 | 结果 | 怎么复算 |
+|---|---|---|
+| 线上版本 | `20261112b`，sw `v146` | `curl <url>/index.html` / `curl <url>/sw.js` |
+| 线上冒烟 | **15/15** | `node scripts/probe-online-smoke.js <url>` |
+| 版本心跳 | 线上 `index.html` 里 `setInterval(checkVersionConsistency, 90000)` 存在 | `curl <url>/index.html | grep -c setInterval` |
+| SW 兜底 | 线上 `sw.js` 里 `matchSameVersion` 两处（定义 + 调用），`CACHE_NAME` 含 `v146` | `curl <url>/sw.js | grep -o matchSameVersion` |
+| 大小王渲染 | 牌堆 54、rank `[15, 14.5]`、两张 dataURL 不同（21730 / 21122）、**彩色像素 17.9% vs 0%** | CDP 打开线上 `Card.drawCardDataURL` + 取像素 |
+
+**这条修复只对「下次打开」生效**：已经开着旧页面的客户端，跑的那份 JS 里没有心跳、
+也没有 `matchSameVersion` —— 任何前端补丁都追不回去。所以发布同时告知玩家刷新一次。
