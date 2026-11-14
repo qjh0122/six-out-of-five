@@ -36,6 +36,7 @@ const CDP_PORT = 9357;
 const ROOT = path.join(__dirname, '..', 'pwa');
 const SHOT_DIR = path.join(os.tmpdir(), 'lxw-emoji-probe');
 const SHOTS = !!process.env.ZOOM;
+const SEATS = Number(process.env.SEATS) || 2;   /* 满员档：SEATS=5 */
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
@@ -170,17 +171,26 @@ async function main() {
       var id = Object.keys(rooms)[0];
       if (!id) return null;
       var room = rooms[id];
-      if (room.players.length >= 2) return id;
+      /* SEATS 只影响「加几个人」。默认 2（一人一机的那条路），
+       * SEATS=5 用来验满员时气泡会不会跨到邻居头上 —— 座位都在圆环上，
+       * 2 人局永远测不到那一档。 */
+      if (room.players.length >= ${SEATS}) return id;   /* SEATS 是 Node 常量，必须插值进页面上下文 */
       if (window.__joined) return null;
       window.__joined = 1;
-      RoomStore.joinRoom(id, { id: 'probe-pal', nickname: '陪练' });
+      for (var s = 1; s < ${SEATS}; s++) {
+        RoomStore.joinRoom(id, { id: 'probe-pal' + (s > 1 ? s : ''), nickname: '陪练' + (s > 1 ? s : '') });
+      }
       return null;
     }, 6000);
   })()`);
   await evaluate(`(function(){
     var rooms = JSON.parse(Store.read(Store.KEYS.ROOMS) || '{}');
     var id = Object.keys(rooms)[0];
-    if (id) { RoomStore.setReady(id, 'probe-pal', true); }
+    if (id) {
+      var rms = JSON.parse(Store.read(Store.KEYS.ROOMS) || '{}');
+      var rm = rms[id] || { players: [] };
+      rm.players.forEach(function(p){ if (p.id !== 'me' && String(p.id).indexOf('probe-pal') === 0) RoomStore.setReady(id, p.id, true); });
+    }
     return id;
   })()`);
   await sleep(300);
@@ -264,7 +274,10 @@ async function main() {
   ok(panel && panel.loaded === 13, '★ 13 张图全部加载成功（naturalWidth > 0）', (panel && panel.loaded) + '/13');
   ok(panel && panel.minCellW >= 36 && panel.minCellH >= 36,
     '格子触摸目标 ≥ 36 CSS px（实测 ' + (panel && panel.minCellW) + '×' + (panel && panel.minCellH) + '）');
-  ok(panel && panel.cols === 4, '表情格子 4 列（浮层面板宽度固定 520，横竖屏都一样）',
+  /* 列数是**布局档位**决定的，不是常数：竖屏 4 列、横屏/桌面 7 列（1624×750 的设计）。
+   * 原来写死 4 列，横屏档一直红 —— 属于脚本过期，不是功能坏了（2026-11-14 顺手修）。 */
+  const wantCols = W > H ? 7 : 4;
+  ok(panel && panel.cols === wantCols, '表情格子 ' + wantCols + ' 列（竖屏 4 / 横屏 7）',
     '实测 ' + (panel && panel.cols) + ' 列');
   ok(panel && !panel.hasTargetRow,
     '★ 面板里没有「发给谁」选择行（收件人由入口决定，不再问第二遍）', String(panel && panel.hasTargetRow));
@@ -291,13 +304,21 @@ async function main() {
           var end = { x: r1.left + r1.width / 2, y: r1.top + r1.height / 2 };
           var palC = { x: before.pal.left + before.pal.width / 2, y: before.pal.top + before.pal.height / 2 };
           var meC = { x: before.me.left + before.me.width / 2, y: before.me.top + before.me.height / 2 };
+          /* 2026-11-14 起落点改成「贴在座位上方」，不再正中覆盖 —— 覆盖会把头像和
+           * 名字一起糊掉（用户截图实证）。所以判据从「离座位中心 <60px」换成
+           * 「不叠座位 + 紧邻座位」，后者才是真正的意图。 */
+          var ox = Math.max(0, Math.min(r1.right, before.me.right) - Math.max(r1.left, before.me.left));
+          var oy = Math.max(0, Math.min(r1.bottom, before.me.bottom) - Math.max(r1.top, before.me.top));
           res({
             spawned: true, closed: closed,
             start: { x: Math.round(start.x), y: Math.round(start.y) },
             end: { x: Math.round(end.x), y: Math.round(end.y) },
-            /* 全场：落点在我的座位附近；飞行起点也是我 */
+            /* 全场：落点贴着我的座位；飞行起点也是我 */
             nearMe: Math.hypot(start.x - meC.x, start.y - meC.y) < 60,
-            endNearMe: Math.hypot(end.x - meC.x, end.y - meC.y) < 60,
+            landedAbove: Math.round(before.me.top - r1.bottom),
+            landedBelow: Math.round(r1.top - before.me.bottom),
+            overlapMe: Math.round(ox * oy),
+            size: { w: Math.round(r1.width), h: Math.round(r1.height) },
             palC: { x: Math.round(palC.x), y: Math.round(palC.y) },
             meC: { x: Math.round(meC.x), y: Math.round(meC.y) },
             moved: Math.hypot(end.x - start.x, end.y - start.y) > 4
@@ -309,7 +330,10 @@ async function main() {
   ok(fly && fly.spawned, '点表情 → 动画层里出现节点', JSON.stringify(fly));
   ok(fly && fly.closed, '发完自动关面板（不关就挡住了表情落点）');
   ok(fly && fly.nearMe, '起点在我的座位旁（' + JSON.stringify(fly && fly.start) + ' vs 我 ' + JSON.stringify(fly && fly.meC) + '）');
-  ok(fly && fly.endNearMe, '发给全场 → 落点在我的座位旁', JSON.stringify(fly && fly));
+  ok(fly && (fly.landedAbove >= 0 || fly.landedBelow >= 0) && fly.overlapMe === 0,
+    '★ 发给全场 → 落点紧贴我的座位，但不叠在座位上（上 ' + (fly && fly.landedAbove)
+      + ' / 下 ' + (fly && fly.landedBelow) + ' / 重叠 ' + (fly && fly.overlapMe) + ' px²）',
+    JSON.stringify(fly && fly.size));
   if (SHOTS) console.log('    截图：' + (await shot('fly')));
 
   const ev1 = await evaluate('window.__emojiLog');
@@ -355,9 +379,20 @@ async function main() {
     var pal = document.querySelector('#game-top .gt-opp');
     if (!node || !pal) return null;
     var r = node.getBoundingClientRect(), p = pal.getBoundingClientRect();
-    return { d: Math.round(Math.hypot(r.left + r.width / 2 - (p.left + p.width / 2), r.top + r.height / 2 - (p.top + p.height / 2))) };
+    var ox = Math.max(0, Math.min(r.right, p.right) - Math.max(r.left, p.left));
+    var oy = Math.max(0, Math.min(r.bottom, p.bottom) - Math.max(r.top, p.top));
+    return {
+      d: Math.round(Math.hypot(r.left + r.width / 2 - (p.left + p.width / 2), r.top + r.height / 2 - (p.top + p.height / 2))),
+      overlap: Math.round(ox * oy),
+      above: Math.round(p.top - r.bottom),
+      below: Math.round(r.top - p.bottom),
+      limit: Math.round(p.height / 2 + r.height)
+    };
   })()`);
-  ok(aimed && aimed.d < 70, '定向的表情落在对方座位旁（偏差 ' + (aimed && aimed.d) + ' px）', JSON.stringify(aimed));
+  ok(aimed && aimed.overlap === 0 && (aimed.above >= 0 || aimed.below >= 0) && aimed.d < aimed.limit,
+    '★ 定向的表情贴在对方座位外侧，不盖头像（上 ' + (aimed && aimed.above)
+      + ' / 下 ' + (aimed && aimed.below) + '，中心距 ' + (aimed && aimed.d) + ' < ' + (aimed && aimed.limit) + '）',
+    JSON.stringify(aimed));
 
   await sleep(2100);
   const phrase = await evaluate(`(function(){
@@ -373,12 +408,86 @@ async function main() {
   await sleep(300);
   const bubble = await evaluate(`(function(){
     var n = document.querySelector('#emoji-layer .emoji-fly.is-phrase');
-    return n ? { text: n.textContent, w: Math.round(n.getBoundingClientRect().width) } : null;
+    if (!n) return null;
+    var r = n.getBoundingClientRect();
+    return { text: n.textContent, w: Math.round(r.width),
+             k: Math.round(parseFloat(getComputedStyle(n).getPropertyValue('--emo-k')) * 100) / 100 || 1 };
   })()`);
   ok(phrase && phrase.shown === 8, '短语 tab 有 8 条', String(phrase && phrase.shown));
   ok(phrase && phrase.gridHidden, '切到短语后表情格子被藏起来');
   ok(bubble && bubble.text === (phrase && phrase.text), '发出去的短语渲染成气泡且文案一致', JSON.stringify(bubble));
-  ok(bubble && bubble.w <= 470, '气泡宽度不超过设计上限（不会横穿屏幕）', JSON.stringify(bubble));
+  /* 上限跟着 --emo-k 一起放大（460 是设计上限）。写死 470 的话，电脑上这条
+   * 永远红 —— 而那正是这一轮修的「桌面该更大」。 */
+  ok(bubble && bubble.w <= 460 * bubble.k + 20,
+    '气泡宽度不超过设计上限（' + (bubble && bubble.w) + ' ≤ ' + Math.round(460 * (bubble && bubble.k) + 20) + '）',
+    JSON.stringify(bubble));
+
+  /* [5b] 尺寸与落点：气泡在**每一档设备**上的实际 CSS 尺寸、会不会盖住头像、
+   * 以及「字号 : 头像宽」这个比例跨设备是否一致。
+   *
+   * 这三条只有真浏览器能量 —— 单测里 offsetWidth 恒为 0，而这一轮的病根恰恰是
+   * 「CSS px 写死、不跟舞台缩放」，静态断言永远看不见。 */
+  const geom = await evaluate(`(function(){
+    var stage = document.getElementById('stage');
+    var m = getComputedStyle(stage).transform;
+    var sc = 1, hit = m && m.match(/matrix\\(([^)]+)\\)/);
+    if (hit) { var v = parseFloat(hit[1].split(',')[0]); if (v > 0) sc = v; }
+    var out = { scale: Math.round(sc * 1000) / 1000, vp: innerWidth + 'x' + innerHeight };
+    var ph = document.querySelector('#emoji-layer .emoji-fly.is-phrase');
+    if (!ph) return out;
+    var r = ph.getBoundingClientRect();
+    var inner = ph.querySelector('.emoji-pop');
+    out.fs = Math.round(parseFloat(getComputedStyle(inner).fontSize) * 10) / 10;
+    out.k = Math.round(parseFloat(getComputedStyle(ph).getPropertyValue('--emo-k')) * 100) / 100 || 1;
+    out.box = { w: Math.round(r.width), h: Math.round(r.height) };
+    out.inView = r.top >= -0.5 && r.left >= -0.5
+      && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;
+    /* 不只看落点那个座位：所有头像都不能被盖住，否则「贴在座位上方」在某个
+     * 布局下又把邻居糊了。重叠按 px² 算，>1 就算盖到。 */
+    var avs = [].slice.call(document.querySelectorAll('#game-top .opp-avatar'));
+    var cover = 0, worst = 0;
+    avs.forEach(function(a){
+      var b = a.getBoundingClientRect();
+      var w = Math.max(0, Math.min(r.right, b.right) - Math.max(r.left, b.left));
+      var h = Math.max(0, Math.min(r.bottom, b.bottom) - Math.max(r.top, b.top));
+      if (w * h > 1) cover++;
+      worst = Math.max(worst, w * h);
+    });
+    var main = document.querySelector('#game-top .gt-opp .opp-avatar');
+    var avW = main ? main.getBoundingClientRect().width : 0;
+    out.avatars = avs.length;
+    out.avatarW = Math.round(avW);
+    out.coverAvatars = cover;
+    out.coverArea = Math.round(worst);
+    out.ratio = avW > 0 ? Math.round(out.fs / avW * 1000) / 1000 : 0;
+    out.emoRatio = avW > 0 ? Math.round(64 * out.k / avW * 100) / 100 : 0;
+    return out;
+  })()`);
+  console.log('    [尺寸] ' + JSON.stringify(geom));
+  if (SHOTS) console.log('    截图：' + (await shot('bubble')));
+  ok(geom && geom.inView, '气泡完整在视口内（不会被 overflow:hidden 切掉）',
+    JSON.stringify(geom && geom.box) + ' @ ' + (geom && geom.vp));
+  ok(geom && geom.coverAvatars === 0, '★ 气泡不盖任何座位头像（盖住的正是人脸）',
+    '盖到 ' + (geom && geom.coverAvatars) + ' 个 / 共 ' + (geom && geom.avatars)
+      + '，最大重叠 ' + (geom && geom.coverArea) + ' px²');
+  /* ★ 比例只在「--emo-k 下限没被顶住」的档位要求一致。
+   *
+   * 320×568 这一档舞台只有 0.427，座位头像被压到 16 CSS px。这时如果还要求
+   * 「气泡字 : 头像 = 0.69」，气泡字得是 11px —— 那是「不溢出但读不出」，
+   * 比溢出更糟。所以 k 有下限 1，小屏宁可比例偏大也要保证可读；
+   * 这一档的判据换成「字号够读 + 完整在屏内」，由下面那条接管。 */
+  if (geom && geom.scale >= 0.45) {
+    /* 0.69 是手机竖屏的实测比例（24 / 35）。允许 ±0.09：抗锯齿与紧凑档会让
+     * 头像宽度有 1~2 px 的出入，放宽一点，但「电脑上掉到 0.42」这种一眼就能抓住。 */
+    ok(geom.ratio >= 0.60 && geom.ratio <= 0.78,
+      '★ 短语字号 / 头像宽跨设备一致（实测 ' + geom.ratio + '，手机基准 0.69）',
+      JSON.stringify(geom));
+    ok(geom.emoRatio >= 1.65 && geom.emoRatio <= 2.00,
+      '★ 表情直径 / 头像宽跨设备一致（实测 ' + geom.emoRatio + '，手机基准 1.83）',
+      JSON.stringify(geom));
+  } else {
+    ok(geom && geom.fs >= 18, '极小屏（舞台 ' + (geom && geom.scale) + '）：字号不缩到读不清（' + (geom && geom.fs) + ' px ≥ 18）');
+  }
 
   console.log('\n[6] 自动清理');
   const cleaned = await evaluate('__wait(function(){ return document.querySelectorAll("#emoji-layer .emoji-fly").length === 0; }, 3000)');

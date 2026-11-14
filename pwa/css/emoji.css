@@ -272,12 +272,21 @@
 }
 /* 外层：只管「在哪」。transform 由 JS 写成 translate3d，用 transition 而不是
    keyframes —— 终点是两个头像的实测坐标，CSS 里根本不知道。 */
+/* ★ 所有尺寸都乘 --emo-k，它由 JS 按**舞台缩放**写进外层节点（playEmoji）。
+ *
+ * 为什么不能写死：这个层是 `position: fixed` 铺满视口，**不在 #stage 里**，
+ * 所以拿不到舞台那圈 transform: scale()。舞台在手机竖屏是 0.52、电脑窗口 0.84，
+ * 座位头像因此从 35 CSS px 长到 57 —— 而气泡一直是 64/24，一点没变。
+ * 结果就是电脑上「表情比头像还小、短语比座位名还小」（2026-11-14 用户报的就是这个）。
+ *
+ * --emo-k 的含义是「相对手机基准的倍数」，手机竖屏 = 1（观感与 v148 完全一致），
+ * 电脑窗口 ≈ 1.6。不做小于 1 的缩放：手机上的观感已经验过，不跟着小屏继续缩。 */
 .emoji-fly {
   position: absolute;
   left: 0;
   top: 0;
-  width: 64px;
-  height: 64px;
+  width: calc(64px * var(--emo-k, 1));
+  height: calc(64px * var(--emo-k, 1));
   will-change: transform, opacity;
   transition: transform var(--dur-3) var(--ease-emph), opacity var(--dur-3) var(--ease-std);
 }
@@ -292,17 +301,23 @@
 .emoji-fly.is-phrase {
   width: auto;
   height: auto;
-  max-width: 460px;
+  /* 两个上限取小：设计上限（随 --emo-k 放大）与「视口宽度留 24px」。
+   * 后者专治 320 宽这一档：--emo-k 有下限 1（不跟着缩），而屏只有 320，
+   * 一句 12 字的短语 325 宽就顶出去了，会被 #emoji-layer 的 overflow:hidden 切掉。 */
+  max-width: min(calc(460px * var(--emo-k, 1)), calc(100vw - 24px));
 }
 .emoji-fly.is-phrase .emoji-pop {
-  padding: 10px 18px;
-  border-radius: 18px;
+  padding: calc(10px * var(--emo-k, 1)) calc(18px * var(--emo-k, 1));
+  border-radius: calc(18px * var(--emo-k, 1));
   background: #FFFBF0;
   color: #2A1B06;
-  font-size: 24px;
+  font-size: calc(24px * var(--emo-k, 1));
   line-height: 1.3;
   font-weight: 600;
-  white-space: nowrap;
+  /* 这里是 normal 不是 nowrap：只有在上面那条 max-width 真的压下来时才会折行
+   * （320 宽档）。正常档位宽度足够，视觉上仍是一行 —— 但换成 overflow:hidden
+   * 就会把话截断，那比折两行难看得多。 */
+  white-space: normal;
   box-shadow: var(--elev-3);
 }
 /* 落下后轻轻回弹一下：让人知道「这条落在他那儿了」，而不是「飘过去消失了」。

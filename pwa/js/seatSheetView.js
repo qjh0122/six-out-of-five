@@ -470,6 +470,20 @@
     playEmoji(ev);
   }
 
+  /* 舞台这一刻的实际缩放。竖版走 --pt-scale、横版走 --ls-scale，变量名不同，
+   * 但两者最终都落在 #stage 的 transform 上 —— 读 matrix 是最不容易随实现变化出错的路。
+   * 读不到（transform: none / 老浏览器）就当 1，退化成 v148 的样子。 */
+  function stageScale() {
+    var st = document.getElementById('stage');
+    if (!st) return 1;
+    var m = window.getComputedStyle(st).transform;
+    if (!m || m === 'none') return 1;
+    var hit = m.match(/matrix\(([^)]+)\)/);
+    if (!hit) return 1;
+    var v = parseFloat(hit[1].split(',')[0]);
+    return (isFinite(v) && v > 0) ? v : 1;
+  }
+
   function playEmoji(ev) {
     var layer = $('#emoji-layer');
     if (!layer) return;
@@ -483,6 +497,17 @@
     if (!fromR && !toR) return;
     if (!fromR) fromR = toR;
     if (!toR) toR = fromR;
+
+    /* 尺寸跟着**舞台缩放**走，不是写死 CSS px（2026-11-14）。
+     *
+     * #emoji-layer 是 fixed 全屏、不在 #stage 里，拿不到那圈 transform: scale()，
+     * 于是座位头像在手机竖屏是 35 CSS px、电脑窗口是 57，而气泡一直是 64 / 24 号字。
+     * 电脑上就变成「表情比头像还小、短语比座位名还小」。
+     *
+     * 0.52 是手机竖屏的基准（62 设计 px 的座圈 ≈ 32 CSS px，实测头像 35）。
+     * 取 max(1, ·) 表示**只放大不缩小**：手机上的观感已经逐张确认过，不陪小屏继续缩。 */
+    var k = Math.max(1, stageScale() / 0.52);
+    k = Math.round(k * 100) / 100;
 
     /* 同时最多 6 条：服务端虽然限到 2 秒一条，但 5 个人一起发就是 5 条同时，
      * 再加自己一条正好。超了就丢最老的，节点数不跟着房间人数涨。 */
@@ -507,6 +532,8 @@
     }
     item.className = 'emoji-pop';
     wrap.appendChild(item);
+    /* 必须在 append 之前写：下面马上要 offsetWidth —— 尺寸得先定下来。 */
+    wrap.style.setProperty('--emo-k', k);
 
     /* 起点必须**在没有过渡的情况下**先落定，否则每一条表情都会从屏幕左上角
      * 飞过来 —— 因为「插入时写下 transform」在浏览器看来也是一次属性变化，
@@ -522,7 +549,45 @@
     var fx = fromR.left + fromR.width / 2 - w / 2;
     var fy = fromR.top + fromR.height / 2 - h / 2;
     var tx = toR.left + toR.width / 2 - w / 2;
-    var ty = toR.top + toR.height / 2 - h / 2;
+
+    /* ★ 落点不再「盖在座位上」，而是**贴在座位上方**（2026-11-14）。
+     *
+     * 原来是正中覆盖：气泡中心 = 座位中心，于是「包开挂了先。」正好糊住对方头像，
+     * 连名字一起挡掉 —— 用户第二张截图就是它。表情是给人看的，不该先把人挡住。
+     *
+     * 规则：底边贴在座位上方留 gap；顶部放不下（上排座位贴着屏幕边）就翻到座位
+     * 下方，宁可压桌面也不压头像和名字；水平方向居中后夹进视口，避免被
+     * #emoji-layer 的 overflow:hidden 切掉一截。 */
+    var gap = Math.round(6 * k);
+    var ty = toR.top - h - gap;
+    var vw = window.innerWidth || document.documentElement.clientWidth || 0;
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (vw > w) tx = Math.min(Math.max(tx, 4), vw - w - 4);
+    if (ty < 4) ty = toR.bottom + gap;
+
+    /* ★ 再和每个座位头像比一次，挡着谁就推到谁下面。
+     *
+     * 为什么光有「翻转」不够：320 宽那一档，气泡折两行后高 83，顶部放不下 → 翻到
+     * 座位下方；可它同时被横向夹到屏幕左边（居中放不下），于是正好压在左上那个
+     * 邻居的头像上（实测重叠 263 px²）。夹取和翻转是两个独立动作，组合起来会撞车，
+     * 只能拿最终矩形去跟真实头像比 —— 算不出来，量得出来。 */
+    function coversAvatar(y) {
+      var avs = document.querySelectorAll('#game-top .opp-avatar');
+      var lowest = -1;
+      for (var i = 0; i < avs.length; i++) {
+        var b = avs[i].getBoundingClientRect();
+        if (tx < b.right && tx + w > b.left && y < b.bottom && y + h > b.top) {
+          if (b.bottom > lowest) lowest = b.bottom;
+        }
+      }
+      return lowest;
+    }
+    for (var guard = 0; guard < 4; guard++) {
+      var low = coversAvatar(ty);
+      if (low < 0) break;
+      ty = low + gap;
+    }
+    if (vh > h) ty = Math.min(Math.max(ty, 4), vh - h - 4);
 
     wrap.style.transform = 'translate3d(' + fx + 'px,' + fy + 'px,0) scale(0.72)';
     void wrap.offsetWidth;                 // 提交起点
@@ -530,14 +595,17 @@
 
     var raf = window.requestAnimationFrame || function (fn) { return setTimeout(fn, 16); };
     raf(function () {
-      wrap.style.transform = 'translate3d(' + tx + 'px,' + (ty - 8) + 'px,0) scale(1)';
+      /* 落定就用 ty，不再额外 -8：那 8px 是「正中覆盖」时代的上浮量，
+       * 现在 ty 已经按「座位外侧留 gap」算好，再抬一次会把 gap 吃掉
+       * （实测 gap 6 被抵消成 -2，气泡边缘压进座位 2px）。 */
+      wrap.style.transform = 'translate3d(' + tx + 'px,' + ty + 'px,0) scale(1)';
       wrap.style.opacity = '1';
     });
 
     setTimeout(function () { wrap.classList.add('is-landed'); }, 430);
     setTimeout(function () {
       wrap.style.opacity = '0';
-      wrap.style.transform = 'translate3d(' + tx + 'px,' + (ty - 34) + 'px,0) scale(1)';
+      wrap.style.transform = 'translate3d(' + tx + 'px,' + (ty - 34 * k) + 'px,0) scale(1)';
     }, 1500);
     setTimeout(function () {
       if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
