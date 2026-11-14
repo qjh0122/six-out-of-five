@@ -188,51 +188,11 @@
   color: #FFF4DE;
 }
 
-/* ---------- 发给谁 ----------
-   一行 chips：全场 + 每个人。不做下拉，也不做「先点头像再发」——
-   头像点击已经是「看档案」，同一个手势不能有两套含义。 */
-.emoji-to {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 10px;
-  padding: 14px 0 10px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.emoji-to::-webkit-scrollbar { display: none; }
-.emoji-who {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px 6px 6px;
-  border-radius: 999px;
-  border: 1px solid rgba(42, 27, 6, 0.14);
-  background: rgba(42, 27, 6, 0.04);
-  font-size: 22px;
-  font-weight: 700;
-  color: #3A2A12;
-  cursor: pointer;
-}
-.emoji-who .av {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 800;
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-}
-/* 选中态用与「准备」同一档的绿：整个 App 里「已选中」只有这一种颜色 */
-.emoji-who.is-on {
-  background: #115444;
-  border-color: #115444;
-  color: #FFF4DE;
-}
+/* ---------- 发给谁：没有这一行 ----------
+   v89 曾经在这里放过一排 chips（全场 + 每个人），让人在面板里选收件人。
+   2026-11-14 整块删掉：收件人由**入口**决定，桌面表情钮 = 全场、点头像 = 那个人，
+   面板标题已经把答案写在脸上了，再给一遍选择器只是让人怀疑「到底发给了谁」。
+   .emoji-who / .emoji-to 的样式一并清除 —— 留着它们，下一个人会以为这块 UI 还在。 */
 
 /* ---------- 13 张表情 ----------
    4 列 × 4 行（13 个占 4 行最后一格空着，视觉上比 13 个排成 3-5-5 更规整）。
@@ -364,8 +324,6 @@
   padding: 14px 18px 12px;
 }
 #stage.ls .emoji-tab { font-size: max(24px, var(--ls-fs-floor, 24px)); }
-#stage.ls .emoji-to { padding: 10px 0 8px; }
-#stage.ls .emoji-who { font-size: max(22px, var(--ls-fs-floor, 22px)); }
 #stage.ls .emoji-grid {
   grid-template-columns: repeat(7, 1fr);
   gap: 8px;

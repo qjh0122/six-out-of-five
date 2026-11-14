@@ -189,64 +189,7 @@ async function main() {
   ok(!!inGame, '开局：顶栏出现对手座位（第二个人真的进桌了）', JSON.stringify(table));
   if (!inGame) {
     console.log('    !! 进不了牌桌，后面的断言没有意义，提前结束');
-    /* ------------------- [8] 点座位 → 贴着他弹三档面板（v89 统一浮层）-------------------
-   * 这一节是「统一浮层面板」的验收：早先是点座位开战绩卡、点表情钮开底部 sheet，
-   * 两个入口互不相干。现在点谁就弹谁，且面板必须**贴着那个人**，不是屏幕居中。 */
-  console.log('\n[8] 点座位 → 贴着弹三档面板');
-  const seatSheet = await evaluate(`(function(){
-    var seat = document.querySelector('#game-top .gt-opp');
-    var me = document.querySelector('#game-top .gt-me');
-    if (!seat || !me) return { error: '牌桌上没有座位' };
-    seat.click();
-    var panel = document.getElementById('seat-sheet');
-    if (panel.classList.contains('hidden')) return { error: '点座位没打开面板' };
-    var pr = panel.getBoundingClientRect();
-    var sr = seat.getBoundingClientRect();
-    var tabs = [].slice.call(panel.querySelectorAll('#ss-tabs [data-ss-tab]'))
-      .map(function(b){ return b.textContent; });
-    var open = {
-      tabs: tabs,
-      name: (document.getElementById('ss-name') || {}).textContent,
-      /* 贴着 = 面板与座位的水平或垂直间距小，且不是「居中弹」 */
-      gapX: Math.round(sr.left > pr.right ? sr.left - pr.right : pr.left - sr.right),
-      gapY: Math.round(sr.top > pr.bottom ? sr.top - pr.bottom : pr.top - sr.bottom),
-      side: panel.getAttribute('data-side'),
-      fits: pr.top >= -1 && pr.left >= -1 && pr.right <= innerWidth + 1 && pr.bottom <= innerHeight + 1,
-      targetOn: (function(){ var on = panel.querySelector('.emoji-who.is-on'); return on ? on.textContent.trim() : null; })()
-    };
-    /* 切到信息档 */
-    var infoTab = panel.querySelector('[data-ss-tab="info"]');
-    if (infoTab) infoTab.click();
-    open.infoShown = !document.getElementById('ss-info').classList.contains('hidden');
-    open.gridHiddenOnInfo = document.getElementById('emoji-grid').classList.contains('hidden');
-    open.infoText = (document.getElementById('ss-info').textContent || '').slice(0, 40);
-    document.getElementById('btn-ss-close').click();
-    /* 点自己：只有信息档 */
-    me.click();
-    open.selfOpened = !panel.classList.contains('hidden');
-    open.selfTabs = [].slice.call(panel.querySelectorAll('#ss-tabs [data-ss-tab]'))
-      .map(function(b){ return b.textContent; });
-    open.selfActive = (function(){ var t = panel.querySelector('[data-ss-tab].is-on'); return t ? t.textContent : null; })();
-    document.getElementById('btn-ss-close').click();
-    return open;
-  })()`);
-  ok(seatSheet && !seatSheet.error, '点对手座位能打开面板', seatSheet && seatSheet.error);
-  if (seatSheet && !seatSheet.error) {
-    ok(seatSheet.tabs.length === 3 && seatSheet.tabs.join('/') === '表情/短语/信息',
-      '★ 三档 tab：表情 / 短语 / 信息', JSON.stringify(seatSheet.tabs));
-    ok(seatSheet.name && seatSheet.name !== '发给全场', '标题写的是被点的那个人（' + seatSheet.name + '）');
-    ok(!!seatSheet.targetOn && seatSheet.targetOn !== '全场',
-      '★ 表情默认就发给这个人（不用先选「发给谁」）', seatSheet.targetOn);
-    ok(seatSheet.gapX <= 60 || seatSheet.gapY <= 60,
-      '★ 面板贴着座位（间距 ' + seatSheet.gapX + '×' + seatSheet.gapY + ' CSS px，落点 ' + seatSheet.side + '）');
-    ok(seatSheet.fits, '面板整体在视口内');
-    ok(seatSheet.infoShown && seatSheet.gridHiddenOnInfo, '信息档替换掉表情格子');
-    ok(!!seatSheet.infoText, '信息档有内容（' + seatSheet.infoText.slice(0, 20) + '…）');
-    ok(seatSheet.selfOpened && seatSheet.selfTabs.length === 1 && seatSheet.selfActive === '信息',
-      '★ 点自己只有「信息」一档（自己给自己发表情没有意义）', JSON.stringify(seatSheet.selfTabs));
-  }
-
-  console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
+    console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
     cdp.close(); try { edge.kill(); } catch (e) {} server.close();
     process.exitCode = 1;
     return;
@@ -295,7 +238,9 @@ async function main() {
     var loaded = imgs.filter(function(i){ return i.naturalWidth > 0; }).length;
     var cr = card.getBoundingClientRect();
     var cellRects = cells.map(function(c){ var r = c.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
-    var whos = [].slice.call(document.querySelectorAll('#emoji-to .emoji-who'));
+    /* 2026-11-14：面板里那行「全 全场 / 机器人1 / …」删掉了 —— 收件人由入口决定。
+     * 这里验两件事：那行**不存在**，以及桌面钮进来时标题就是「发给全场」。 */
+    var hasTargetRow = !!document.querySelector('#emoji-to');
     return {
       open: !m.classList.contains('hidden'),
       fits: cr.top >= -1 && cr.bottom <= innerHeight + 1 && cr.left >= -1 && cr.right <= innerWidth + 1,
@@ -304,7 +249,8 @@ async function main() {
       cells: cells.length, loaded: loaded,
       minCellW: Math.min.apply(null, cellRects.map(function(c){ return c.w; })),
       minCellH: Math.min.apply(null, cellRects.map(function(c){ return c.h; })),
-      targets: whos.map(function(w){ return w.textContent.trim(); }),
+      hasTargetRow: hasTargetRow,
+      name: (document.getElementById('ss-name') || {}).textContent,
       cols: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
       /* 面板不是全屏弹窗，不锁 stage 的 modal-open —— 它真正的「模态」表现
        * 是背后有一层可点击关闭的遮罩。这里断言遮罩在，而不是滚动锁。 */
@@ -320,7 +266,10 @@ async function main() {
     '格子触摸目标 ≥ 36 CSS px（实测 ' + (panel && panel.minCellW) + '×' + (panel && panel.minCellH) + '）');
   ok(panel && panel.cols === 4, '表情格子 4 列（浮层面板宽度固定 520，横竖屏都一样）',
     '实测 ' + (panel && panel.cols) + ' 列');
-  ok(panel && panel.targets.length >= 2, '目标行有「全场」+ 同桌的人', JSON.stringify(panel && panel.targets));
+  ok(panel && !panel.hasTargetRow,
+    '★ 面板里没有「发给谁」选择行（收件人由入口决定，不再问第二遍）', String(panel && panel.hasTargetRow));
+  ok(panel && panel.name === '发给全场',
+    '★ 桌面表情钮进入 → 标题就是「发给全场」', panel && panel.name);
   ok(panel && panel.bgLocked, '面板背后有可点关闭的遮罩');
   if (SHOTS) console.log('    截图：' + (await shot('panel')));
 
@@ -384,19 +333,23 @@ async function main() {
   console.log('\n[5] 定向 + 短语');
   await sleep(2100);
   const directed = await evaluate(`(function(){
-    document.getElementById('btn-emoji').click();
-    var who = [].slice.call(document.querySelectorAll('#emoji-to .emoji-who')).filter(function(w){
-      return w.getAttribute('data-to') !== '*';
-    })[0];
-    if (!who) return { noTarget: true };
-    who.click();
+    /* 定向只有一条路：**点那个人的座位**。面板里的「发给谁」选择行已经删了，
+     * 所以这里也不再点 chip，而是点座位 —— 这正好是玩家真实的操作路径。 */
+    var seat = document.querySelector('#game-top .gt-opp');
+    if (!seat) return { noSeat: true };
+    seat.click();
+    var panel = document.getElementById('seat-sheet');
+    if (panel.classList.contains('hidden')) return { notOpen: true };
+    var pid = seat.getAttribute('data-pid');
+    var name = (document.getElementById('ss-name') || {}).textContent;
     document.querySelectorAll('#emoji-grid .emoji-cell')[2].click();
-    return { to: who.getAttribute('data-to') };
+    return { to: pid, name: name };
   })()`);
   await sleep(500);
   const ev2 = await evaluate('window.__emojiLog[1] || null');
-  ok(directed && !directed.noTarget, '目标行里有具体的人可以选');
-  ok(ev2 && ev2.to === (directed && directed.to), '选定某人后事件里的 to 就是他', JSON.stringify(ev2));
+  ok(directed && !directed.noSeat && !directed.notOpen, '点对手座位能直接进表情档');
+  ok(ev2 && ev2.to === (directed && directed.to),
+    '★ 点头像进来直接发给他（事件里的 to 就是他的 playerId，不用先选人）', JSON.stringify(ev2));
   const aimed = await evaluate(`(function(){
     var node = document.querySelector('#emoji-layer .emoji-fly');
     var pal = document.querySelector('#game-top .gt-opp');
@@ -473,7 +426,8 @@ async function main() {
       gapY: Math.round(sr.top > pr.bottom ? sr.top - pr.bottom : pr.top - sr.bottom),
       side: panel.getAttribute('data-side'),
       fits: pr.top >= -1 && pr.left >= -1 && pr.right <= innerWidth + 1 && pr.bottom <= innerHeight + 1,
-      targetOn: (function(){ var on = panel.querySelector('.emoji-who.is-on'); return on ? on.textContent.trim() : null; })()
+      /* 收件人不再有第二处可改：那行 chip 已删。改成验「标题写的是他」+「选择行不存在」。 */
+      hasTargetRow: !!panel.querySelector('#emoji-to')
     };
     /* 切到信息档 */
     var infoTab = panel.querySelector('[data-ss-tab="info"]');
@@ -496,8 +450,8 @@ async function main() {
     ok(seatSheet.tabs.length === 3 && seatSheet.tabs.join('/') === '表情/短语/信息',
       '★ 三档 tab：表情 / 短语 / 信息', JSON.stringify(seatSheet.tabs));
     ok(seatSheet.name && seatSheet.name !== '发给全场', '标题写的是被点的那个人（' + seatSheet.name + '）');
-    ok(!!seatSheet.targetOn && seatSheet.targetOn !== '全场',
-      '★ 表情默认就发给这个人（不用先选「发给谁」）', seatSheet.targetOn);
+    ok(!seatSheet.hasTargetRow,
+      '★ 点座位进来也没有「发给谁」选择行（目标就是标题里的这个人）');
     ok(seatSheet.gapX <= 60 || seatSheet.gapY <= 60,
       '★ 面板贴着座位（间距 ' + seatSheet.gapX + '×' + seatSheet.gapY + ' CSS px，落点 ' + seatSheet.side + '）');
     ok(seatSheet.fits, '面板整体在视口内');
@@ -505,6 +459,14 @@ async function main() {
     ok(!!seatSheet.infoText, '信息档有内容（' + seatSheet.infoText.slice(0, 20) + '…）');
     ok(seatSheet.selfOpened && seatSheet.selfTabs.length === 1 && seatSheet.selfActive === '信息',
       '★ 点自己只有「信息」一档（自己给自己发表情没有意义）', JSON.stringify(seatSheet.selfTabs));
+  }
+  /* 视觉证据：上一段把面板关掉了，这里重开一次留张图 —— 「点对手头像进来是什么样」
+   * 这件事只看断言不够，改版后要能一眼比对（标题是他、下面直接是表情格子）。 */
+  if (SHOTS) {
+    await evaluate("(function(){ var s = document.querySelector('#game-top .gt-opp'); if (s) s.click(); return 'ok'; })()");
+    await sleep(320);
+    console.log('    截图：' + (await shot('seat-sheet')));
+    await evaluate("(function(){ var b = document.getElementById('btn-ss-close'); if (b) b.click(); return 'ok'; })()");
   }
 
   console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');

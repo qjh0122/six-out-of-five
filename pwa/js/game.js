@@ -4639,7 +4639,7 @@
   var PROF_TAP_SEL = Seat.PROF_TAP_SEL, oppTap = Seat.oppTap, bindOppSeatTap = Seat.bindOppSeatTap;
   var emojiTarget = Seat.emojiTarget, emojiLastSend = Seat.emojiLastSend, emojiReady = Seat.emojiReady;
   var emojiFlag = Seat.emojiFlag, seatRect = Seat.seatRect, emojiOthers = Seat.emojiOthers;
-  var renderEmojiTargets = Seat.renderEmojiTargets, renderEmojiGrid = Seat.renderEmojiGrid, renderEmojiPhrases = Seat.renderEmojiPhrases;
+  var renderEmojiGrid = Seat.renderEmojiGrid, renderEmojiPhrases = Seat.renderEmojiPhrases;
   var ssPid = Seat.ssPid, ssAnchorEl = Seat.ssAnchorEl, ssTab = Seat.ssTab;
   var ssPlayer = Seat.ssPlayer, seatSheetOpen = Seat.seatSheetOpen, placeSeatSheet = Seat.placeSeatSheet;
   var renderSeatInfo = Seat.renderSeatInfo, setSeatTab = Seat.setSeatTab, renderSeatSheet = Seat.renderSeatSheet;

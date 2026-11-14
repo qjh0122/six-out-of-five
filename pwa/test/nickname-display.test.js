@@ -104,11 +104,19 @@ console.log('\n[5] 接线：句子/列表里的名字仍走 short()，座位名�
 const seatUses = (game.match(/<span class="opp-name">' \+ esc\(p\.nickname\)/g) || []).length;
 eq(seatUses, 2, '座位名两条渲染路径已改为原样渲染（缩字号由 fitLongNames 负责）');
 ok(!/esc\(short\(p\.nickname\)\)/.test(game), '负向：座位名不许再走 short()');
-/* 句子/列表位：掉线提示（game.js）、表情面板选人（seatSheetView）、
- * 结算等待（settleView）—— 三处仍在用。 */
+/* 句子/列表位：掉线提示（game.js）、结算等待（settleView）—— 两处仍在用。 */
 ok(/return short\(p\.nickname \|\| '他'\);/.test(game), '掉线提示仍走 short()');
 const seatSheet = require('fs').readFileSync(require('path').join(ROOT, 'pwa', 'js', 'seatSheetView.js'), 'utf8');
-ok(/esc\(short\(p\.nickname \|\| ''\)\)/.test(seatSheet), '表情面板选人仍走 short()');
+/* 表情面板里那行「全 全场 / 机器人1 / …」2026-11-14 删掉了（收件人由入口决定），
+ * 面板里已经没有「按名字排的选人位」，这条从「仍在用 short()」反转成「已删干净」。
+ * 半删状态（调用还在、函数没了）会直接 ReferenceError，所以两个方向都断一次。
+ *
+ * ★ 必须**先去掉注释**再匹配：文件里留了一段「这里原本有 renderEmojiTargets()」的
+ * 说明，直接正则会把那段注释当成代码，得到一条永远失败的假红
+ * （version-refresh.test.js 也栽过同一个坑）。 */
+const seatSheetCode = seatSheet.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+ok(!/short\(p\.nickname/.test(seatSheetCode), '表情面板不再有需要 short() 的选人行');
+ok(!/renderEmojiTargets/.test(seatSheetCode), '目标选择行的实现已整块删除（不是只把 DOM 藏起来）');
 const settle = require('fs').readFileSync(require('path').join(ROOT, 'pwa', 'js', 'settleView.js'), 'utf8');
 ok(/return short\(p\.nickname \|\| '朋友'\);/.test(settle), '结算等待仍走 short()');
 

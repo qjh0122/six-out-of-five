@@ -1,31 +1,38 @@
-"""从参考截图裁出 13 个表情 —— 软 alpha 版（替换旧的二值抠底）
+"""从参考表情包切出 13 个表情 —— v3：网格投影分带 + 逐格定框 + 距离 alpha
 
-旧脚本（v1）的四个毛病，正是「边上出现坏边」的来源：
+═══ 为什么有 v3（2026-11-14 用户报「表情包存在元素缺失」）═══
 
-  1. **alpha 只有 0 / 255**。球体边上是抗锯齿过渡带，被硬切成非黑即白之后，
-     边缘就是一圈台阶；缩到 40~60 CSS px 时台阶变成毛刺。
-  2. **没有去底色污染**。过渡带像素 = 球体色 × 覆盖率 + 浅紫背景 × (1−覆盖率)，
-     直接当不透明存下来，深色毡面上就是一圈浅紫/灰白光晕。
-  3. **逐格按包围盒拉满 96×96**。每个表情的缩放系数都不同 ——
-     带披风的恶魔被缩小、圆脸被放大，13 个摆在一起大小不齐；
-     4px 边距对「耳朵 / 帽子 / 泪滴」这类外挂部件也太紧，会被切掉一截。
-  4. **把源图自带的软投影一起抠了进来**。每个球下面都有一片灰色投影，
-     在浅紫底上看不出来，抠到深色毡面上就是一团灰雾。
+v2 的三处结构性错误，导致「丢部件 / 削边 / 问号变白雾」：
 
-v2 的做法：
+  1. **按连通块质心把部件分给表情**。疑惑的蓝色问号、大哭的泪滴、得意的紫帽、
+     睡觉的 Zzz 都是**脱离球体**的独立连通块，质心稍偏就归到隔壁格 ——
+     归错之后既不在自己的窗口里，也不在被归入那格的窗口里，两头都不渲染。
+  2. **共同画框 BOX=80 对「内容 74px + 外挂部件」太紧**。球体几乎贴边，
+     再叠 0.3px 羽化与 LANCZOS 缩放，最外一圈被削掉：龇牙的头顶、咬牙的上下、
+     蝙蝠面具两侧的尖角都是这么没的。
+  3. **反解颜色时 F 取「最近的 core 像素」**。对脱离球体的部件，最近的 core
+     是绿球本身 —— 解算式 a = ⟨P−B, F−B⟩ / |F−B|² 里 F 完全不是那个部件的颜色，
+     蓝色问号解出来 alpha≈0，只剩一层白雾。
 
-  · 整张图 ×4 超采样（LANCZOS）后再算 alpha —— 边缘天然是渐变，没有台阶；
-  · alpha = 与背景色差的软阈值（5→22），再 0.35px 高斯把残余噪声压掉；
-  · **投影像素单独判掉**：投影是「背景色的等比压暗」（饱和度与背景几乎相同），
-    球体是「饱和的绿/红」或「很暗的黑」。判据用「饱和度接近背景 + 亮度 > 0.45×背景」，
-    再从画布四边泛洪，只吃掉与外界连通的部分 —— 嘴里的白牙、眼里高光虽然也接近
-    中性色，但被高饱和的球面包着，泛洪到不了，不会被误抠成洞；
-  · 反解颜色（去底色污染）：F = (P − (1−a)·B) / a，B 取**最近的那个背景像素**
-    （球下方最近的背景其实是投影灰，用它反解才不会在球底留一圈紫边）；
-  · 13 个表情共用**同一套**缩放系数（共同画框 BOX），相对大小保持原样；
-  · 透明化与缩放全程在**预乘 alpha** 空间做，缩小时不会把透明像素的黑色渗进边缘；
-  · 每个格子收「质心落在本格内」的**所有**前景连通块 —— 泪滴、帽子这类
-    与脸不连的部件也算进来，不会被切掉。
+v3 的做法（每一处对应上面一条）：
+
+  · 列/行用**投影**分带，不依赖连通块；每一格的内容包围盒只统计
+    「最近格心就是本格」的前景像素 —— 不存在「部件被分到别人家」；
+  · 13 格共用一个边长 W = max(各格包围盒) + 2×PAD 的窗口，逐格按**自己包围盒
+    中心**开窗。窗口必然大于内容，边缘不会贴边被削；共用 W 保证 13 个大小一致；
+  · alpha 直接按「与底色的距离」线性映射（LO→HI 两档），对绿球 / 蓝问号 /
+    红恶魔 / 黑面具一视同仁，不做逐像素反解；
+  · 去底色污染仍做，但底色用**常量**（源图底色均匀），不再取最近像素；
+  · 源图自带的投影按「饱和度贴近底色 + 比底色暗」判掉，且只吃与窗口四边连通的那片
+    —— 白牙、眼里高光饱和度也低，但被球面包着，泛洪到不了。
+
+v3.1 补的一条（2026-11-14 用户报「得意和生气的眼睛位置再检查一下」）：
+
+  · **内部一律实心**。距离 alpha 只对外轮廓有效；物体内部的浅色像素（眼白、
+    眼眶高光、花痴红心外沿）按「离底色多远」会被算成 0.6~0.9 的 alpha，
+    再经反解推成纯白，贴到深绿牌桌上就是「眼睛发白、发飘」，看着像位置错了。
+    实测虹膜/眼白重心相对球心只差 0.2~0.6px，**是 alpha 不是坐标**。
+    做法：离轮廓 1.5 源像素外的内部像素强制 alpha=1，过渡带取 max 保单调。
 
 用法：
   python scripts/crop-emoji.py <源图> [输出目录]
@@ -33,7 +40,6 @@ v2 的做法：
 """
 import os
 import sys
-from collections import deque
 
 import numpy as np
 from PIL import Image, ImageFilter
@@ -45,15 +51,15 @@ OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
 
 SS = 4                      # 超采样倍数
 OUT_SIZE = 96               # 输出边长（界面里按 40~60 CSS px 用，2 倍屏够）
-BOX = 80                    # 共同画框边长（源图像素）：内容约 66，四周留 7~8 的呼吸位
-ALPHA_LO = 6.0              # 与背景色差低于此视为「完全透明」（噪声底）
-FEATHER_PX = 0.30           # 收尾羽化（源图像素）：压掉解算噪声，边缘不留台阶
-MIN_AREA = 60               # 面积小于此（源图像素）的连通块当噪点丢掉
-CLUSTER_TOL = 40            # 行/列中心聚类的容差（源图像素）
-SAT_TOL = 12                # 饱和度与背景相差在这个范围内 = 中性（投影/背景候选）
-SHADOW_LUMA_RATIO = 0.45    # 亮度低于 0.45×背景 = 真·黑（披风等），不当投影
+PAD = 6                     # 窗口在内容外留的边（源图像素）—— 5 起步，别贴着切
+ALPHA_LO = 8.0              # 与底色距离小于此 = 全透明
+ALPHA_HI = 34.0             # 大于此 = 全不透明（中间线性过渡）
+FEATHER_PX = 0.30           # 收尾羽化（源图像素）
+INNER_PX = 1.5              # 离轮廓这么远的内部像素强制 alpha=1（源图像素）
+STRONG = 30                 # 统计包围盒用的「肯定是前景」阈值
+SAT_TOL = 12                # 与底色的饱和度差在此内 = 中性（投影候选）
+SHADOW_FLOOR = 0.55         # 亮度低于这个比例就不当投影（真·深色部件）
 
-# 参考截图的阅读顺序（3 列 × 5 行，最后一行只有 1 个）
 COLS, ROWS = 3, 5
 NAMES = ['e0-dizzy', 'e1-devil', 'e2-money',
          'e3-confused', 'e4-love', 'e5-cry',
@@ -62,186 +68,175 @@ NAMES = ['e0-dizzy', 'e1-devil', 'e2-money',
          'e12-grit']
 
 
-def cluster(vals, tol=CLUSTER_TOL):
-    """一维聚类：把相邻差值小于 tol 的合并，返回各簇均值（升序）。"""
-    vals = sorted(vals)
-    groups = [[vals[0]]]
-    for v in vals[1:]:
-        if v - groups[-1][-1] <= tol:
-            groups[-1].append(v)
-        else:
-            groups.append([v])
-    return [sum(g) / len(g) for g in groups]
+def bands(profile, min_gap=3):
+    """一维投影 → 内容带 [(start, end), ...]，中间空档至少 min_gap 像素。"""
+    on = profile > 0
+    out, start = [], None
+    gap = 0
+    for i, v in enumerate(on):
+        if v:
+            if start is None:
+                start = i
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap >= min_gap:
+                out.append((start, i - gap))
+                start = None
+                gap = 0
+    if start is not None:
+        out.append((start, len(on) - 1))
+    return out
 
 
 def main():
     if not SRC:
         sys.exit('用法: python scripts/crop-emoji.py <源图> [输出目录]')
     img = Image.open(SRC).convert('RGB')
-    W, H = img.size
-    print('源图 %dx%d' % (W, H))
+    W0, H0 = img.size
+    print('源图 %dx%d' % (W0, H0))
 
-    # ---- 背景色：四边一圈像素的中位数（不用单点：截图四角可能带圆角/阴影）----
+    # ---- 底色：四边一圈像素的中位数 ----
     a0 = np.asarray(img).astype(np.float32)
     frame = np.concatenate([
         a0[0:3, :].reshape(-1, 3), a0[-3:, :].reshape(-1, 3),
         a0[:, 0:3].reshape(-1, 3), a0[:, -3:].reshape(-1, 3)])
     bg = np.median(frame, axis=0)
-    print('背景色 RGB(%.0f, %.0f, %.0f)' % tuple(bg))
+    print('底色 RGB(%.0f, %.0f, %.0f)' % tuple(bg))
 
-    # ---- 超采样后在高分辨率上算 alpha ----
-    big = img.resize((W * SS, H * SS), Image.LANCZOS)
+    # ---- 超采样 ----
+    big = img.resize((W0 * SS, H0 * SS), Image.LANCZOS)
     a = np.asarray(big).astype(np.float32)
+    H, W = a.shape[:2]
     d = np.sqrt(((a - bg) ** 2).sum(axis=2))
 
-    # ---- 把源图自带的软投影判成背景 ----
-    # 投影 = 背景色的等比压暗：饱和度几乎不变（33 → 25~33），只是亮度往下走。
-    # 球体要么是高饱和的绿/红（饱和度 60~90），要么是极暗的黑（亮度 < 0.45×背景）。
-    # 所以「饱和度贴着背景 + 亮度还行」= 投影或背景。
-    # 再从画布四边泛洪，只吃与外界连通的那片：嘴里的白牙、眼里的高光饱和度也低，
-    # 但被高饱和的球面包着，泛洪到不了，不会被误抠成洞。
-    sat = a.max(axis=2) - a.min(axis=2)
-    luma = a.mean(axis=2)
-    bg_sat = float(bg.max() - bg.min())
-    bg_luma = float(bg.mean())
-    bgish = (np.abs(sat - bg_sat) <= SAT_TOL) & (luma >= bg_luma * SHADOW_LUMA_RATIO)
-    seed = np.zeros_like(bgish)
-    seed[0, :] = bgish[0, :]; seed[-1, :] = bgish[-1, :]
-    seed[:, 0] = bgish[:, 0]; seed[:, -1] = bgish[:, -1]
-    outside = ndi.binary_propagation(seed, mask=bgish)
-    print('投影/背景占 %.1f%%' % (outside.mean() * 100))
+    # ---- 分带：用「强前景」投影，避免投影/噪声把相邻两格连成一片 ----
+    strong = d > STRONG
+    cb = bands(strong.sum(axis=0), min_gap=SS * 3)
+    rb = bands(strong.sum(axis=1), min_gap=SS * 3)
+    print('内容列带 %s' % [(round(s / SS, 1), round(e / SS, 1)) for s, e in cb])
+    print('内容行带 %s' % [(round(s / SS, 1), round(e / SS, 1)) for s, e in rb])
+    if len(cb) != COLS or len(rb) != ROWS:
+        sys.exit('列/行带数与预期不符（%d 列 / %d 行）：源图排布变了，先改 COLS/ROWS'
+                 % (len(cb), len(rb)))
 
-    # ---- alpha：边界 2px 用「已知底色 + 已知纯色」的投影解算，内部直接 1 ----
-    # 为什么不能只按色差归一：50% 覆盖的像素与背景色差已经是满色的 6 成，
-    # 拿色差直接除会让边缘「虚胖」（alpha 早早到 1），残留的背景色就变成了紫边。
-    # 正确做法是把 P 投影到 (F−B) 这条线上：a = ⟨P−B, F−B⟩ / |F−B|²。
-    #   B：最近的那个背景像素（球底附近最近的是投影灰，不是浅紫）
-    #   F：向内缩 2px 之后的纯色（那里必然是不透明的球体本身）
-    idx = ndi.distance_transform_edt(outside, return_distances=False, return_indices=True)
-    bgmap = a[tuple(idx)]
+    cc = [(s + e) / 2.0 for s, e in cb]     # 列心
+    rc = [(s + e) / 2.0 for s, e in rb]     # 行心
 
-    shape = (~outside) & (d > ALPHA_LO)
-    core = ndi.binary_erosion(shape, iterations=SS * 2)
-    if not core.any():
-        core = shape
-    inner_idx = ndi.distance_transform_edt(~core, return_distances=False, return_indices=True)
-    fpure = a[tuple(inner_idx)]
+    # ---- 每个前景像素归给「最近的格心」（等比 x / y 分别取最近）----
+    xi = np.abs(np.arange(W)[:, None] - np.array(cc)[None, :]).argmin(axis=1)
+    yi = np.abs(np.arange(H)[:, None] - np.array(rc)[None, :]).argmin(axis=1)
 
-    vb = fpure - bgmap
-    denom = (vb ** 2).sum(axis=2)
-    alpha = np.where(denom > 400,
-                     ((a - bgmap) * vb).sum(axis=2) / np.maximum(denom, 1.0),
-                     0.0)
-    alpha = np.clip(alpha, 0.0, 1.0)
-    alpha = np.where(core, 1.0, alpha)
+    cells = {}
+    for r in range(ROWS):
+        for c in range(COLS):
+            m = strong & (yi[:, None] == r) & (xi[None, :] == c)
+            ys, xs = np.nonzero(m)
+            if len(ys) < 50:
+                continue
+            cells[(r, c)] = dict(x0=xs.min(), x1=xs.max(), y0=ys.min(), y1=ys.max())
+    if len(cells) != len(NAMES):
+        sys.exit('只找到 %d 格内容，预期 %d 格' % (len(cells), len(NAMES)))
+
+    # ---- 共用窗口边长：装得下最大的那一格，且留足边距 ----
+    need = 0
+    for c in cells.values():
+        need = max(need, c['x1'] - c['x0'] + 1, c['y1'] - c['y0'] + 1)
+    WIN = int(need + PAD * 2 * SS)
+    print('最大内容 %d px → 共用窗口 %d px（源图像素）' % (need / SS, WIN / SS))
+
+    # ---- alpha：距离映射（不做逐像素反解，理由见文件头第 3 条）----
+    alpha = np.clip((d - ALPHA_LO) / (ALPHA_HI - ALPHA_LO), 0.0, 1.0)
+
+    # ---- 去掉源图自带的投影 ----
+    # 判据不是「亮度」，而是「是不是底色的等比压暗」：
+    # 实测球下方的投影 RGB(123,129,148)，三通道除以底色 (217,228,250) 得
+    # (0.567, 0.566, 0.592) —— 三个比值几乎相等（极差 0.026），也就是 P ≈ k·B。
+    # 球体本身是绿的不满足（比如 (207,237,192) 的比值极差 0.27）。
+    #
+    # 为什么不能用亮度阈值（v3 前两版都栽在这）：投影的 d 高达 130~240，比球体边缘
+    # 还「显眼」，而它的亮度从 0.97 一路暗到 0.55 倍底色 —— 任何单一亮度阈值都会
+    # 切在投影中间，留下一圈深灰月牙（用户看到的「球底下挂个灰台子」）。
+    # 比值判据对它整段成立，一个不剩。
+    #
+    # 0.40 的下限给真·深色部件留着：蝙蝠面具、恶魔角的比值在 0.18 上下，不是投影。
+    # 上限 1.05 排除比底色更亮的（白牙比值 >1）。
+    # 再叠一层「与四边连通」：被球面包住的中性区域（白牙、高光）泛洪到不了。
+    ratio = a / bg
+    spread = ratio.max(axis=2) - ratio.min(axis=2)
+    mean_r = ratio.mean(axis=2)
+    tint = (spread < 0.06) & (mean_r > 0.40) & (mean_r < 1.05)
+    seed = np.zeros_like(tint)
+    seed[0, :] = tint[0, :]; seed[-1, :] = tint[-1, :]
+    seed[:, 0] = tint[:, 0]; seed[:, -1] = tint[:, -1]
+    outside = ndi.binary_propagation(seed, mask=tint)
     alpha = np.where(outside, 0.0, alpha)
-    # 收尾羽化：把解算的噪声压掉（0.3 源图像素），边缘是连续渐变而不是台阶
+    print('底色+投影被判掉 %.1f%%' % (outside.mean() * 100))
+
+    # ---- 内部一律实心：距离 alpha 只对外轮廓有效 ----
+    # 「离底色多远」在轮廓边缘是抗锯齿的正确答案，但在**物体内部**的浅色区域
+    # （眼白、眼眶高光、花痴红心外沿、龇牙白牙）会算出 0.6~0.9 的 alpha ——
+    # 这些像素明明完全不透明。后果有两层，第二层才是用户看到的：
+    #   1. 半透明 + 反解 F=(P−(1−a)B)/a 把浅色推成纯白（眼睛「发亮」）；
+    #   2. 半透明白色贴到深绿牌桌上会透出底色，边缘再被反解提亮一圈，
+    #      整只眼睛看起来「发白、发飘、位置不对」——用户 2026-11-14 报的
+    #      「得意和生气的眼睛位置再检查一下」，量下来虹膜/眼白重心偏差只有
+    #      1.5px，是 alpha 而不是坐标的问题。
+    # 用「到非前景的距离」当实心权重：离轮廓 1.5 源像素以内保留软过渡，
+    # 往内拉满到 1。取 max 保证单调，不会在过渡带做出台阶。
+    fgmask = (d > ALPHA_LO) & ~outside
+    depth = ndi.distance_transform_edt(fgmask)
+    alpha = np.maximum(alpha, np.clip(depth / (INNER_PX * SS), 0.0, 1.0))
+    alpha = np.where(outside, 0.0, alpha)
+    print('内部实心化：alpha=1 占比 %.1f%%' % float((alpha > 0.99).mean() * 100))
+
+    # ---- 收尾羽化 ----
     alpha = np.asarray(
         Image.fromarray((alpha * 255).astype(np.uint8))
         .filter(ImageFilter.GaussianBlur(SS * FEATHER_PX))
     ).astype(np.float32) / 255.0
 
-    # ---- 去底色污染（反预乘）----
+    # ---- 去底色污染：F = (P − (1−a)·B) / a，B 用常量底色 ----
     al = np.maximum(alpha, 0.06)[..., None]
-    fg = (a - (1.0 - al) * bgmap) / al
-    fg = np.clip(fg, 0, 255)
-    fg = np.where((alpha < 0.02)[..., None], fg.mean(axis=(0, 1)), fg)   # 全透明处颜色无意义
+    fg = np.clip((a - (1.0 - al) * bg) / al, 0, 255)
 
-    # ---- 连通块：每个表情的全部部件（脸 / 泪滴 / 帽子 / 披风）----
-    solid = alpha > 0.5
-    hh, ww = solid.shape
-    labels = np.zeros(solid.shape, dtype=np.int32)
-    boxes = []
-    cur = 0
-    min_area = MIN_AREA * SS * SS
-    for sy in range(hh):
-        row = solid[sy]
-        for sx in range(ww):
-            if not row[sx] or labels[sy, sx]:
-                continue
-            cur += 1
-            q = deque([(sx, sy)])
-            labels[sy, sx] = cur
-            x0 = x1 = sx
-            y0 = y1 = sy
-            area = 0
-            while q:
-                x, y = q.popleft()
-                area += 1
-                if x < x0: x0 = x
-                elif x > x1: x1 = x
-                if y < y0: y0 = y
-                elif y > y1: y1 = y
-                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                    if 0 <= nx < ww and 0 <= ny < hh and solid[ny, nx] and not labels[ny, nx]:
-                        labels[ny, nx] = cur
-                        q.append((nx, ny))
-            if area >= min_area:
-                boxes.append({'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1,
-                              'cx': (x0 + x1) / 2.0, 'cy': (y0 + y1) / 2.0, 'area': area})
-    print('前景连通块 %d 个 / 保留 %d 个' % (cur, len(boxes)))
-    if not boxes:
-        sys.exit('没有找到前景，检查源图或阈值')
-
-    # ---- 行列中心聚类，再按「质心落在哪一格」把部件分给表情 ----
-    cxs = cluster([b['cx'] / SS for b in boxes])
-    cys = cluster([b['cy'] / SS for b in boxes])
-    print('列中心 %s' % [round(v, 1) for v in cxs])
-    print('行中心 %s' % [round(v, 1) for v in cys])
-    if len(cxs) != COLS or len(cys) != ROWS:
-        sys.exit('行列数与预期不符（%d 列 / %d 行）：源图排布变了，先改 COLS/ROWS'
-                 % (len(cxs), len(cys)))
-
-    xb = [0] + [(cxs[i] + cxs[i + 1]) / 2.0 * SS for i in range(len(cxs) - 1)] + [ww]
-    yb = [0] + [(cys[i] + cys[i + 1]) / 2.0 * SS for i in range(len(cys) - 1)] + [hh]
-
-    def cell_of(cx, cy):
-        ci = max(i for i in range(len(cxs)) if cx >= xb[i])
-        ri = max(i for i in range(len(cys)) if cy >= yb[i])
-        return ri, ci
-
-    cells = {}
-    for b in boxes:
-        key = cell_of(b['cx'], b['cy'])
-        c = cells.get(key)
-        if not c:
-            cells[key] = dict(b)
-        else:
-            c['x0'] = min(c['x0'], b['x0']); c['x1'] = max(c['x1'], b['x1'])
-            c['y0'] = min(c['y0'], b['y0']); c['y1'] = max(c['y1'], b['y1'])
-            c['cx'] = (c['x0'] + c['x1']) / 2.0
-            c['cy'] = (c['y0'] + c['y1']) / 2.0
-
-    # ---- 共同画框：所有表情同一缩放，相对大小保持原样；同时确认装得下 ----
-    half = BOX * SS / 2.0
-    maxreach = 0
-    for c in cells.values():
-        reach = max(c['cx'] - c['x0'], c['x1'] - c['cx'], c['cy'] - c['y0'], c['y1'] - c['cy'])
-        maxreach = max(maxreach, reach)
-    print('最大半宽 %.1f / 共同画框半宽 %.1f' % (maxreach / SS, BOX / 2))
-    if maxreach > half:
-        sys.exit('共同画框装不下（%.1f > %.1f），把 BOX 调大' % (maxreach, half))
+    # ---- 全透明处的颜色要「渗出」成最近的实心颜色，不能留黑 ----
+    # 反解式在 alpha→0 时分母趋零，算出来基本是黑（实测 rgba [0,0,0,14]）。
+    # 黑 + 透明本身看不出来，但**任何不做预乘的缩放**（老浏览器、某些截图工具、
+    # 我们自己的对比脚本）都会把这圈黑混进边缘，深色底上就是一环黑边。
+    # 用最近邻把实心色铺满透明区，边缘再怎么插值都是同色，不会脏。
+    solid = alpha > 0.35
+    if solid.any():
+        near = ndi.distance_transform_edt(~solid, return_distances=False, return_indices=True)
+        fg = fg[tuple(near)]
 
     os.makedirs(OUT, exist_ok=True)
     order = 0
     for r in range(ROWS):
-        for ci in range(COLS):
-            c = cells.get((r, ci))
-            if not c:
-                continue                      # 最后一行空位，不占名字
+        for c in range(COLS):
+            cell = cells.get((r, c))
+            if not cell:
+                continue
             if order >= len(NAMES):
                 continue
             name = NAMES[order]
             order += 1
-            x0 = int(round(c['cx'] - half)); y0 = int(round(c['cy'] - half))
-            x1 = x0 + int(BOX * SS); y1 = y0 + int(BOX * SS)
+
+            cx = (cell['x0'] + cell['x1']) / 2.0
+            cy = (cell['y0'] + cell['y1']) / 2.0
+            x0 = int(round(cx - WIN / 2.0)); y0 = int(round(cy - WIN / 2.0))
+            x1 = x0 + WIN; y1 = y0 + WIN
+
             A = alpha[y0:y1, x0:x1]
             F = fg[y0:y1, x0:x1]
-            if A.shape[0] != y1 - y0 or A.shape[1] != x1 - x0:
-                pw = (max(0, -x0), max(0, -y0), max(0, x1 - ww), max(0, y1 - hh))
-                A = np.pad(A, ((pw[1], pw[3]), (pw[0], pw[2])), mode='constant')
-                F = np.pad(F, ((pw[1], pw[3]), (pw[0], pw[2]), (0, 0)), mode='constant')
-            # 预乘 → 缩小 → 反预乘
+            if A.shape[0] != WIN or A.shape[1] != WIN:      # 出图边 → 补底色
+                pl = max(0, -x0); pt = max(0, -y0)
+                pr = max(0, x1 - W); pb = max(0, y1 - H)
+                A = np.pad(A, ((pt, pb), (pl, pr)), mode='constant')
+                F = np.pad(F, ((pt, pb), (pl, pr), (0, 0)),
+                           mode='constant', constant_values=bg[None, None, :])
+
+            # 预乘 → 缩小 → 反预乘（缩小时不让透明像素的黑渗进边缘）
             pm = np.dstack([F * A[..., None], A * 255.0])
             small = np.asarray(
                 Image.fromarray(np.clip(pm, 0, 255).astype(np.uint8), 'RGBA')
@@ -251,12 +246,16 @@ def main():
             out = np.dstack([rgb, sa * 255.0]).astype(np.uint8)
             path = os.path.join(OUT, name + '.png')
             Image.fromarray(out, 'RGBA').save(path, optimize=True)
-            cover = float((sa > 0.04).mean()) * 100
-            print('  %-12s 包围盒 %2dx%-2d  占画框 %4.1f%%  边缘半透明 %4.1f%%  %s'
-                  % (name, round((c['x1'] - c['x0']) / SS), round((c['y1'] - c['y0']) / SS),
-                     cover,
-                     float(((sa > 0.02) & (sa < 0.98)).mean()) * 100,
-                     os.path.basename(path)))
+
+            # 边界自检：内容必须离窗口边至少 1.5 源图像素，否则就是「快被切了」
+            margin = min(cell['x0'] - x0, cell['y0'] - y0,
+                         x1 - 1 - cell['x1'], y1 - 1 - cell['y1']) / SS
+            flag = '  <<< 贴边' if margin < 1.5 else ''
+            print('  %-12s 内容 %2dx%-2d  留白 %4.1f px  占画框 %4.1f%%%s'
+                  % (name, round((cell['x1'] - cell['x0'] + 1) / SS),
+                     round((cell['y1'] - cell['y0'] + 1) / SS), margin,
+                     float((sa > 0.04).mean()) * 100, flag))
+
     print('完成 %d / %d 个' % (order, len(NAMES)))
     if order != len(NAMES):
         sys.exit('只裁出 %d 个，少于预期 %d 个' % (order, len(NAMES)))

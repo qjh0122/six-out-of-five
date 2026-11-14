@@ -138,24 +138,18 @@
     return room.players.filter(function (p) { return p.id !== state.myId && !p.left; });
   }
 
-  function renderEmojiTargets() {
-    var box = $('#emoji-to');
-    if (!box || !emojiReady()) return;
-    if (emojiTarget === null) emojiTarget = Emoji.BROADCAST;
-    var html = '<button class="emoji-who' + (emojiTarget === Emoji.BROADCAST ? ' is-on' : '')
-      + '" type="button" data-to="' + Emoji.BROADCAST + '">'
-      + '<span class="av" style="background:linear-gradient(180deg,#2C7A63,#115444)">全</span>'
-      + '全场</button>';
-    var list = emojiOthers();
-    for (var i = 0; i < list.length; i++) {
-      var p = list[i];
-      html += '<button class="emoji-who' + (emojiTarget === p.id ? ' is-on' : '')
-        + '" type="button" data-to="' + esc(p.id) + '">'
-        + '<span class="av">' + avatarInner(p.id, p.avatar, (p.nickname || '?').charAt(0), false, p.photo) + '</span>'
-        + esc(short(p.nickname || '')) + '</button>';
-    }
-    box.innerHTML = html;
-  }
+  /* ★ 这里原本有 renderEmojiTargets()：面板顶部一行「全 全场 / 机器人1 / 机器人2…」，
+   * 让人在面板里再选一次发给谁。2026-11-14 删掉，理由两条：
+   *
+   *   ① 目标在**入口**就已经确定了，那一行是重复提问。点桌面表情钮进来必然是全场
+   *      （面板标题已经写着「发给全场 / 所有人都看得到」），点某个人头像进来必然是
+   *      他（标题就是他名字）—— 同一件事问两遍，第二遍还允许改主意，反而让人怀疑
+   *      「我刚点的到底发给谁」。
+   *   ② 它和标题区冲突。标题说「机器人3」，下面那行高亮的却是「全场」，两个都像
+   *      当前选中项，玩家不知道该信哪个。
+   *
+   * 删掉之后 `emojiTarget` 完全由 `ssPid` 决定（见 renderSeatSheet 里那一行），
+   * 只有一条赋值路径，不可能出现「标题一个人、实发另一个人」。 */
 
   function renderEmojiGrid() {
     var box = $('#emoji-grid');
@@ -318,7 +312,7 @@
   }
 
   function setSeatTab(tab) {
-    var g = $('#emoji-grid'), ph = $('#emoji-phr'), info = $('#ss-info'), to = $('#emoji-to');
+    var g = $('#emoji-grid'), ph = $('#emoji-phr'), info = $('#ss-info');
     var allowed = { emoji: 1, phr: 1, info: 1 };
     ssTab = allowed[tab] ? tab : 'emoji';
     var tabs = document.querySelectorAll('#ss-tabs [data-ss-tab]');
@@ -330,8 +324,6 @@
     if (g) g.classList.toggle('hidden', ssTab !== 'emoji');
     if (ph) ph.classList.toggle('hidden', ssTab !== 'phr');
     if (info) info.classList.toggle('hidden', ssTab !== 'info');
-    /* 「发给谁」只在表情/短语档有意义；信息档留着它只会让人以为信息也能群发 */
-    if (to) to.classList.toggle('hidden', ssTab === 'info');
     /* 换档会换掉整块内容（表情格子 ↔ 整张战绩卡），面板高度随之变化，
      * 而面板是按高度算落点的 —— 不重排就会「按上一档的盒子贴在新内容上」。 */
     placeSeatSheet();
@@ -395,9 +387,10 @@
     }
 
     if (canEmoji) {
-      /* 从座位进来时默认就发给这个人 —— 这正是统一面板要省掉的那一步 */
+      /* 发给谁 = 面板对着谁，**只此一处赋值**。
+       * ssPid 为空（桌面表情钮那条路）就是全场；点了某个人就是他。
+       * 面板里不再有第二个地方能改它 —— 详见上面 renderEmojiTargets 的删除说明。 */
       emojiTarget = ssPid || Emoji.BROADCAST;
-      renderEmojiTargets();
       renderEmojiGrid();
       renderEmojiPhrases();
     }
@@ -562,17 +555,11 @@
     var bd = $('#seat-sheet-bd');
     if (bd) bd.addEventListener('click', closeSeatSheet);
 
-    /* 面板内所有点击走委托：13 个表情 + 8 条短语 + N 个人，各绑一个监听
+    /* 面板内所有点击走委托：13 个表情 + 8 条短语，各绑一个监听
      * 就是「每开一次面板多 20 个闭包」的内存泄漏现场（v83 定下的规矩）。 */
     sheet.addEventListener('click', function (e) {
       var tab = e.target.closest ? e.target.closest('[data-ss-tab]') : null;
       if (tab) { setSeatTab(tab.getAttribute('data-ss-tab')); return; }
-      var who = e.target.closest ? e.target.closest('.emoji-who') : null;
-      if (who) {
-        emojiTarget = who.getAttribute('data-to');
-        renderEmojiTargets();
-        return;
-      }
       /* 信息档现在就是整张战绩卡，没有「看完整战绩」这一跳了（v107）。
        * 那个按钮和它对应的 data-ss-full 处理分支一起删掉 —— 留着就是死代码，
        * 下一轮改到这里的人会以为还有第二条路径要维护。 */
@@ -600,7 +587,6 @@
       emojiFlag: emojiFlag,
       seatRect: seatRect,
       emojiOthers: emojiOthers,
-      renderEmojiTargets: renderEmojiTargets,
       renderEmojiGrid: renderEmojiGrid,
       renderEmojiPhrases: renderEmojiPhrases,
       ssPid: ssPid,
