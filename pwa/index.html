@@ -7,8 +7,16 @@
      iOS Safari 从 iOS 10 起**故意忽略**它（无障碍考虑），所以真正的锁在 game.js 的 lockPageZoom()。 -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#16382F">
-<meta name="app-version" content="20261112b">
+<meta name="app-version" content="20261112c">
 <title>六选五</title>
+<!-- 首帧底色（内联，不等网络）。
+ *
+ * style.css 是 render-blocking 的，在它到达之前浏览器画的是**白屏**。
+ * 用户对白屏的感知是「卡住了 / 是不是没打开」，对品牌绿的感知是「正在启动」——
+ * 同一段等待，两种完全不同的感受。这行 <style> 与 style.css 里的 :root 不冲突，
+ * 只是把底色提前垫上；style.css 一到，它的 background: var(--green-deep)
+ * 覆盖同名声明，算出来是同一个值（#0F2B22），不会有跳色。 -->
+<style>html,body{background:#0F2B22}</style>
 <!-- PWA
      manifest / 图标的 <link> **不写在这里**，由下面那段脚本注入 —— 它们必须带
      ?sharecode=，而码要等脚本从 URL / localStorage 取到才知道。原因写在脚本里。 -->
@@ -19,7 +27,7 @@
 <!-- 存储收口：**必须**在内联脚本之前加载，而且不能 defer。
      下面两段内联脚本（分享码自愈 / 首帧会话判断）比任何 defer 脚本都早，
      读的就是这里的键；键名与降级逻辑只允许存在一份，见 js/storage.js。 -->
-<script src="./js/storage.js?v=20261112b"></script>
+<script src="./js/storage.js?v=20261112c"></script>
 <script>
 /* 访问凭据（sharecode）的记忆与自愈。
  *
@@ -178,9 +186,9 @@ window.addEventListener('beforeinstallprompt', function (e) {
   } catch (e) { /* 存储不可用就当作已登录，让 boot 自己判 */ }
 })();
 </script>
-<link rel="stylesheet" href="./css/style.css?v=20261112b">
-<link rel="stylesheet" href="./css/records.css?v=20261112b">
-<link rel="stylesheet" href="./css/emoji.css?v=20261112b">
+<link rel="stylesheet" href="./css/style.css?v=20261112c">
+<link rel="stylesheet" href="./css/records.css?v=20261112c">
+<link rel="stylesheet" href="./css/emoji.css?v=20261112c">
 <script>
 /* flex gap 检测 + 兼容层按需加载。
  *
@@ -234,8 +242,8 @@ window.addEventListener('beforeinstallprompt', function (e) {
      defer 脚本要等 HTML 解析到那一行才开始下载，而它们在 <body> 末尾 ——
      这里提前声明，让下载和解析并行。URL 必须和下面的 src/href **完全一致**
      （带同样的 ?v=），否则等于下两份。 -->
-<link rel="preload" href="./css/style.css?v=20261112b" as="style">
-<link rel="preload" href="./js/game.js?v=20261112b" as="script">
+<link rel="preload" href="./css/style.css?v=20261112c" as="style">
+<link rel="preload" href="./js/game.js?v=20261112c" as="script">
 </head>
 <body>
 <!-- 断网提示：以前断网后界面上没有任何变化，玩家只能靠"点了没反应"猜 -->
@@ -1314,34 +1322,34 @@ window.addEventListener('beforeinstallprompt', function (e) {
 
 <!-- 错误上报必须最先加载：game.js 里的启动异常也要能报到服务端。
      它不依赖任何其他模块，自己装 window.onerror / unhandledrejection。 -->
-<script src="./js/errorReport.js?v=20261112b" defer></script>
-<script src="./js/engine.js?v=20261112b" defer></script>
-<script src="./js/card.js?v=20261112b" defer></script>
-<script src="./js/config.js?v=20261112b" defer></script>
+<script src="./js/errorReport.js?v=20261112c" defer></script>
+<script src="./js/engine.js?v=20261112c" defer></script>
+<script src="./js/card.js?v=20261112c" defer></script>
+<script src="./js/config.js?v=20261112c" defer></script>
 <!-- 表情/短语清单：前端与服务端共用同一个文件（服务端 require 它做白名单）。
      必须早于 roomStore.js —— 传输层的 sendEmoji 会用它校验 id。 -->
-<script src="./js/emoji.js?v=20261112b" defer></script>
+<script src="./js/emoji.js?v=20261112c" defer></script>
 <!-- 成就：必须排在 stateMachine 之前 —— 状态机在结算时调 Ach.accumulate() 采集，
      顺序反了它拿到的是 undefined，表现为「成就永远 0」，不报错。 -->
-<script src="./js/achievements.js?v=20261112b" defer></script>
-<script src="./js/bestLine.js?v=20261112b" defer></script>
-<script src="./js/stateMachine.js?v=20261112b" defer></script>
-<script src="./js/authStore.js?v=20261112b" defer></script>
-<script src="./js/roomStore.js?v=20261112b" defer></script>
-<script src="./js/stats.js?v=20261112b" defer></script>
-<script src="./js/records.js?v=20261112b" defer></script>
-<script src="./js/sessionLog.js?v=20261112b" defer></script>
-<script src="./js/sfx.js?v=20261112b" defer></script>
-<script src="./js/slotLayout.js?v=20261112b" defer></script>
+<script src="./js/achievements.js?v=20261112c" defer></script>
+<script src="./js/bestLine.js?v=20261112c" defer></script>
+<script src="./js/stateMachine.js?v=20261112c" defer></script>
+<script src="./js/authStore.js?v=20261112c" defer></script>
+<script src="./js/roomStore.js?v=20261112c" defer></script>
+<script src="./js/stats.js?v=20261112c" defer></script>
+<script src="./js/records.js?v=20261112c" defer></script>
+<script src="./js/sessionLog.js?v=20261112c" defer></script>
+<script src="./js/sfx.js?v=20261112c" defer></script>
+<script src="./js/slotLayout.js?v=20261112c" defer></script>
 <!-- 头像预设（纯函数 + 48 款 SVG data URI）。必须早于 game.js：
      game.js 渲染座位时同步调 Avatar.img，晚一步就是 ReferenceError。 -->
-<script src="./js/avatar.js?v=20261112b" defer></script>
+<script src="./js/avatar.js?v=20261112c" defer></script>
 <!-- 圆桌闸门（纯函数）：这台机器上不上桌、按哪一档几何。
      必须在 game.js 之前：seatRingFlag() 渲染顶栏时同步调用全局 RingGate。 -->
-<script src="./js/ringGate.js?v=20261112b" defer></script>
+<script src="./js/ringGate.js?v=20261112c" defer></script>
 <!-- 座位环几何（纯函数）。同样必须在 game.js 之前：game.js 是同步 IIFE，
      渲染顶栏时直接读全局 SeatRing，晚一步就是 ReferenceError。 -->
-<script src="./js/seatRing.js?v=20261112b" defer></script>
+<script src="./js/seatRing.js?v=20261112c" defer></script>
 <!-- ★ 拆分出来的模块（v108）。顺序有意义，别重排：
      前三个是**立即执行**的（挂 window.LXW.utils / .cardView / .modalKit），
      后五个是**工厂**（挂 window.LXW.xxx = create），由 game.js 在自己合适的
@@ -1349,22 +1357,22 @@ window.addEventListener('beforeinstallprompt', function (e) {
      var 不提升值，创建太早会拿到 undefined。
 
      gameUtils 必须第一个：其余七个都从 window.LXW.utils 取 $ / el / esc。 -->
-<script src="./js/gameUtils.js?v=20261112b" defer></script>
-<script src="./js/cardView.js?v=20261112b" defer></script>
-<script src="./js/modalKit.js?v=20261112b" defer></script>
-<script src="./js/nextRoundHints.js?v=20261112b" defer></script>
-<script src="./js/undoBar.js?v=20261112b" defer></script>
-<script src="./js/historyKit.js?v=20261112b" defer></script>
-<script src="./js/accountView.js?v=20261112b" defer></script>
-<script src="./js/settleView.js?v=20261112b" defer></script>
-<script src="./js/seatSheetView.js?v=20261112b" defer></script>
+<script src="./js/gameUtils.js?v=20261112c" defer></script>
+<script src="./js/cardView.js?v=20261112c" defer></script>
+<script src="./js/modalKit.js?v=20261112c" defer></script>
+<script src="./js/nextRoundHints.js?v=20261112c" defer></script>
+<script src="./js/undoBar.js?v=20261112c" defer></script>
+<script src="./js/historyKit.js?v=20261112c" defer></script>
+<script src="./js/accountView.js?v=20261112c" defer></script>
+<script src="./js/settleView.js?v=20261112c" defer></script>
+<script src="./js/seatSheetView.js?v=20261112c" defer></script>
 <!-- 战绩页四态 + 错误三级（build-states v1）。纯函数模块，无注入项。
      必须早于 recordsView.js：后者 create() 时就要拿到 window.LXW.recordsState
      （拿不到会退回"只有 data/empty 两个态"的降级路径，界面看着正常，四态全丢）。 -->
-<script src="./js/recordsState.js?v=20261112b" defer></script>
-<script src="./js/recordsView.js?v=20261112b" defer></script>
-<script src="./js/achievementsView.js?v=20261112b" defer></script>
-<script src="./js/game.js?v=20261112b" defer></script>
+<script src="./js/recordsState.js?v=20261112c" defer></script>
+<script src="./js/recordsView.js?v=20261112c" defer></script>
+<script src="./js/achievementsView.js?v=20261112c" defer></script>
+<script src="./js/game.js?v=20261112c" defer></script>
 <!-- PWA Service Worker 注册（失败静默忽略，不影响正常游戏；PWA 需经 http(s) 服务，file:// 下不生效） -->
 <script>
   (function () {
@@ -1375,24 +1383,29 @@ window.addEventListener('beforeinstallprompt', function (e) {
       // 不带的话 /sw.js 本身就 403；而且 SW 内部预缓存也必须带着它（见 sw.js 顶部的说明）。
       var swUrl = '/sw.js' + (location.search || '');
       navigator.serviceWorker.register(swUrl).catch(function () { /* 离线缓存不可用，忽略 */ });
-      // 版本一致性自检：连续版本升级的 SW 新旧混存竞态下，页面可能混合了旧 JS 与新 CSS/HTML。
-      // 直接 fetch 服务器最新 index.html（network + no-store，绕过 SW 缓存）比对 app-version，
-      // 不一致则一次性 reload（sessionStorage 防死循环），确保 JS/CSS/HTML 同源同版本。
-      setTimeout(checkVersionConsistency, 500);
-      /* ★ 2026-11-12：只在启动时查一次不够 —— 页面长开（PWA 挂后台、一晚上不关）
-       * 就再也不会检查，服务端已经换了代码，客户端还在跑几小时前那份 JS。
-       *
-       * 实测代价：加小王那天，服务端发的是 54 张牌（含 rank 14.5 的小王），
-       * 而旧客户端的 drawJoker 只认 3 个参数、不认 small —— 两张王画得一模一样，
-       * 玩家看到的是「规则没区分大小王」，实际是客户端跑着旧代码。
-       * 这类「HTML 新、JS 旧」的混版本最难查：版本号对、请求全 200、界面正常，只有行为是旧的。
-       *
-       * 90 秒是折中：够快，又不至于一直打网关。切回前台那一次最关键 ——
-       * 后台标签页的定时器会被浏览器节流到分钟级，而玩家回来时正是该对齐版本的时刻。 */
-      setInterval(checkVersionConsistency, 90000);
-      document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) checkVersionConsistency();
-      });
+    });
+
+    // 版本一致性自检：连续版本升级的 SW 新旧混存竞态下，页面可能混合了旧 JS 与新 CSS/HTML。
+    // 直接 fetch 服务器最新 index.html（network + no-store，绕过 SW 缓存）比对 app-version，
+    // 不一致则一次性 reload（sessionStorage 防死循环），确保 JS/CSS/HTML 同源同版本。
+    /* ★ 2026-11-14：从「load + 500ms」提前到**脚本一执行就查**，并且挪到 load 之外。
+     *
+     * 用户报的第二个现象是「加载出首页，然后闪一下又进首页」。
+     * 用本地静态服务 + 真 SW 复现（改 app-version 与 sw.js 后再打开）：
+     * 一次打开发生了 **2 次顶层导航**，第 2 次在 2906ms，nav.type = reload。
+     * 首屏早就画完了 reload 才来 —— 用户看到的就是那一下闪。
+     *
+     * 现在脚本一执行就查：检查还在路上时首屏通常还没画出来，reload 不表现为「闪」。
+     * 这个脚本在 </body> 前、defer 脚本之前执行：DOM 已解析（meta 读得到），
+     * Store 由 head 里的同步脚本定义（读得到），LXWBusy 还不存在 ——
+     * reloadWhenIdle 对它做了判空，此刻也没有分牌草稿可丢。 */
+    checkVersionConsistency();
+    /* 90 秒心跳 + 切回前台各查一次：页面长开（PWA 挂后台、一晚上不关）不能只靠启动那一次，
+     * 否则服务端换了代码，客户端还在跑几小时前那份 JS。切回前台那一次最关键 ——
+     * 后台标签页的定时器会被浏览器节流到分钟级，而玩家回来时正是该对齐版本的时刻。 */
+    setInterval(checkVersionConsistency, 90000);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) checkVersionConsistency();
     });
 
     // 网关要求所有请求带 sharecode，裸 /api 与 /index.html 都会 403。
@@ -1434,23 +1447,30 @@ window.addEventListener('beforeinstallprompt', function (e) {
         .catch(function () { /* 离线/网络不可用则跳过 */ });
     }
 
-    /* ★ 只有「本来就有 SW 在管」才算换版本，才刷新。
+    /* ★ controllerchange **不再触发刷新**（2026-11-14 改）。
      *
-     * clients.claim() 会让当前页面**立刻**被新装的 SW 接管，于是首次访问也会收到
-     * controllerchange —— 那一刷是白刷的：页面用的就是刚从网络拿到的代码，
-     * 刷新只会让用户看着白闪一下，还可能把输入到一半的昵称冲掉。
-     * 更麻烦的是它把「首次加载」变成两次加载：任何盯着这个页面的自动化都会被
-     * 中途打断（线上冒烟的 SW 接管轮询就吃过一次 —— 报「14 秒仍未接管」，
-     * 而真实情况是 SW 早就 activated 了，只是页面 reload 把轮询的 Promise 弄死了）。
+     * 原来这里会在新 SW 接管时无条件 reload。但新 SW 接管发生在
+     * register → install（预缓存 40 多条）→ activate → claim 之后，实测 2.9 秒 ——
+     * 那时首屏早就画完了。于是每次发布后的第一次打开都是：
+     *   进首页 → 闪一下（白屏）→ 又进首页。
+     * 这就是用户报的「有时候加载出首页，但是会闪一下再进入首页」。
      *
-     * 首次接管时把 hadController 置真：之后再变（真正换版本）就会正常刷新。 */
+     * 而现在这个 reload 是**纯多余**的：导航是 network-first，HTML 从网络拿，
+     * 其中引用的 `?v=` 也必然是新版（新 URL → SW 缓存 miss → 走网络），
+     * 也就是说新 SW 接管时，页面跑着的**已经是最新代码**了，没有任何理由刷。
+     *
+     * 真正需要刷的情形只有一个：HTML 本身是从缓存里翻出来的旧版（网络超时兜底）。
+     * 那件事由 checkVersionConsistency 负责 —— 它比 app-version，语义明确，
+     * 而且现在一进页面就查、抢在首屏之前给出结论。
+     *
+     * 顺带解决了一类难查的中断：原来 reload 会把任何盯着这个页面的自动化打断
+     * （线上冒烟的 SW 接管轮询就吃过一次，报「14 秒仍未接管」，其实 SW 早就好了）。
+     *
+     * 保留这个监听只为一件事：记下「曾经被接管过」，方便诊断页看状态。 */
     var hadController = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
-    var refreshing = false;
     navigator.serviceWorker.addEventListener('controllerchange', function () {
-      if (!hadController) { hadController = true; return; }   // 首次接管：页面已是最新，不刷
-      if (refreshing) return;
-      refreshing = true;
-      reloadWhenIdle('controllerchange');
+      hadController = true;
+      try { window.__lxwSwSwapped = true; } catch (e) { /* 无关紧要 */ }
     });
   })();
 </script>

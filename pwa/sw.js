@@ -3,14 +3,18 @@
  *
  * 缓存策略：
  *  - 导航请求（/ 与页面跳转）：network-first（保证打开最新版，离线回退缓存）
- *  - 脚本/样式（/js/* /css/*）：network-first（改完即生效，无需 bump 版本；
- *    离线回退到忽略 query 的缓存副本，保证断网也能用）
+ *  - 脚本/样式（/js/* /css/*）：**cache-first，只认 URL 全等**
+ *    （`?v=` 就是 app-version，是内容指纹；同版本第二次打开一条请求都不发）
  *  - 静态资源（/icons/* /assets/* /manifest.webmanifest）：cache-first（不常变、省流量）
  *  - /ws（WebSocket）与 /api：不拦截（联机必须在线）
  *
+ * 两类 cache-first 的差别只在匹配方式：脚本/样式要求 URL **全等**（多一个 `?v=`
+ * 不同就不算命中），静态资源允许忽略查询串（内容与 sharecode 无关）。
+ * 前者是防「HTML 新、JS 旧」混版本的关键，后者只是为了换凭据后不重下图标。
+ *
  * CACHE_NAME 每次发布 bump（v1→v2→…），activate 时清理旧缓存。
  */
-const CACHE_NAME = 'weile-liuxuanwu-v146';
+const CACHE_NAME = 'weile-liuxuanwu-v147';
 
 /* network-first 的超时上限。
  *
@@ -33,7 +37,9 @@ const CACHE_NAME = 'weile-liuxuanwu-v146';
  * 比实测慢值多 1 秒余量，又没有长到让弱网用户干等。
  * 真正慢到 4 秒还没首字节的网络，给缓存本来就是对的。 */
 const NAV_TIMEOUT_MS = 4200;
-const ASSET_TIMEOUT_MS = 2000;
+/* 脚本/样式**没有**超时阈值了：它们走缓存优先（见 fetch 里的 isJsCss 分支），
+ * 命中就是 0 网络、0 等待；只有未命中才走网络。原来的 ASSET_TIMEOUT_MS = 2000
+ * 是给 network-first 做兜底的，拿掉 network-first 之后它已无引用。 */
 
 /* 访问凭据失效时的兜底页：比浏览器默认的「链接不完整」有用得多 */
 const ACCESS_HINT = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
@@ -334,12 +340,42 @@ self.addEventListener('fetch', function (event) {
   }
 
   if (isJsCss) {
-    // 脚本/样式：network-first（改完即生效，无需 bump 版本）+ 超时兜底
-    event.respondWith(networkFirst(req, ASSET_TIMEOUT_MS).then(function (res) {
-      if (res) return res;
-      return matchSameVersion(req)
-        .then(function (r) { return r || Response.error(); });
-    }));
+    /* 脚本/样式：**缓存优先，且只认 URL 全等的那一份**。
+     *
+     * 为什么可以从 network-first 改成 cache-first：
+     *   `<script src="./js/game.js?v=20261112b">` 里的 `?v=` 就是 app-version，
+     *   也就是内容指纹 —— 发布时版本 bump，URL 跟着变，缓存必然 miss，自然去拿新的。
+     *   URL 不变 = 内容不变，可以永久复用，不存在"拿不到新代码"。
+     *
+     * 为什么必须改（2026-11-14 用户报「每次打开卡一会儿」）：
+     *   network-first 意味着每次打开，32 个脚本 + 3 个样式**全部先过一遍网络**。
+     *   网关给的是 `max-age=3600`：一小时内还算快，隔夜打开就是 1.4MB 全量重下
+     *   （gzip 后约 380KB，32 个请求），首屏卡在下载上。而 SW 缓存里明明有。
+     *   改成 cache-first 后，同一版本的第二次打开，脚本样式一条请求都不发。
+     *
+     * 与「混版本」的关系（这是之前踩过的坑，必须说清）：
+     *   旧实现用 `caches.match(req, {ignoreSearch:true})` 兜底，会把 `?v=` 一起忽略，
+     *   于是可能把上一版 JS 交给新版 HTML。现在**只做精确匹配**：URL 差一个字符
+     *   就当没有。真拿不到（缓存被清、首次访问）就走网络；
+     *   网络也失败才退回 `matchSameVersion`（它仍然校验 v，不一致就丢弃）。
+     *   所以这条改动让"混版本"更不可能发生，而不是更可能。 */
+    event.respondWith(
+      caches.match(req).then(function (hit) {
+        if (hit) return hit;
+        return fetch(req).then(function (res) {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE_NAME)
+              .then(function (c) { return c.put(req, copy); })
+              .catch(function () { /* 配额满 / 隐私模式：不影响本次使用 */ });
+          }
+          return res;
+        }, function () {
+          /* 断网：退到"同版本任意查询串"的缓存，仍校验 v */
+          return matchSameVersion(req).then(function (r) { return r || Response.error(); });
+        });
+      })
+    );
     return;
   }
 

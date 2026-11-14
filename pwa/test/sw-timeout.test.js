@@ -1,19 +1,24 @@
 /**
- * Service Worker 的 network-first 超时兜底（P3-3）
+ * Service Worker 的缓存策略（导航 network-first 超时兜底 + 脚本样式 cache-first）
  * 跑法：node pwa/test/sw-timeout.test.js
  *
- * 改之前是 `fetch().then().catch(回落缓存)`：catch 只在**网络失败**时触发。
- * 弱网下「慢但最终成功」的请求会一直等，页面就是一片白。
- * 饭馆 4G 拥塞、地铁信号抖动时，fetch 挂十几秒才开始返回是常态。
+ * 这个文件护两套语义完全相反的规则，改任何一边都要先看清是哪一边：
  *
- * 这个测试用 vm 沙箱加载真的 sw.js，注入假的 caches / fetch / 定时器，
- * 不碰真实浏览器也能验到三个关键行为：
- *  1. 网络快 → 用网络；
- *  2. 网络慢 → 到点先给缓存，**且不 abort**；
- *  3. 迟到的那次响应回来后要**写进缓存**（否则「下次打开是新的」就废了）。
+ * ① 导航（HTML）仍是 network-first + 4200ms 超时兜底。
+ *    改之前是 `fetch().then().catch(回落缓存)`：catch 只在**网络失败**时触发，
+ *    弱网下「慢但最终成功」的请求会一直等，页面就是一片白。
  *
- * 第 3 条最容易漏：超时不 abort 看起来只是"让请求跑完"，
- * 但真正的作用是它能把缓存更新掉。少了这一步，用户会一直看到旧版。
+ * ② 脚本/样式（/js/ /css/）是 **cache-first，且只认 URL 全等**。
+ *    2026-11-14 之前它们是 network-first，代价是每次打开 32 个脚本 + 3 个样式
+ *    全部先过一遍网络：HTTP 缓存 1 小时内还好，隔夜就是全量重下，首屏卡在下载上。
+ *    现在同版本第二次打开一条脚本请求都不发。
+ *
+ *    为什么敢 cache-first：`?v=` 就是 app-version，是内容指纹。版本一变 URL 就变，
+ *    缓存必然 miss，自然去拿新的。所以「URL 全等才命中」这一条**同时**保证了
+ *    「快」和「不会拿旧代码」，两个目标不冲突。
+ *
+ * 这个测试用 vm 沙箱加载真的 sw.js，注入假的 caches / fetch / 定时器。
+ * 假 cache 的键**包含查询串**（真 Cache API 就是这样），否则「精确匹配」测不出来。
  */
 'use strict';
 
@@ -33,21 +38,36 @@ const ORIGIN = 'https://x.test';
 
 /** 建一个能跑 sw.js 的沙箱，返回控制句柄 */
 function makeEnv() {
-  const store = new Map();      // pathname -> Response（忽略 query，等价于 ignoreSearch）
+  /* 键 = pathname + search。**必须带查询串**：脚本/样式分支靠「URL 全等」来
+   * 保证版本一致，假缓存如果忽略 query，这条规则就等于没测。
+   * ignoreSearch 由 match() 的第二个参数显式实现（真 Cache API 的行为）。 */
+  const store = new Map();
   const timers = [];            // { fn, ms, fired }
   const listeners = {};
   let fetchImpl = async () => new Response('net', { status: 200 });
 
   /* 字符串参数可能是相对路径（sw.js 里会这样调 caches.match('/index.html')），
    * 所以要带 base 解析，否则 new URL 直接抛 Invalid URL。 */
-  const keyOf = (u) => new URL(typeof u === 'string' ? u : u.url, ORIGIN).pathname;
+  const keyOf = (u) => {
+    const x = new URL(typeof u === 'string' ? u : u.url, ORIGIN);
+    return x.pathname + x.search;
+  };
 
   const caches = {
     open: async () => ({
       put: async (req, res) => { store.set(keyOf(req), res); },
       add: async () => {}
     }),
-    match: async (req) => store.get(keyOf(req)),
+    match: async (req, opts) => {
+      const exact = store.get(keyOf(req));
+      if (exact) return exact;
+      if (!opts || !opts.ignoreSearch) return undefined;
+      const wantPath = new URL(typeof req === 'string' ? req : req.url, ORIGIN).pathname;
+      for (const k of store.keys()) {
+        if (k.split('?')[0] === wantPath) return store.get(k);
+      }
+      return undefined;
+    },
     keys: async () => [],
     delete: async () => true
   };
@@ -107,73 +127,62 @@ const navReq = (p) => reqOf(p || '/', 'navigate');
 
 async function main() {
   /* ---------------------------------------------------------------- */
-  console.log('\n[1] 网络正常 → 直接用网络响应');
+  console.log('\n[1] 脚本有缓存（URL 全等）→ 直接返回，**不发网络请求**');
   {
     const env = makeEnv();
-    env.store.set('/js/game.js', new Response('cached', { status: 200 }));
-    env.setFetch(async () => new Response('fresh', { status: 200 }));
-    const res = await env.dispatch(reqOf('/js/game.js'));
-    const out = await res;
-    eq(await out.text(), 'fresh', '拿到的是网络版本');
+    env.store.set('/js/game.js?v=A', new Response('cached-A', { status: 200 }));
+    let called = 0;
+    env.setFetch(async () => { called++; return new Response('net', { status: 200 }); });
+    const res = await env.dispatch(reqOf('/js/game.js?v=A'));
+    eq(await (await res).text(), 'cached-A', '拿到缓存版本');
+    eq(called, 0, '★ 一次网络请求都没发（这就是「每次打开卡一会儿」的修法）');
+  }
+
+  /* ---------------------------------------------------------------- */
+  console.log('\n[2] 脚本没缓存 → 走网络，并把结果写进缓存');
+  {
+    const env = makeEnv();
+    env.setFetch(async () => new Response('fresh-B', { status: 200 }));
+    const res = await env.dispatch(reqOf('/js/game.js?v=B'));
+    eq(await (await res).text(), 'fresh-B', '拿到网络版本');
     await flush();
-    eq(await (await env.store.get('/js/game.js')).text(), 'fresh', '缓存被更新成网络版本');
+    const hit = env.store.get('/js/game.js?v=B');
+    ok(!!hit, '★ 已按**完整 URL**写进缓存');
+    eq(await hit.text(), 'fresh-B', '缓存里是新版本');
   }
 
   /* ---------------------------------------------------------------- */
-  console.log('\n[2] ★ 网络卡住 → 到点先给缓存（这是修复的核心）');
+  console.log('\n[3] ★ 缓存里只有旧版本 → 新版本的请求必须 miss（防「HTML 新、JS 旧」）');
   {
+    /* 这是 2026-11-12 那个 bug 的根：旧实现用 ignoreSearch 兜底，把 ?v= 一起忽略，
+     * 于是新版 HTML 拿到的是上一版 game.js。现在只做精确匹配，URL 差一个字就当没有。 */
     const env = makeEnv();
-    env.store.set('/js/game.js', new Response('cached', { status: 200 }));
-    let fetchCalled = false;
-    env.setFetch(() => { fetchCalled = true; return new Promise(() => {}); });  // 永不返回
-
-    const pending = env.dispatch(reqOf('/js/game.js'));
-    ok(!!pending, 'respondWith 拿到了 promise');
-    ok(fetchCalled, '网络请求确实发出去了（不是压根没试）');
-
-    /* 2000ms 是 ASSET_TIMEOUT_MS */
-    env.elapse(2000);
-    const res = await pending;
-    eq(await res.text(), 'cached', '★ 2 秒后拿到缓存，页面不会白屏');
+    env.store.set('/js/game.js?v=OLD', new Response('old-code', { status: 200 }));
+    let called = 0;
+    env.setFetch(async () => { called++; return new Response('new-code', { status: 200 }); });
+    const res = await env.dispatch(reqOf('/js/game.js?v=NEW'));
+    eq(await (await res).text(), 'new-code', '拿到的是新版本，不是缓存里的旧版本');
+    eq(called, 1, '★ 缓存 miss 才会去网络（说明它确实没把旧条目当命中）');
   }
 
   /* ---------------------------------------------------------------- */
-  console.log('\n[3] ★ 超时后不 abort，迟到的响应要写回缓存');
-  {
-    const env = makeEnv();
-    env.store.set('/js/game.js', new Response('v1', { status: 200 }));
-    let release = null;
-    env.setFetch(() => new Promise((r) => { release = r; }));
-
-    const pending = env.dispatch(reqOf('/js/game.js'));
-    env.elapse(2000);
-    eq(await (await pending).text(), 'v1', '先给了缓存 v1');
-
-    /* 网络最终回来了 */
-    release(new Response('v2', { status: 200 }));
-    await flush(12);
-    eq(await (await env.store.get('/js/game.js')).text(), 'v2',
-      '★ 迟到的 v2 已写进缓存（下次打开是新的，不是一直看旧的）');
-  }
-
-  /* ---------------------------------------------------------------- */
-  console.log('\n[4] 网络失败 + 有缓存 → 回落缓存');
-  {
-    const env = makeEnv();
-    env.store.set('/js/game.js', new Response('cached', { status: 200 }));
-    env.setFetch(async () => { throw new Error('offline'); });
-    const res = await env.dispatch(reqOf('/js/game.js'));
-    eq(await (await res).text(), 'cached', '断网时用的是缓存');
-  }
-
-  /* ---------------------------------------------------------------- */
-  console.log('\n[5] 网络失败 + 没缓存 → Response.error()，不是 undefined');
+  console.log('\n[4] 没缓存 + 断网 → Response.error()，不是 undefined');
   {
     const env = makeEnv();
     env.setFetch(async () => { throw new Error('offline'); });
-    const res = await env.dispatch(reqOf('/js/nope.js'));
+    const res = await env.dispatch(reqOf('/js/nope.js?v=A'));
     ok(res instanceof Response, '拿到的是 Response 对象（respondWith 返回 undefined 会直接报错）');
     eq(await res.status, 0, 'status 0 = 网络错误');
+  }
+
+  /* ---------------------------------------------------------------- */
+  console.log('\n[5] 有缓存 + 断网 → 照样给缓存（cache-first 的自然结果）');
+  {
+    const env = makeEnv();
+    env.store.set('/js/game.js?v=A', new Response('cached', { status: 200 }));
+    env.setFetch(async () => { throw new Error('offline'); });
+    const res = await env.dispatch(reqOf('/js/game.js?v=A'));
+    eq(await (await res).text(), 'cached', '断网时用的是缓存');
   }
 
   /* ---------------------------------------------------------------- */

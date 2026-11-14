@@ -37,7 +37,7 @@
 
 | 项 | 现在的值 | 怎么复算 |
 |---|---|---|
-| 线上版本 | `20261112b` / sw `v146` | `grep -o '2026111[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
+| 线上版本 | `20261112c` / sw `v147` | `grep -o '2026111[0-9a-z]*' pwa/index.html`；`grep 'CACHE_NAME' pwa/sw.js` |
 | 线上核对 | **15/15 通过**（2026-11-11 指定头像版 `20261111c` 发布后实跑；版本号回读 = `20261111c`，无 JS 异常 / 无 console.error / 无 HTTP≥400 / SW 已接管 / installability 0 错） | `node scripts/probe-online-smoke.js <url>` |
 | 指定头像 | **5 人**（playerId → 文件名见 `pwa/js/avatar.js` 的 CUSTOM 表；仓库里不写昵称）。`pwa/assets/avatar-custom/` 下 5 张 128×128 webp，线上逐个 200 `image/webp`、体积与本地一致；映射键是 playerId 不是昵称。其余玩家仍走 48 款预设 | `curl -o /dev/null -w '%{http_code} %{size_download}' "<url>/assets/avatar-custom/will.webp?sharecode=<sc>"` |
 | 牌堆 | **54 张**（52 真牌 + 大王 + 小王）。小王 2026-11-12 加入，rank 14.5；两张王功能完全一样（都万能），只有「该比王的地方」大王才压小王 | `node -e "console.log(require('./pwa/js/card.js').createDeck().length)"` |
@@ -45,7 +45,7 @@
 | 成就事件日志 | **已启用**：`/api/backup/events` 回 `ok:true`；18 份档案全部冻上基线，时刻**同一个** `2026-11-11T13:20:03Z`，`20261111b` 重启后**未移动**（第一版漏了排队落盘，见十二） | `curl -H 'x-backup-key: <key>' "<url>/api/backup/events?since=0&sharecode=<sc>"` |
 | r9/r10/r12 历史错数 | **已清零且仍是 0**（9 份档案 / 27 格 + 基线 27 格；`20261111b` 发布后预演回读 `cells: 0`、`baseCells: 0`）。原值：全操 235 场却 `r12=777`、`r10=234`、`r9=271`；最大一档 `r12=801` | `npm run ach:reset -- --keys r9,r10,r12`（预演，应回 0 格） |
 | 管理后台 | 线上 `/admin.html` 可用（三页签：用户管理 / 模拟对战 / 排行榜）；真浏览器登录 **12/12**，错误密钥反向 **8 条全红**。密钥取自 `server/backup-key.txt`（gitignore，未入库），旧值备份在本机 `.workbuddy/` | `curl -H 'x-backup-key: <key>' "<url>/api/admin/users?sharecode=<sc>"` |
-| 全量回归 | **169 文件 / 7024 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项、`bot-runner.test.js` 28 项、`bot-split.test.js` 11 项、`bot-hand-delta.test.js` 12 项、`admin.test.js` 59 项、`achievements-catalog.test.js` 17 项、`achievements-room-level.test.js` 19 项） | `npm test` |
+| 全量回归 | **169 文件 / 7041 断言 / 0 失败**（含 `doc-consistency.test.js` 39 项、`bot-runner.test.js` 28 项、`bot-split.test.js` 11 项、`bot-hand-delta.test.js` 12 项、`admin.test.js` 59 项、`achievements-catalog.test.js` 17 项、`achievements-room-level.test.js` 19 项） | `npm test` |
 | 探针台账 | **42 条**（`ci` 5 / `manual` 18 / `oneshot` 19） | `npm run probes:check`；真源 `scripts/probes.json` |
 | 几何判定工具自验 | **10/10**（6 组已知答案样本 + 2 个采集器合规），M8 变异下退出码 1 | `npm run qa:geom` |
 | CSS 规模 | 6888 行（style 5645 / records 1243） | `wc -l pwa/css/style.css pwa/css/records.css` |
@@ -5037,3 +5037,83 @@ if (on) {
 
 **这条修复只对「下次打开」生效**：已经开着旧页面的客户端，跑的那份 JS 里没有心跳、
 也没有 `matchSameVersion` —— 任何前端补丁都追不回去。所以发布同时告知玩家刷新一次。
+
+### 2026-11-14：打开卡顿 + 首页闪一下（20261112c / sw v147）
+
+用户报两个现象：「每次打开加载首页卡一会儿」和「有时候加载出首页，会闪一下再进入首页」。
+两个都复现到了，原因完全独立。
+
+**复现方法**（比读代码可靠，两次都用它做前后对比）：
+
+- 闪：本地静态服务 + 真 SW，模拟一次发布（改 `app-version` 与 `sw.js` 的 `CACHE_NAME`），
+  数**一次打开里发生了几次顶层导航**。改前 **2 次**（第 2 次在 2906ms，`nav.type=reload`），
+  改后 **1 次**。
+- 卡：同一份 profile 连开两次，第二次关掉 HTTP 缓存（模拟 `max-age=3600` 过期、隔夜打开），
+  数**服务端收到的 `/js/` `/css/` 请求数**。改前 **32 + 3 条**，改后 **0 条**。
+
+**① 卡：脚本/样式是 network-first，缓存里有也要先过一次网络**
+
+`?v=` 就是 app-version，是内容指纹 —— 版本一变 URL 就变，缓存必然 miss。
+既然如此，network-first 没有任何收益，只有代价：每次打开 32 个脚本 + 3 个样式
+全部先走网络。HTTP 缓存一小时内还快，隔夜就是 1.4MB 全量重下（gzip 后约 380KB，
+35 个请求），首屏卡在下载上，而 SW 缓存里明明有。
+
+改成 **cache-first，且只认 URL 全等**（`caches.match(req)`，不带 `ignoreSearch`）。
+这一条同时满足两个目标，不冲突：
+
+- 快：同版本第二次打开，脚本样式一条请求都不发；
+- 不混版本：URL 差一个字符就当没有。旧实现用 `ignoreSearch` 兜底才会把上一版 JS
+  交给新版 HTML（2026-11-12 那个「两张王长得一样」就是它）。
+
+**② 闪：`controllerchange` 无条件 reload，且版本自检排在首屏之后**
+
+| 触发器 | 改前 | 改后 |
+|---|---|---|
+| 新 SW 接管（`controllerchange`） | 无条件 `reload` | **不再刷新**，只记状态 |
+| 版本自检（`checkVersionConsistency`） | `load` + 500ms 之后 | 脚本一执行就查、挪出 `load` 回调 |
+
+`controllerchange` 那一刷是**纯多余**的：新 SW 接管发生在 install（预缓存 40 多条）
+→ activate → claim 之后，实测 2.9 秒 —— 那时首屏早就画完了，用户看到的就是那一下闪。
+而页面此时跑的**已经是最新代码**：导航是 network-first，HTML 从网络拿，里面的 `?v=`
+必然是新版（新 URL → 缓存 miss → 走网络）。真正需要刷的只剩一种情形：HTML 本身是从
+缓存翻出来的旧版（网络超时兜底），那件事由版本自检负责，语义明确。
+
+**③ 首帧不再是白屏**
+
+`style.css` 是 render-blocking，在它到达之前浏览器画白屏。加了一条内联
+`<style>html,body{background:#0F2B22}</style>`（写在所有外链样式之前），
+实测量到 t=150ms 时 `<html>` 的背景已经是 `rgb(15,43,34)`，而那时 body 都还没解析出来。
+白屏的感知是「卡住了」，品牌绿的感知是「正在启动」—— 同一段等待，两种感受。
+
+**测试**：`sw-timeout.test.js` 的 [1][2][3] 语义整体反转（假 cache 的键改成**含查询串**，
+否则「精确匹配」根本测不出来），新增「缓存里只有旧版本 → 新版本必须 miss」；
+`version-refresh.test.js` 新增 [E][F] 两节 13 项。红→绿各验过：把三处修复分别改回旧写法，
+分别报红 4 项 / 4 项 / 6 项。
+
+**一个必须说清的限制**：这次改的是 SW 与页面启动逻辑，跑在**旧**页面里的那份代码没有它们。
+所以已经开着的客户端要刷新一次才吃到本次修复；之后每次打开都走新策略。
+
+**还没做的**（记在这里，别当成已完成）：
+
+- 首次安装、以及每次发布后的第一次打开，仍然要全量下载一次脚本样式 —— 这是
+  `?v=` 换代的必然代价，除非做内容指纹+增量，收益不值这个复杂度。
+- `index.html` 仍是 network-first（每次打开等一次网关 TTFB，本机实测 ~180ms）。
+  想做到「连 HTML 都秒开」得改成 stale-while-revalidate，代价是发布后要多开一次才见新版，
+  与「改了代码用户要能拿到」冲突，暂不做。
+- `<script src="./js/storage.js">` 在 head 里是**阻塞解析**的：它没到之前 body 都不存在。
+  内联它可省一个 RTT，但要动「分享码自愈 + 首帧会话判断」这两段承重代码，单独排期。
+
+#### 发布后核对（20261112c / sw v147）
+
+| 项 | 结果 | 怎么复算 |
+|---|---|---|
+| 线上版本 | `20261112c`，sw `weile-liuxuanwu-v147` | `curl <url>/index.html`、`curl <url>/sw.js` |
+| 线上冒烟 | **15/15** | `node scripts/probe-online-smoke.js <url>` |
+| 脚本样式策略 | 线上 sw.js 里 `caches.match(req).then(function (hit)` 存在（cache-first）；`index.html` 的 controllerchange 段已无 `reloadWhenIdle` | `curl` + grep |
+| 首帧底色 | 内联 `html,body{background:#0F2B22}` 在线上；两次打开实测 `getComputedStyle(html).backgroundColor = rgb(15, 43, 34)` | CDP |
+| **隔夜打开**（关掉 HTTP 缓存） | 顶层导航 **1 次**，FCP **276ms**，JS 32 个 / **0KB**，CSS 3 个 / **0KB** | 同一 profile 连开两次，第二次 `Network.setCacheDisabled(true)` |
+| 首次访问 | 顶层导航 1 次，FCP 908ms，JS 408KB（该下载的还是要下载） | 同上第一次 |
+
+"JS 0KB" 这一条是本轮的核心证据：它同时证明「缓存在用」和「没有走网络」。
+只报 FCP 不够 —— HTTP 缓存也能把 FCP 做低，而关掉 HTTP 缓存后仍为 0KB，
+才说明命中的是 **SW 缓存**。

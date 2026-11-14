@@ -33,6 +33,16 @@ function ok(cond, name, extra) {
 }
 function eq(a, b, name) { ok(a === b, name, 'expect ' + JSON.stringify(b) + ', got ' + JSON.stringify(a)); }
 
+/* 负向断言前必须先去注释。
+ * 源码里为了说清「为什么不能这样写」，会**原样引用**那种写法
+ * （比如注释里写着 `caches.match(req, {ignoreSearch:true})` 是错的）。
+ * 不去注释就会把说明文字当成代码，红的是注释、不是实现 ——
+ * 这类假红第一次就该修掉，否则以后真出问题会被人当噪音忽略。
+ * `[^:]` 是为了不把 `https://` 里的 `//` 当行注释。 */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 const ROOT = path.join(__dirname, '..', '..');
 const html = fs.readFileSync(path.join(ROOT, 'pwa', 'index.html'), 'utf8');
 const sw = fs.readFileSync(path.join(ROOT, 'pwa', 'sw.js'), 'utf8');
@@ -70,7 +80,7 @@ console.log('\n[C] SW 的脚本/样式兜底不许忽略 ?v=');
   const block = at >= 0 && end > at ? sw.slice(at, end) : '';
   ok(block.length > 50, '找得到 js/css 分支（' + block.length + ' 字符）');
   ok(/matchSameVersion\(req\)/.test(block), '★ js/css 分支内部调用 matchSameVersion');
-  ok(!/ignoreSearch/.test(block), '★ 负向：js/css 分支里不许出现 ignoreSearch');
+  ok(!/ignoreSearch/.test(stripComments(block)), '★ 负向：js/css 分支里不许出现 ignoreSearch');
   ok(/\(!got \|\| want === got\)/.test(sw), '版本比对逻辑在（有 v 且不同就丢弃）');
   ok(/vOf\(loose\.url/.test(sw), '比的是**缓存条目**的 URL，不是请求自己的');
 }
@@ -119,6 +129,65 @@ console.log('\n[D] 把 matchSameVersion 抽出来跑真实行为（不是只看�
     const reqNoV = { url: 'https://game.example/js/card.js' };
     m = build(null, { url: 'https://game.example/js/card.js?sharecode=S' });
     ok(!!(await m.matchSameVersion(reqNoV)), '请求无 v 时也能命中无 v 的缓存');
+
+    /* ---------------------------------------------------------------- */
+    console.log('\n[E] 「首页闪一下又回来」的两个来源（2026-11-14）');
+    {
+      /* ① controllerchange 不许再 reload。
+       *    新 SW 接管发生在 install（预缓存 40 多条）→ activate → claim 之后，
+       *    实测 2.9 秒 —— 那时首屏早画完了，这一刷就是用户看到的那一下闪。
+       *    而它本身是多余的：导航 network-first，HTML 从网络拿，里面的 ?v= 必然是新版，
+       *    页面跑着的已经是最新代码，没有任何理由刷。 */
+      const ccAt = html.indexOf("addEventListener('controllerchange'");
+      ok(ccAt > 0, '找得到 controllerchange 监听（' + ccAt + '）');
+      const ccBlock = ccAt > 0 ? html.slice(ccAt, ccAt + 900) : '';
+      ok(!/reloadWhenIdle/.test(ccBlock), '★ 负向：controllerchange 里不许再调 reloadWhenIdle');
+      ok(!/location\.reload/.test(ccBlock), '★ 负向：也不许直接 location.reload');
+      ok(/__lxwSwSwapped/.test(ccBlock), '仍然记录「被接管过」，供诊断页看状态');
+
+      /* ② 版本自检必须挪出 load 回调、并且不再 setTimeout 500ms。
+       *    留在 load 里 = 首屏画完才查，查到不一致再 reload 就是「闪」。
+       *    现在脚本一执行就查：检查还在路上时首屏通常还没画出来。 */
+      ok(!/setTimeout\(checkVersionConsistency/.test(html),
+        '★ 负向：不再有 setTimeout(checkVersionConsistency, 500)');
+      const loadAt = html.indexOf("window.addEventListener('load', function () {");
+      const loadEnd = loadAt >= 0 ? html.indexOf('});', loadAt) : -1;
+      const loadBlock = loadAt >= 0 && loadEnd > loadAt ? html.slice(loadAt, loadEnd) : '\u0000';
+      ok(loadBlock !== '\u0000', '找得到 load 回调块');
+      ok(loadBlock.indexOf('checkVersionConsistency') < 0,
+        '★ 版本自检不在 load 回调里（否则等于「首屏之后再查」）');
+      const bareAt = html.indexOf('\n    checkVersionConsistency();');
+      const fnAt = html.indexOf('function checkVersionConsistency');
+      ok(bareAt > 0 && fnAt > bareAt,
+        '★ 有一处「脚本一执行就查」的裸调用（在函数定义之前）');
+
+      /* ③ 首帧底色内联：style.css 到达前浏览器画白屏，白屏的感知是「卡住了」 */
+      const bgAt = html.indexOf('<style>html,body{background:');
+      const cssAt = html.indexOf('rel="stylesheet"');
+      ok(bgAt > 0, '有内联首帧底色');
+      ok(bgAt > 0 && cssAt > bgAt, '底色写在外链样式之前（否则它自己也要等网络）');
+    }
+
+    /* ---------------------------------------------------------------- */
+    console.log('\n[F] 脚本/样式是 cache-first，且只认 URL 全等（2026-11-14）');
+    {
+      const at = sw.indexOf('if (isJsCss) {');
+      const end = sw.indexOf('return;', sw.indexOf('event.respondWith', at));
+      const block = at >= 0 && end > at ? sw.slice(at, end) : '';
+      ok(block.length > 50, '找得到 js/css 分支（' + block.length + ' 字符）');
+      /* ① 第一步必须是查缓存，不是发请求 —— 这是「每次打开卡一会儿」的修法本体 */
+      ok(/event\.respondWith\(\s*\n?\s*caches\.match\(req\)/.test(block),
+        '★ 分支第一件事是 caches.match(req)（精确匹配）');
+      ok(!/networkFirst\(/.test(block),
+        '★ 负向：不再走 networkFirst（那会让每次打开都先过一次网络）');
+      /* ② 精确匹配的调用里不许带 ignoreSearch —— 带了就等于忽略 ?v=，混版本的老 bug 会回来 */
+      ok(!/caches\.match\(req,\s*\{\s*ignoreSearch/.test(stripComments(block)),
+        '★ 负向：精确匹配处不许出现 ignoreSearch');
+      /* ③ 缓存 miss 时走网络并写回，断网才退到同版本兜底 */
+      ok(/fetch\(req\)/.test(block), '缓存 miss 时走网络');
+      ok(/c\.put\(req, copy\)|caches\.open\(CACHE_NAME\)/.test(block), '网络响应写回缓存');
+      ok(/matchSameVersion\(req\)/.test(block), '断网兜底仍校验版本（matchSameVersion）');
+    }
 
     console.log('\n' + (fail === 0 ? '全部通过' : fail + ' 项失败') + ' —— ' + pass + ' passed, ' + fail + ' failed\n');
     process.exit(fail === 0 ? 0 : 1);

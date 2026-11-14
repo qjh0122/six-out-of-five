@@ -1,6 +1,6 @@
 {
   "note": "探针台账（v129）。每个 scripts/probe-*.js 必须在这里有一条，否则 pwa/test/probe-ledger.test.js 会红。run 只有三档：ci（每次 push 都跑）/ manual（发版前跑一次）/ oneshot（一次性诊断，保留作复现脚本，不排期）。为什么要有这份清单见 docs/PROBES.md。",
-  "version": "v146",
+  "version": "v147",
   "probes": [
     {
       "file": "probe-ui-flow.js",
